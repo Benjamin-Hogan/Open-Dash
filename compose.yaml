@@ -1,0 +1,31 @@
+services:
+  dashboard:
+    build: .
+    image: pi-dashboard:3
+    restart: unless-stopped
+    ports:
+      - "8081:8081"  # admin
+      - "8082:8082"  # dashboard
+    environment:
+      # Optional — you can also set these from the admin "API keys" panel.
+      # An env var here takes precedence and locks that key in the UI.
+      FINNHUB_API_KEY: ${FINNHUB_API_KEY:-}
+      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
+    volumes:
+      # Named volume persists config + backups + secrets across rebuilds.
+      # (A named volume avoids Docker Desktop's network-drive bind-mount issues.)
+      - dashboard-data:/app/data
+      # Live code reload: mount source from the host so edits take effect with no
+      # image rebuild. Python changes restart the app via the watchfiles command
+      # below; frontend (web/, admin/) edits also trigger a restart, which bumps
+      # the asset version so the kiosk hard-reloads itself (see app.js checkVersion).
+      - ./server:/app/server
+      - ./web:/app/web
+      - ./admin:/app/admin
+
+    # Watch the mounted source and restart `python -m server.run` on any change.
+    # watchfiles ships with uvicorn[standard] (already installed) — no new dep.
+    command: ["watchfiles", "--target-type", "command", "python -m server.run", "server", "web", "admin"]
+
+volumes:
+  dashboard-data:

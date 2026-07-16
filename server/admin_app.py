@@ -1,0 +1,132 @@
+"""Admin app (:8081) — the ONE write path plus cache controls and the admin UI.
+
+Mutations go through a single version-gated `PUT /api/config`; there are no
+granular per-widget endpoints. Reads/data come from the shared router so nothing
+is duplicated against the dashboard app.
+
+Security note: this app is unauthenticated by design (trusted LAN). A loud
+warning is logged at startup; an opt-in ADMIN_TOKEN layer is the documented
+next step.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from .shared.staticfiles import NoCacheStaticFiles
+
+from pydantic import BaseModel
+
+from .api_routes import router as api_router
+from .shared import config as config_store
+from .shared import events, secrets
+from .shared.cache import cache
+from .shared.config import WEB_DIR, StaleConfigError, save_config
+from .shared.schema import DashboardConfig
+
+log = logging.getLogger("dashboard.admin")
+
+WIDGETS_DIR = WEB_DIR / "js" / "widgets"
+
+app = FastAPI(title="Pi Dashboard Admin")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.include_router(api_router)
+
+
+@app.on_event("startup")
+async def _warn_unauthenticated() -> None:
+    log.warning(
+        "Pi Dashboard admin is UNAUTHENTICATED and open to the LAN (CORS *). "
+        "Fine on a trusted home network; set up an ADMIN_TOKEN before exposing it."
+    )
+
+
+@app.put("/api/config")
+async def put_config(new: DashboardConfig):
+    """Save the whole config, gated on the version the client loaded.
+
+    A bad widget fails validation here (422) and never reaches render. A stale
+    version yields 409 so the admin can re-sync instead of silently clobbering.
+    """
+    try:
+        saved = await save_config(new, base_version=new.version)
+    except StaleConfigError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "stale_version", "currentVersion": exc.current_version},
+        )
+    return saved.model_dump(exclude_none=True)
+
+
+class SecretsBody(BaseModel):
+    values: dict[str, str]
+
+
+@app.get("/api/secrets")
+async def get_secrets():
+    """Masked status only — never returns the stored key values."""
+    return secrets.status()
+
+
+@app.put("/api/secrets")
+async def put_secrets(body: SecretsBody):
+    secrets.set_many(body.values)
+    cache.clear()                       # drop cached needs-key / stale results
+    await events.broadcast("refresh", {})  # dashboards re-fetch with the new key
+    return secrets.status()
+
+
+@app.get("/api/backups")
+async def list_backups():
+    return {"backups": config_store.list_backups()}
+
+
+class RestoreBody(BaseModel):
+    name: str
+
+
+@app.post("/api/backups/restore")
+async def restore_backup(body: RestoreBody):
+    try:
+        saved = await config_store.restore_backup(body.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return saved.model_dump(exclude_none=True)
+
+
+@app.post("/api/cache/clear")
+async def clear_cache():
+    return {"cleared": cache.clear()}
+
+
+@app.post("/api/alerts/test")
+async def test_alert():
+    """Fire a demo alert so banners can be checked from the admin."""
+    from .shared import alerts
+
+    return await alerts.push(
+        "info", "🔔 Test alert", "If you can read this on the display, alerts work.",
+        source="test",
+    )
+
+
+@app.post("/api/refresh")
+async def force_refresh():
+    """Clear cached upstream data and tell dashboards to re-fetch now."""
+    cleared = cache.clear()
+    await events.broadcast("refresh", {})
+    return {"cleared": cleared}
+
+
+# Serve the widget plugin modules same-origin so the admin can import the SAME
+# registry the dashboard uses (schema-driven forms, no duplicated schema).
+app.mount("/widgets", NoCacheStaticFiles(directory=str(WIDGETS_DIR)), name="widgets")
+# Admin UI at root.
+app.mount("/", NoCacheStaticFiles(directory=str(WEB_DIR.parent / "admin"), html=True), name="admin")

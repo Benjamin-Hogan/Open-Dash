@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+# Runtime data (live config, backups, secrets) — not committed.
+data/
+.claude/worktrees/

@@ -1,0 +1,22 @@
+[project]
+name = "pi-dashboard"
+version = "3.0.0"
+description = "Glanceable kiosk dashboard for a Raspberry Pi 5 — typed config spine, one widget contract, live admin over SSE."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "pydantic>=2.6",
+    "httpx>=0.27",
+    "pillow>=10.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[tool.setuptools]
+packages = ["server", "server.shared", "server.providers"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

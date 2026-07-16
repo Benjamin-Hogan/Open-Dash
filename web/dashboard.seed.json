@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "settings": {
+    "title": "Pi Dashboard",
+    "columns": 12,
+    "rowHeightPx": 90,
+    "gapPx": 12,
+    "theme": { "mode": "dark", "accent": "#4aa3ff" },
+    "alerts": { "infoTtlSeconds": 90, "warningTtlSeconds": 0, "dangerTtlSeconds": 0 }
+  },
+  "rotation": { "enabled": false, "defaultDurationSeconds": 30, "order": [] },
+  "pages": [
+    {
+      "id": "page-1",
+      "name": "Home",
+      "widgets": [
+        {
+          "id": "clock-1",
+          "type": "clock",
+          "title": "Clock",
+          "grid": { "x": 0, "y": 0, "w": 4, "h": 2 },
+          "settings": { "hour12": true, "showSeconds": true }
+        },
+        {
+          "id": "weather-1",
+          "type": "weather",
+          "title": "Weather",
+          "grid": { "x": 4, "y": 0, "w": 5, "h": 3 },
+          "refreshSeconds": 900,
+          "settings": { "units": "imperial" }
+        },
+        {
+          "id": "space-1",
+          "type": "space-weather",
+          "title": "Space Weather",
+          "grid": { "x": 9, "y": 0, "w": 3, "h": 2 },
+          "refreshSeconds": 900,
+          "settings": {}
+        },
+        {
+          "id": "pistats-1",
+          "type": "pi-stats",
+          "title": "Pi Stats",
+          "grid": { "x": 0, "y": 2, "w": 4, "h": 2 },
+          "refreshSeconds": 5,
+          "settings": {}
+        },
+        {
+          "id": "note-1",
+          "type": "text",
+          "title": "Welcome",
+          "grid": { "x": 9, "y": 2, "w": 3, "h": 2 },
+          "settings": { "content": "Edit me in the admin →\nhttp://<pi>:8081", "align": "center", "size": 16 }
+        }
+      ]
+    },
+    {
+      "id": "page-2",
+      "name": "Radar",
+      "widgets": [
+        {
+          "id": "windy-1",
+          "type": "iframe",
+          "title": "Radar",
+          "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+          "refreshSeconds": 1800,
+          "settings": { "url": "https://embed.windy.com/embed2.html?lat=33.45&lon=-112.07&zoom=6&level=surface&overlay=radar" }
+        }
+      ]
+    }
+  ]
+}
