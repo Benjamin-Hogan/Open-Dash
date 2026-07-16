@@ -138,13 +138,20 @@ async def save_config(new: DashboardConfig, *, base_version: int) -> DashboardCo
     # Local import avoids a circular dependency at module load time.
     from . import events
 
+    alerts_changed = False
     async with _lock:
         current = get_config()
         if base_version != current.version:
             raise StaleConfigError(current.version)
+        alerts_changed = current.settings.alerts != new.settings.alerts
         new.version = current.version + 1
         _write_disk(new)
         _backup(new)
         _cached = new
     await events.broadcast("config-changed", {"version": new.version})
+    if alerts_changed:
+        # Existing banners keep the old expiresAt unless we re-stamp them —
+        # otherwise changing TTL in admin looks like "alerts never go away".
+        from . import alerts
+        await alerts.reapply_settings_ttls()
     return new

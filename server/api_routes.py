@@ -114,6 +114,13 @@ async def get_alerts():
     return {"alerts": alerts_store.active()}
 
 
+@router.delete("/alerts/{alert_id}")
+async def dismiss_alert(alert_id: str):
+    """Dismiss a banner on every display (✕ and auto-dismiss both land here)."""
+    cleared = await alerts_store.clear(alert_id)
+    return {"cleared": cleared, "id": alert_id}
+
+
 @router.get("/events")
 async def events_stream():
     from fastapi.responses import StreamingResponse

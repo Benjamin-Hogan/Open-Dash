@@ -26,7 +26,8 @@ admin writes it and every dashboard live-reloads over Server-Sent Events.
 - **Self-generating admin.** The admin imports the same widget registry and
   builds forms from each plugin's `schema`. Position/size are edited by **dragging
   and resizing** widgets on a visual grid canvas (per page). Global **alert**
-  auto-dismiss timing (per severity) is editable under **Alerts**.
+  auto-dismiss timing (per severity) is editable under **Alerts**; ✕ and TTL
+  changes sync across every display via the server.
 - **Two apps, one process.** Admin (`:8081`) and dashboard (`:8082`) share
   in-process singletons (config, cache, SSE hub, geo), so they must run together
   (`python -m server.run`).
