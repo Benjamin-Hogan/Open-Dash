@@ -78,18 +78,21 @@ class RSSProvider(Provider):
     ttl = 600.0  # 10 min
 
     async def fetch(self, params: dict[str, Any]) -> dict[str, Any]:
-        from ..shared.safe_fetch import UnsafeURLError, clamp_count, safe_get
+        from ..shared.safe_fetch import UnsafeURLError, get_bytes
 
         url = str(params.get("url", "")).strip()
-        count = clamp_count(params.get("count"), 12)
+        try:
+            count = max(1, min(50, int(params.get("count") or 12)))
+        except (TypeError, ValueError):
+            count = 12
         if not url:
             return {"items": [], "error": "no url"}
         headers = {"User-Agent": "PiDashboard/3 (+rss)"}
         try:
-            r = await safe_get(url, headers=headers, timeout=10.0)
+            content = await get_bytes(url, headers=headers, timeout=10.0)
         except UnsafeURLError as exc:
-            return {"items": [], "error": f"blocked url: {exc}"}
-        root = ET.fromstring(r.content)
+            return {"items": [], "error": str(exc)}
+        root = ET.fromstring(content)
 
         items: list[dict[str, Any]] = []
         channel = root.find("channel")

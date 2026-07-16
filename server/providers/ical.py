@@ -14,9 +14,11 @@ import datetime as dt
 from typing import Any
 
 from ..shared.providers import Provider, register
+from ..shared.safe_fetch import UnsafeURLError, get_text
 
 _WINDOW_DAYS = 60
 _MAX_OCCURRENCES = 200          # safety cap per recurring event
+_MAX_EVENTS = 50
 _WEEKDAYS = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
 
 
@@ -123,18 +125,19 @@ class ICalProvider(Provider):
     ttl = 1800.0  # 30 min
 
     async def fetch(self, params: dict[str, Any]) -> dict[str, Any]:
-        from ..shared.safe_fetch import UnsafeURLError, clamp_count, safe_get
-
         url = str(params.get("url", "")).strip()
-        count = clamp_count(params.get("count"), 10)
+        try:
+            count = max(1, min(_MAX_EVENTS, int(params.get("count") or 10)))
+        except (TypeError, ValueError):
+            count = 10
         if not url:
             return {"events": [], "error": "no url"}
         headers = {"User-Agent": "PiDashboard/3 (+ical)"}
         try:
-            r = await safe_get(url, headers=headers, timeout=10.0)
+            text = await get_text(url, headers=headers, timeout=10.0)
         except UnsafeURLError as exc:
-            return {"events": [], "error": f"blocked url: {exc}"}
-        lines = _unfold(r.text)
+            return {"events": [], "error": str(exc)}
+        lines = _unfold(text)
 
         now = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
         win_start = now - dt.timedelta(days=1)

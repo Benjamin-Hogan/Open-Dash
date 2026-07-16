@@ -22,12 +22,19 @@ from .shared import devices as device_store
 from .shared import events, providers
 from .shared.cache import cache
 from .shared.config import WEB_DIR
+from .shared.redact import public_dump
 
 log = logging.getLogger("dashboard.api")
 
 router = APIRouter(prefix="/api")
 
 _DEVICE_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+
+def _require_device_id(device_id: str) -> str:
+    if not _DEVICE_ID_RE.fullmatch(device_id):
+        raise HTTPException(status_code=400, detail="invalid device id")
+    return device_id
 
 
 def _asset_version() -> str:
@@ -43,36 +50,9 @@ def _asset_version() -> str:
 _VERSION = _asset_version()
 
 
-def _require_device_id(device_id: str) -> str:
-    if not _DEVICE_ID_RE.match(device_id or ""):
-        raise HTTPException(status_code=400, detail="invalid device id")
-    return device_id
-
-
 @router.get("/version")
 async def version():
     return {"version": _VERSION}
-
-
-@router.get("/health")
-async def health():
-    cfg = config_store.get_config()
-    return {
-        "ok": True,
-        "configVersion": cfg.version,
-        "pages": len(cfg.pages),
-        "assetVersion": _VERSION,
-    }
-
-
-@router.get("/meta")
-async def meta():
-    """Ports + product stance for admin preview / UI banners."""
-    return {
-        "adminPort": int(os.environ.get("ADMIN_PORT", "8081")),
-        "dashboardPort": int(os.environ.get("DASHBOARD_PORT", "8082")),
-        "unauthenticatedAdmin": True,
-    }
 
 
 @router.get("/gif/{source}")
@@ -100,9 +80,25 @@ async def gif_list():
     return {"sources": list(gifs.SOURCES.keys())}
 
 
+@router.get("/health")
+async def health():
+    cfg = config_store.get_config()
+    return {"ok": True, "configVersion": cfg.version}
+
+
+@router.get("/meta")
+async def meta():
+    """Ports + product stance for admin preview / UI banners."""
+    return {
+        "adminPort": int(os.environ.get("ADMIN_PORT", "8081")),
+        "dashboardPort": int(os.environ.get("DASHBOARD_PORT", "8082")),
+        "auth": "lan-open",
+    }
+
+
 @router.get("/config")
 async def get_config():
-    return config_store.redact_config_dump(config_store.get_config())
+    return public_dump(config_store.get_config())
 
 
 # --- per-device display prefs (uiScale / fontScale) ---------------------------
@@ -142,6 +138,15 @@ async def set_device_prefs(device_id: str, body: DevicePrefsBody):
     return await device_store.set_prefs(
         _require_device_id(device_id), body.model_dump(exclude_none=True)
     )
+
+
+@router.delete("/devices/{device_id}")
+async def delete_device(device_id: str):
+    """Remove a stale/duplicate display entry from the store."""
+    removed = await device_store.remove(_require_device_id(device_id))
+    if not removed:
+        raise HTTPException(status_code=404, detail="device not found")
+    return {"removed": True, "id": device_id}
 
 
 # --- alerts (engine in shared/alerts.py; displays catch up here on connect) ----

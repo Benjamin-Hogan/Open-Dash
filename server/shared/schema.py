@@ -52,20 +52,15 @@ class Schedule(BaseModel):
     def _hhmm(cls, v: str | None) -> str | None:
         if v is None or v == "":
             return None
-        parts = v.split(":")
-        if len(parts) != 2:
-            raise ValueError("time must be HH:MM")
-        try:
-            h, m = int(parts[0]), int(parts[1])
-        except ValueError as exc:
-            raise ValueError("time must be HH:MM") from exc
-        if not (0 <= h <= 23 and 0 <= m <= 59):
-            raise ValueError("time must be HH:MM")
-        return f"{h:02d}:{m:02d}"
+        import re
+
+        if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", v):
+            raise ValueError("time must be HH:MM (24h)")
+        return v
 
     @field_validator("days")
     @classmethod
-    def _valid_days(cls, days: list[int]) -> list[int]:
+    def _days_range(cls, days: list[int]) -> list[int]:
         for d in days:
             if d < 0 or d > 6:
                 raise ValueError("days must be integers 0–6 (Mon–Sun)")

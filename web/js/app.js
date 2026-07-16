@@ -37,12 +37,8 @@ let baseGapPx = 12;
 
 function resolveThemeMode(mode) {
   if (mode === "light" || mode === "dark") return mode;
-  // "auto" (or unknown) → follow the OS preference
-  try {
-    return matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
-  } catch {
-    return "dark";
-  }
+  // "auto" (and unknown) → follow the OS preference
+  return window.matchMedia?.("(prefers-color-scheme: light)")?.matches ? "light" : "dark";
 }
 
 function applySettings(settings) {
@@ -70,7 +66,7 @@ function teardown() {
   for (const a of active) {
     clearInterval(a.refreshTimer);
     clearInterval(a.scheduleTimer);
-    // suspend first (releases media / intervals), then destroy for full cleanup
+    // suspend first (releases media/timers); destroy is the hard cleanup.
     a.plugin?.suspend?.(a.handle);
     a.plugin?.destroy?.(a.handle);
   }
@@ -226,7 +222,12 @@ function buildDots() {
   dots.replaceChildren();
   if (visible.length < 2) return;
   visible.forEach((p, i) => {
-    const d = el("button", { class: "pagedot", title: p.name, onclick: () => goToPage(i, true) });
+    const d = el("button", {
+      class: "pagedot",
+      title: p.name,
+      "aria-label": `Show page ${p.name}`,
+      onclick: () => goToPage(i, true),
+    });
     dots.appendChild(d);
   });
   updateDots();

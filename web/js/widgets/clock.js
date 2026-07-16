@@ -28,8 +28,7 @@ define("clock", {
     handle.interval = null;
   },
   resume(handle) {
-    if (handle.interval) return;
-    handle.interval = setInterval(() => tick(handle), 1000);
+    if (!handle.interval) handle.interval = setInterval(() => tick(handle), 1000);
   },
   destroy(handle) {
     clearInterval(handle.interval);

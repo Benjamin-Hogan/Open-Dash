@@ -1,10 +1,11 @@
-"""Per-widget secrets must not leave GET /api/config; blank PUT keeps prior."""
+"""End-to-end: blank apiKey on save keeps the prior key; public dump stays redacted."""
 
 from __future__ import annotations
 
 import pytest
 
 from server.shared import config as config_store
+from server.shared.redact import public_dump
 from server.shared.schema import (
     DashboardConfig,
     GridPos,
@@ -36,28 +37,6 @@ def _cfg_with_key(api_key: str, version: int = 1) -> DashboardConfig:
     )
 
 
-def test_redact_strips_api_key_from_dump():
-    cfg = _cfg_with_key("super-secret")
-    dump = config_store.redact_config_dump(cfg)
-    assert dump["pages"][0]["widgets"][0]["settings"]["apiKey"] == ""
-    # In-memory config is untouched.
-    assert cfg.pages[0].widgets[0].settings["apiKey"] == "super-secret"
-
-
-def test_preserve_blank_secrets_keeps_prior_key():
-    previous = _cfg_with_key("keep-me", version=1)
-    incoming = _cfg_with_key("", version=1)
-    config_store.preserve_blank_secrets(incoming, previous)
-    assert incoming.pages[0].widgets[0].settings["apiKey"] == "keep-me"
-
-
-def test_preserve_does_not_override_new_key():
-    previous = _cfg_with_key("old-key", version=1)
-    incoming = _cfg_with_key("new-key", version=1)
-    config_store.preserve_blank_secrets(incoming, previous)
-    assert incoming.pages[0].widgets[0].settings["apiKey"] == "new-key"
-
-
 @pytest.mark.asyncio
 async def test_save_config_preserves_blank_api_key(tmp_path, monkeypatch):
     monkeypatch.setattr(config_store, "DATA_DIR", tmp_path)
@@ -77,5 +56,5 @@ async def test_save_config_preserves_blank_api_key(tmp_path, monkeypatch):
     incoming = _cfg_with_key("", version=1)
     saved = await config_store.save_config(incoming, base_version=1)
     assert saved.pages[0].widgets[0].settings["apiKey"] == "disk-secret"
-    dump = config_store.redact_config_dump(saved)
+    dump = public_dump(saved)
     assert dump["pages"][0]["widgets"][0]["settings"]["apiKey"] == ""

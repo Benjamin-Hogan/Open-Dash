@@ -2,20 +2,26 @@
 // Demonstrates the first-class suspend/resume lifecycle: only the active slide
 // keeps its media live (iframes/videos released on the others), which matters on
 // a memory-constrained Pi.
+// Slides are edited in the admin widget form (widget.slideshow), not page rotation.
 import { define, get } from "./registry.js";
 import { el } from "./dom.js";
 
 define("slideshow", {
   meta: { label: "Slideshow", description: "Rotate through multiple widgets", category: "container" },
   schema: {
-    // Slides + duration are edited in the admin widget form (not schema fields).
-    fields: [],
+    fields: [
+      { key: "_slidesNote", label: "Add and configure slides below (after Save fields like duration).", type: "note" },
+    ],
   },
   async mount(root, widget) {
     const cfg = widget.slideshow || {};
     const slides = cfg.slides || [];
     const stage = el("div", { class: "slideshow" });
     root.appendChild(stage);
+    if (!slides.length) {
+      stage.appendChild(el("div", { class: "widget-empty" }, "No slides configured"));
+      return { stage, mounted: [], index: 0, durationMs: 30000, timer: null };
+    }
     const mounted = [];
     for (const slide of slides) {
       const plugin = get(slide.type);
@@ -27,20 +33,17 @@ define("slideshow", {
         try {
           handle = await plugin.mount(pane, slideWidget);
         } catch (err) {
-          pane.appendChild(el("div", { class: "widget-error" },
-            `Slide failed: ${err?.message || err || "unknown error"}`));
+          pane.appendChild(el("div", { class: "widget-error" }, `Failed: ${err.message || err}`));
         }
       } else {
         pane.appendChild(el("div", { class: "widget-error" }, `Unknown slide type: ${slide.type}`));
       }
       mounted.push({ pane, plugin, handle });
     }
-    if (!slides.length) {
-      stage.appendChild(el("div", { class: "widget-empty" }, "No slides configured"));
-    }
     const handle = {
       stage, mounted, index: 0,
       durationMs: Math.max(2, cfg.durationSeconds || 30) * 1000,
+      timer: null,
     };
     show(handle, 0);
     if (mounted.length > 1) {
