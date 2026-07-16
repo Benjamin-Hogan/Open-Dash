@@ -140,6 +140,15 @@ async def set_device_prefs(device_id: str, body: DevicePrefsBody):
     )
 
 
+@router.delete("/devices/{device_id}")
+async def delete_device(device_id: str):
+    """Remove a stale/duplicate display entry from the store."""
+    removed = await device_store.remove(_require_device_id(device_id))
+    if not removed:
+        raise HTTPException(status_code=404, detail="device not found")
+    return {"removed": True, "id": device_id}
+
+
 # --- alerts (engine in shared/alerts.py; displays catch up here on connect) ----
 
 @router.get("/alerts")

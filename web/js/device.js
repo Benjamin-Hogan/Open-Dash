@@ -29,18 +29,25 @@ export function getPrefs() { return prefs; }
 
 // --- identity + local cache --------------------------------------------------
 
+function lsGet(key) {
+  try { return localStorage.getItem(key) || ""; } catch { return ""; }
+}
+function lsSet(key, value) {
+  try { localStorage.setItem(key, value); } catch { /* private mode / quota — in-memory id only this session */ }
+}
+
 function ensureId() {
-  deviceId = localStorage.getItem(LS_ID) || "";
+  deviceId = lsGet(LS_ID);
   if (!deviceId) {
     deviceId = (crypto.randomUUID?.() || String(Math.random()).slice(2) + Date.now().toString(36));
-    localStorage.setItem(LS_ID, deviceId);
+    lsSet(LS_ID, deviceId);
   }
-  deviceName = localStorage.getItem(LS_NAME) || `Display ${deviceId.slice(0, 4)}`;
+  deviceName = lsGet(LS_NAME) || `Display ${deviceId.slice(0, 4)}`;
 }
 
 function loadCachedPrefs() {
   try {
-    const c = JSON.parse(localStorage.getItem(LS_PREFS) || "{}");
+    const c = JSON.parse(lsGet(LS_PREFS) || "{}");
     prefs = {
       uiScale: clamp(Number(c.uiScale) || 1, UI_MIN, UI_MAX),
       fontScale: clamp(Number(c.fontScale) || 1, FONT_MIN, FONT_MAX),
@@ -49,7 +56,7 @@ function loadCachedPrefs() {
   } catch { /* keep defaults */ }
 }
 
-function cachePrefs() { localStorage.setItem(LS_PREFS, JSON.stringify(prefs)); }
+function cachePrefs() { lsSet(LS_PREFS, JSON.stringify(prefs)); }
 
 // --- apply + persist ---------------------------------------------------------
 
@@ -106,7 +113,7 @@ async function heartbeat() {
 // Called by app.js from the SSE `device-prefs` listener.
 export function onDevicePrefs(data) {
   if (!data || data.id !== deviceId) return;   // another display — ignore
-  if (data.name != null) { deviceName = data.name; localStorage.setItem(LS_NAME, deviceName); }
+  if (data.name != null) { deviceName = data.name; lsSet(LS_NAME, deviceName); }
   adopt(data);
 }
 
@@ -160,7 +167,7 @@ function buildHud() {
   hudEls.name.onchange = () => {
     deviceName = hudEls.name.value.trim() || `Display ${deviceId.slice(0, 4)}`;
     hudEls.name.value = deviceName;
-    localStorage.setItem(LS_NAME, deviceName);
+    lsSet(LS_NAME, deviceName);
     queuePut();
   };
 

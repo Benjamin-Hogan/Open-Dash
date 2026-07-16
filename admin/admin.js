@@ -1150,19 +1150,33 @@ const UI_MIN = 0.5, UI_MAX = 2.0, UI_STEP = 0.05;
 const FONT_MIN = 0.6, FONT_MAX = 1.8, FONT_STEP = 0.05;
 const clampScale = (v, lo, hi) => Math.round(Math.max(lo, Math.min(hi, v)) * 1000) / 1000;
 
+// Generation token: overlapping openDisplays() calls (double-click Displays /
+// Refresh while a fetch is in flight) used to append a second full list after
+// the first request completed — every display appeared twice.
+let displaysGen = 0;
+
 async function openDisplays() {
+  const gen = ++displaysGen;
   const editor = $("#editor");
   editor.classList.remove("hidden");
   editor.replaceChildren();
   state.editingId = null;
   const h = document.createElement("h2"); h.textContent = "Displays"; h.style.margin = "0 0 6px";
   editor.appendChild(h);
-  editor.appendChild(noteEl("Every screen loads the same layout, but each keeps its own size overlay so small displays can shrink text and rows to fit. Changes apply live. A display appears here after it has loaded the dashboard once."));
+  editor.appendChild(noteEl("Every screen loads the same layout, but each keeps its own size overlay so small displays can shrink text and rows to fit. Changes apply live. A display appears here after it has loaded the dashboard once. Remove stale duplicates that no longer connect."));
   editor.appendChild(button("Refresh", "btn small", openDisplays));
 
   let devices = [];
-  try { devices = (await (await fetch("/api/devices")).json()).devices || []; }
-  catch { toast("Could not load displays", "err"); return; }
+  try {
+    const res = await fetch("/api/devices");
+    if (!res.ok) throw new Error(String(res.status));
+    devices = (await res.json()).devices || [];
+  } catch {
+    if (gen !== displaysGen) return;
+    toast("Could not load displays", "err");
+    return;
+  }
+  if (gen !== displaysGen) return; // newer openDisplays won the race
 
   if (!devices.length) editor.appendChild(noteEl("No displays have connected yet."));
   const list = document.createElement("div"); list.className = "device-list";
@@ -1185,6 +1199,7 @@ function deviceRow(d) {
   const meta = document.createElement("div"); meta.className = "device-meta";
   meta.textContent = [
     d.viewport || "unknown size",
+    `id ${d.id.slice(0, 8)}`,
     seen ? (stale ? "last seen " + seen.toLocaleString([], { dateStyle: "short", timeStyle: "short" }) : "online") : "never seen",
   ].join(" · ");
   if (!stale) row.classList.add("online");
@@ -1208,6 +1223,16 @@ function deviceRow(d) {
     scaleStepper("Size", () => cur.uiScale, (v) => { cur.uiScale = clampScale(v, UI_MIN, UI_MAX); push(); }, UI_STEP),
     scaleStepper("Text", () => cur.fontScale, (v) => { cur.fontScale = clampScale(v, FONT_MIN, FONT_MAX); push(); }, FONT_STEP),
     button("Reset", "btn small", () => { cur.uiScale = 1; cur.fontScale = 1; row.querySelectorAll(".device-val").forEach((n) => n.textContent = "100%"); push(); }),
+    button("Remove", "btn small danger", async () => {
+      const label = d.name || d.id.slice(0, 8);
+      if (!confirm(`Remove “${label}” from the display list? It will reappear if that screen loads the dashboard again.`)) return;
+      try {
+        const res = await fetch(`/api/devices/${encodeURIComponent(d.id)}`, { method: "DELETE" });
+        if (!res.ok && res.status !== 404) { toast("Remove failed: " + res.status, "err"); return; }
+        toast("Display removed", "ok");
+        openDisplays();
+      } catch (e) { toast("Remove failed: " + e.message, "err"); }
+    }),
   );
 
   // which pages this display shows ("All" = empty list = follow the rotation)
