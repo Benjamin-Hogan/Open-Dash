@@ -35,12 +35,22 @@ async function loadConfig() {
 let baseRowPx = 90;
 let baseGapPx = 12;
 
+function resolveThemeMode(mode) {
+  if (mode === "light" || mode === "dark") return mode;
+  // "auto" (or unknown) → follow the OS preference
+  try {
+    return matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  } catch {
+    return "dark";
+  }
+}
+
 function applySettings(settings) {
   document.title = settings.title || "Pi Dashboard";
   const root = document.documentElement;
   root.style.setProperty("--columns", settings.columns || 12);
   root.style.setProperty("--accent", settings.theme?.accent || "#4aa3ff");
-  root.dataset.theme = settings.theme?.mode || "dark";
+  root.dataset.theme = resolveThemeMode(settings.theme?.mode || "dark");
   baseRowPx = settings.rowHeightPx || 90;
   baseGapPx = settings.gapPx || 12;
   applyScale();
@@ -60,6 +70,8 @@ function teardown() {
   for (const a of active) {
     clearInterval(a.refreshTimer);
     clearInterval(a.scheduleTimer);
+    // suspend first (releases media / intervals), then destroy for full cleanup
+    a.plugin?.suspend?.(a.handle);
     a.plugin?.destroy?.(a.handle);
   }
   active = [];

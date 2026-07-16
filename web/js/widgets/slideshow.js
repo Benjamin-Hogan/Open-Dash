@@ -8,9 +8,8 @@ import { el } from "./dom.js";
 define("slideshow", {
   meta: { label: "Slideshow", description: "Rotate through multiple widgets", category: "container" },
   schema: {
-    fields: [
-      { key: "_slidesNote", label: "Slides are configured via the Slideshow section", type: "note" },
-    ],
+    // Slides + duration are edited in the admin widget form (not schema fields).
+    fields: [],
   },
   async mount(root, widget) {
     const cfg = widget.slideshow || {};
@@ -25,11 +24,19 @@ define("slideshow", {
       let handle = null;
       if (plugin) {
         const slideWidget = { ...slide, settings: slide.settings || {} };
-        try { handle = await plugin.mount(pane, slideWidget); } catch {}
+        try {
+          handle = await plugin.mount(pane, slideWidget);
+        } catch (err) {
+          pane.appendChild(el("div", { class: "widget-error" },
+            `Slide failed: ${err?.message || err || "unknown error"}`));
+        }
       } else {
         pane.appendChild(el("div", { class: "widget-error" }, `Unknown slide type: ${slide.type}`));
       }
       mounted.push({ pane, plugin, handle });
+    }
+    if (!slides.length) {
+      stage.appendChild(el("div", { class: "widget-empty" }, "No slides configured"));
     }
     const handle = {
       stage, mounted, index: 0,
@@ -43,15 +50,25 @@ define("slideshow", {
   },
   suspend(handle) {
     clearInterval(handle.timer);
+    handle.timer = null;
     const cur = handle.mounted[handle.index];
     cur?.plugin?.suspend?.(cur.handle);
   },
   resume(handle) {
     const cur = handle.mounted[handle.index];
     cur?.plugin?.resume?.(cur.handle);
-    if (handle.mounted.length > 1) {
+    if (handle.mounted.length > 1 && !handle.timer) {
       handle.timer = setInterval(() => show(handle, (handle.index + 1) % handle.mounted.length), handle.durationMs);
     }
+  },
+  destroy(handle) {
+    clearInterval(handle.timer);
+    handle.timer = null;
+    for (const m of handle.mounted || []) {
+      m.plugin?.suspend?.(m.handle);
+      m.plugin?.destroy?.(m.handle);
+    }
+    handle.mounted = [];
   },
 });
 

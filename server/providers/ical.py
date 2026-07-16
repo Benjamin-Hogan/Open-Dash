@@ -13,8 +13,6 @@ import calendar
 import datetime as dt
 from typing import Any
 
-import httpx
-
 from ..shared.providers import Provider, register
 
 _WINDOW_DAYS = 60
@@ -125,17 +123,20 @@ class ICalProvider(Provider):
     ttl = 1800.0  # 30 min
 
     async def fetch(self, params: dict[str, Any]) -> dict[str, Any]:
+        from ..shared.safe_fetch import UnsafeURLError, clamp_count, safe_get
+
         url = str(params.get("url", "")).strip()
-        count = int(params.get("count") or 10)
+        count = clamp_count(params.get("count"), 10)
         if not url:
             return {"events": [], "error": "no url"}
         headers = {"User-Agent": "PiDashboard/3 (+ical)"}
-        async with httpx.AsyncClient(timeout=10.0, headers=headers, follow_redirects=True) as client:
-            r = await client.get(url)
-            r.raise_for_status()
-            lines = _unfold(r.text)
+        try:
+            r = await safe_get(url, headers=headers, timeout=10.0)
+        except UnsafeURLError as exc:
+            return {"events": [], "error": f"blocked url: {exc}"}
+        lines = _unfold(r.text)
 
-        now = dt.datetime.utcnow()
+        now = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
         win_start = now - dt.timedelta(days=1)
         win_end = now + dt.timedelta(days=_WINDOW_DAYS)
 

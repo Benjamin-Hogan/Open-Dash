@@ -10,8 +10,6 @@ import re
 import xml.etree.ElementTree as ET
 from typing import Any
 
-import httpx
-
 from ..shared.providers import Provider, register
 
 _ATOM = "{http://www.w3.org/2005/Atom}"
@@ -80,15 +78,18 @@ class RSSProvider(Provider):
     ttl = 600.0  # 10 min
 
     async def fetch(self, params: dict[str, Any]) -> dict[str, Any]:
+        from ..shared.safe_fetch import UnsafeURLError, clamp_count, safe_get
+
         url = str(params.get("url", "")).strip()
-        count = int(params.get("count") or 12)
+        count = clamp_count(params.get("count"), 12)
         if not url:
             return {"items": [], "error": "no url"}
         headers = {"User-Agent": "PiDashboard/3 (+rss)"}
-        async with httpx.AsyncClient(timeout=10.0, headers=headers, follow_redirects=True) as client:
-            r = await client.get(url)
-            r.raise_for_status()
-            root = ET.fromstring(r.content)
+        try:
+            r = await safe_get(url, headers=headers, timeout=10.0)
+        except UnsafeURLError as exc:
+            return {"items": [], "error": f"blocked url: {exc}"}
+        root = ET.fromstring(r.content)
 
         items: list[dict[str, Any]] = []
         channel = root.find("channel")

@@ -2,6 +2,7 @@
 
 The original reached into `cache._store.clear()` from four call sites, leaking
 the abstraction. Here every operation has a method; nothing pokes internals.
+Bounded by ``max_entries`` (LRU-ish: drop oldest expiry first on overflow).
 """
 
 from __future__ import annotations
@@ -11,8 +12,9 @@ from typing import Any
 
 
 class TTLCache:
-    def __init__(self) -> None:
+    def __init__(self, max_entries: int = 256) -> None:
         self._store: dict[str, tuple[float, Any]] = {}  # key -> (expires_at, value)
+        self._max_entries = max(8, max_entries)
 
     def get(self, key: str) -> Any | None:
         item = self._store.get(key)
@@ -25,7 +27,18 @@ class TTLCache:
         return value
 
     def set(self, key: str, value: Any, ttl: float) -> None:
+        self._evict_expired()
+        if key not in self._store and len(self._store) >= self._max_entries:
+            # Drop the entry that expires soonest (approximation of LRU for TTL data).
+            oldest = min(self._store.items(), key=lambda kv: kv[1][0])[0]
+            self._store.pop(oldest, None)
         self._store[key] = (time.monotonic() + ttl, value)
+
+    def _evict_expired(self) -> None:
+        now = time.monotonic()
+        dead = [k for k, (exp, _) in self._store.items() if exp < now]
+        for k in dead:
+            self._store.pop(k, None)
 
     def invalidate(self, key: str) -> bool:
         """Drop a single key. Returns True if it was present."""

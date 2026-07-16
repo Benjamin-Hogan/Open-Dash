@@ -4,9 +4,9 @@ Mutations go through a single version-gated `PUT /api/config`; there are no
 granular per-widget endpoints. Reads/data come from the shared router so nothing
 is duplicated against the dashboard app.
 
-Security note: this app is unauthenticated by design (trusted LAN). A loud
-warning is logged at startup; an opt-in ADMIN_TOKEN layer is the documented
-next step.
+Security note: this app is unauthenticated by design (trusted LAN / v1). A loud
+warning is logged at startup and the admin UI shows a banner. An opt-in
+ADMIN_TOKEN layer is planned for a later release and is not implemented yet.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from .api_routes import router as api_router
 from .shared import config as config_store
 from .shared import events, secrets
 from .shared.cache import cache
-from .shared.config import WEB_DIR, StaleConfigError, save_config
+from .shared.config import WEB_DIR, StaleConfigError, redact_config_dump, save_config
 from .shared.schema import DashboardConfig
 
 log = logging.getLogger("dashboard.admin")
@@ -62,7 +62,7 @@ async def put_config(new: DashboardConfig):
             status_code=409,
             detail={"error": "stale_version", "currentVersion": exc.current_version},
         )
-    return saved.model_dump(exclude_none=True)
+    return redact_config_dump(saved)
 
 
 class SecretsBody(BaseModel):
@@ -98,7 +98,7 @@ async def restore_backup(body: RestoreBody):
         saved = await config_store.restore_backup(body.name)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    return saved.model_dump(exclude_none=True)
+    return redact_config_dump(saved)
 
 
 @app.post("/api/cache/clear")

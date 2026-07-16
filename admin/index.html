@@ -23,6 +23,9 @@
       <button id="btn-clear" class="btn">Clear cache</button>
     </div>
   </header>
+  <div class="lan-banner" role="status">
+    Admin is open on the LAN with no login — do not expose it beyond your trusted network.
+  </div>
 
   <nav id="page-bar" class="page-bar"></nav>
 
@@ -43,7 +46,7 @@
     <section id="editor" class="panel editor hidden"></section>
   </main>
 
-  <div id="toast" class="toast hidden"></div>
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
   <script type="module" src="/admin.js"></script>
 </body>
 </html>

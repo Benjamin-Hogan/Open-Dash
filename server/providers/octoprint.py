@@ -10,12 +10,26 @@ be partially null mid-connect. Webcam lives in a separate widget (stream URL).
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
 from ..shared import config as config_store
 from ..shared import secrets
 from ..shared.providers import Provider, register
+
+_BLOCKED_HOSTS = frozenset({"metadata.google.internal", "169.254.169.254"})
+
+
+def _lan_url_ok(base: str) -> str | None:
+    """OctoPrint lives on the LAN — allow private hosts, block metadata / bad schemes."""
+    parsed = urlparse(base)
+    if parsed.scheme not in ("http", "https"):
+        return "unsupported url scheme"
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if not host or host in _BLOCKED_HOSTS:
+        return "blocked url"
+    return None
 
 
 def _temp(block: dict | None) -> dict[str, Any] | None:
@@ -68,6 +82,9 @@ class OctoPrintProvider(Provider):
         base = normalize_base_url(params.get("url"))
         if not base:
             return {"configured": False, "error": "no OctoPrint URL configured"}
+        bad = _lan_url_ok(base)
+        if bad:
+            return {"configured": False, "error": bad}
         key = _resolve_api_key(params)
         if not key:
             return {
