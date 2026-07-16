@@ -246,27 +246,46 @@ function initAlerts() {
 }
 
 function showAlert(a) {
-  if (!alertHost || !a?.id || alertHost.querySelector(`[data-alert="${CSS.escape(a.id)}"]`)) return;
-  const banner = el("div", { class: `alert alert-${a.severity || "info"}`, "data-alert": a.id }, [
-    el("div", { class: "alert-text" }, [
-      el("div", { class: "alert-title" }, a.title || "Alert"),
-      a.message ? el("div", { class: "alert-msg" }, a.message) : null,
-    ]),
-    el("button", { class: "alert-close", title: "Dismiss", onclick: () => dismissAlert(a.id) }, "✕"),
-  ]);
-  alertHost.prepend(banner);
-  const ttl = a.expiresAt ? (a.expiresAt * 1000 - Date.now()) : null;
-  if (ttl != null && ttl > 0) alertTimers.set(a.id, setTimeout(() => dismissAlert(a.id), ttl));
+  if (!alertHost || !a?.id) return;
+  const existing = alertHost.querySelector(`[data-alert="${CSS.escape(a.id)}"]`);
+  // Settings change re-broadcasts the same id with a new expiresAt — reset timer.
+  if (existing) {
+    clearTimeout(alertTimers.get(a.id));
+    alertTimers.delete(a.id);
+  } else {
+    const banner = el("div", { class: `alert alert-${a.severity || "info"}`, "data-alert": a.id }, [
+      el("div", { class: "alert-text" }, [
+        el("div", { class: "alert-title" }, a.title || "Alert"),
+        a.message ? el("div", { class: "alert-msg" }, a.message) : null,
+      ]),
+      el("button", { class: "alert-close", title: "Dismiss", onclick: () => dismissAlert(a.id, { notifyServer: true }) }, "✕"),
+    ]);
+    alertHost.prepend(banner);
+  }
+  if (a.expiresAt == null) return;
+  const ttl = a.expiresAt * 1000 - Date.now();
+  if (ttl <= 0) {
+    dismissAlert(a.id); // already past — server prune / active() filter is source of truth
+    return;
+  }
+  // Local timer only; server prune broadcasts alert-cleared so clocks can't clear early.
+  alertTimers.set(a.id, setTimeout(() => dismissAlert(a.id), ttl));
 }
 
-function dismissAlert(id) {
+function dismissAlert(id, { notifyServer = false } = {}) {
   clearTimeout(alertTimers.get(id));
   alertTimers.delete(id);
   const banner = alertHost?.querySelector(`[data-alert="${CSS.escape(id)}"]`);
-  if (!banner) return;
-  banner.classList.add("alert-out");
-  banner.addEventListener("animationend", () => banner.remove(), { once: true });
-  setTimeout(() => banner.remove(), 600); // reduced-motion fallback
+  if (banner) {
+    banner.classList.add("alert-out");
+    banner.addEventListener("animationend", () => banner.remove(), { once: true });
+    setTimeout(() => banner.remove(), 600); // reduced-motion fallback
+  }
+  // ✕ must clear the server copy — otherwise reload / other displays bring it
+  // back (especially when TTL is 0 = keep until dismissed).
+  if (notifyServer) {
+    fetch(`/api/alerts/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {});
+  }
 }
 
 // ---- value-change pulse: any widget's updated number/text briefly glows -------

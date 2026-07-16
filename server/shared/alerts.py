@@ -57,11 +57,16 @@ def _default_ttl(severity: str) -> float | None:
 
 async def push(severity: str, title: str, message: str, *, source: str,
                alert_id: str | None = None, ttl: float | None = None) -> dict:
-    """Register an alert and broadcast it to every display."""
+    """Register an alert and broadcast it to every display.
+
+    ``ttl=None`` means "use severity settings". An explicit ``ttl`` (including
+    from NWS / space weather) is left alone when alert settings change later.
+    """
     from . import events
 
     sev = severity if severity in ("info", "warning", "danger") else "info"
-    if ttl is None:
+    uses_settings_ttl = ttl is None
+    if uses_settings_ttl:
         ttl = _default_ttl(sev)
     aid = alert_id or f"{source}-{int(time.time() * 1000)}"
     alert = {
@@ -72,6 +77,7 @@ async def push(severity: str, title: str, message: str, *, source: str,
         "source": source,
         "ts": time.time(),
         "expiresAt": (time.time() + ttl) if ttl else None,
+        "usesSettingsTtl": uses_settings_ttl,
     }
     _active[aid] = alert
     await events.broadcast("alert", alert)
@@ -79,11 +85,40 @@ async def push(severity: str, title: str, message: str, *, source: str,
     return alert
 
 
-async def clear(alert_id: str) -> None:
+async def clear(alert_id: str) -> bool:
+    """Dismiss one alert on every display. Returns True if it was active."""
     from . import events
 
     if _active.pop(alert_id, None):
         await events.broadcast("alert-cleared", {"id": alert_id})
+        return True
+    return False
+
+
+async def reapply_settings_ttls() -> None:
+    """Re-stamp expiresAt for alerts that follow severity TTL settings.
+
+    Called after admin saves new auto-dismiss timings so already-visible banners
+    pick up the new values instead of sticking forever with the old expiresAt.
+    """
+    from . import events
+
+    now = time.time()
+    for aid, a in list(_active.items()):
+        # Explicit False = caller passed ttl= (NWS/space). Missing key = legacy
+        # in-memory alert from before this flag existed — treat as settings-based.
+        if a.get("usesSettingsTtl") is False:
+            continue
+        ttl = _default_ttl(a.get("severity") or "info")
+        new_exp = (now + ttl) if ttl else None
+        if a.get("expiresAt") == new_exp:
+            continue
+        a["expiresAt"] = new_exp
+        if new_exp is not None and new_exp <= now:
+            await clear(aid)
+        else:
+            # Re-broadcast so clients reset their local auto-dismiss timers.
+            await events.broadcast("alert", a)
 
 
 async def _prune() -> None:
