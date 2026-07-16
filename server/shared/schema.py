@@ -47,6 +47,25 @@ class Schedule(BaseModel):
     end: str | None = None    # "HH:MM"
     days: list[int] = Field(default_factory=list)
 
+    @field_validator("start", "end")
+    @classmethod
+    def _hhmm(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        import re
+
+        if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", v):
+            raise ValueError("time must be HH:MM (24h)")
+        return v
+
+    @field_validator("days")
+    @classmethod
+    def _days_range(cls, days: list[int]) -> list[int]:
+        for d in days:
+            if d < 0 or d > 6:
+                raise ValueError("days must be integers 0–6 (Mon–Sun)")
+        return days
+
 
 class Availability(BaseModel):
     model_config = ConfigDict(extra="forbid")

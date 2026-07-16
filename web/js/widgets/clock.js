@@ -25,9 +25,14 @@ define("clock", {
   },
   suspend(handle) {
     clearInterval(handle.interval);
+    handle.interval = null;
   },
   resume(handle) {
-    handle.interval = setInterval(() => tick(handle), 1000);
+    if (!handle.interval) handle.interval = setInterval(() => tick(handle), 1000);
+  },
+  destroy(handle) {
+    clearInterval(handle.interval);
+    handle.interval = null;
   },
 });
 

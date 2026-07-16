@@ -35,12 +35,18 @@ async function loadConfig() {
 let baseRowPx = 90;
 let baseGapPx = 12;
 
+function resolveThemeMode(mode) {
+  if (mode === "light" || mode === "dark") return mode;
+  // "auto" (and unknown) → follow the OS preference
+  return window.matchMedia?.("(prefers-color-scheme: light)")?.matches ? "light" : "dark";
+}
+
 function applySettings(settings) {
   document.title = settings.title || "Pi Dashboard";
   const root = document.documentElement;
   root.style.setProperty("--columns", settings.columns || 12);
   root.style.setProperty("--accent", settings.theme?.accent || "#4aa3ff");
-  root.dataset.theme = settings.theme?.mode || "dark";
+  root.dataset.theme = resolveThemeMode(settings.theme?.mode || "dark");
   baseRowPx = settings.rowHeightPx || 90;
   baseGapPx = settings.gapPx || 12;
   applyScale();
@@ -60,6 +66,8 @@ function teardown() {
   for (const a of active) {
     clearInterval(a.refreshTimer);
     clearInterval(a.scheduleTimer);
+    // suspend first (releases media/timers); destroy is the hard cleanup.
+    a.plugin?.suspend?.(a.handle);
     a.plugin?.destroy?.(a.handle);
   }
   active = [];
@@ -214,7 +222,12 @@ function buildDots() {
   dots.replaceChildren();
   if (visible.length < 2) return;
   visible.forEach((p, i) => {
-    const d = el("button", { class: "pagedot", title: p.name, onclick: () => goToPage(i, true) });
+    const d = el("button", {
+      class: "pagedot",
+      title: p.name,
+      "aria-label": `Show page ${p.name}`,
+      onclick: () => goToPage(i, true),
+    });
     dots.appendChild(d);
   });
   updateDots();

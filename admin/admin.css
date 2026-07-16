@@ -6,6 +6,14 @@
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, "Segoe UI", Roboto, sans-serif; }
 
+.lan-banner {
+  background: #3a2a12; color: #f0d9a8; border-bottom: 1px solid #6a4e1e;
+  padding: 8px 20px; font-size: 12px; line-height: 1.4; text-align: center;
+}
+.btn:focus-visible, .page-tab:focus-visible, .day-chip:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+
 .topbar { display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; border-bottom: 1px solid var(--border); }
 .topbar h1 { font-size: 18px; margin: 0; font-weight: 600; }
 .muted { color: var(--muted); font-weight: 400; }
@@ -118,6 +126,10 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: system
 .day-chip:hover { border-color: var(--accent); }
 .day-chip.on { background: var(--accent); border-color: var(--accent); color: #07101c; font-weight: 600; }
 .btn.scheduled { border-color: var(--accent); color: var(--accent); }
+
+.slide-card { border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 10px; background: var(--bg); }
+.slide-card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+.slide-card-head strong { font-size: 13px; }
 
 /* live mini-preview: real dashboard page in a scaled-down iframe */
 .preview-wrap { position: relative; margin-top: 10px; width: 100%; aspect-ratio: 16 / 9; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: #0c0e12; }

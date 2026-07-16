@@ -4,19 +4,18 @@ Mutations go through a single version-gated `PUT /api/config`; there are no
 granular per-widget endpoints. Reads/data come from the shared router so nothing
 is duplicated against the dashboard app.
 
-Security note: this app is unauthenticated by design (trusted LAN). A loud
-warning is logged at startup; an opt-in ADMIN_TOKEN layer is the documented
-next step.
+Security note: this app is unauthenticated by design (trusted LAN for v1). A
+loud warning is logged at startup. Do not expose beyond the home network;
+ADMIN_TOKEN remains future work.
 """
 
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from .shared.staticfiles import NoCacheStaticFiles
-
 from pydantic import BaseModel
 
 from .api_routes import router as api_router
@@ -24,13 +23,25 @@ from .shared import config as config_store
 from .shared import events, secrets
 from .shared.cache import cache
 from .shared.config import WEB_DIR, StaleConfigError, save_config
+from .shared.redact import public_dump
 from .shared.schema import DashboardConfig
+from .shared.staticfiles import NoCacheStaticFiles
 
 log = logging.getLogger("dashboard.admin")
 
 WIDGETS_DIR = WEB_DIR / "js" / "widgets"
 
-app = FastAPI(title="Pi Dashboard Admin")
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    log.warning(
+        "Pi Dashboard admin is UNAUTHENTICATED and open to the LAN (CORS *). "
+        "Trusted home network only for v1 — do not port-forward without auth."
+    )
+    yield
+
+
+app = FastAPI(title="Pi Dashboard Admin", lifespan=_lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -40,20 +51,14 @@ app.add_middleware(
 app.include_router(api_router)
 
 
-@app.on_event("startup")
-async def _warn_unauthenticated() -> None:
-    log.warning(
-        "Pi Dashboard admin is UNAUTHENTICATED and open to the LAN (CORS *). "
-        "Fine on a trusted home network; set up an ADMIN_TOKEN before exposing it."
-    )
-
-
 @app.put("/api/config")
 async def put_config(new: DashboardConfig):
     """Save the whole config, gated on the version the client loaded.
 
     A bad widget fails validation here (422) and never reaches render. A stale
     version yields 409 so the admin can re-sync instead of silently clobbering.
+    Per-widget secrets (e.g. OctoPrint apiKey) are preserved when blank and
+    redacted in the response.
     """
     try:
         saved = await save_config(new, base_version=new.version)
@@ -62,7 +67,7 @@ async def put_config(new: DashboardConfig):
             status_code=409,
             detail={"error": "stale_version", "currentVersion": exc.current_version},
         )
-    return saved.model_dump(exclude_none=True)
+    return public_dump(saved)
 
 
 class SecretsBody(BaseModel):
@@ -98,7 +103,7 @@ async def restore_backup(body: RestoreBody):
         saved = await config_store.restore_backup(body.name)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    return saved.model_dump(exclude_none=True)
+    return public_dump(saved)
 
 
 @app.post("/api/cache/clear")

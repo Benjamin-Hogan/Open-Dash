@@ -63,21 +63,65 @@ def _backup(cfg: DashboardConfig) -> None:
         old.unlink(missing_ok=True)
 
 
+def _try_validate(raw: object) -> DashboardConfig | None:
+    from . import migrations
+
+    try:
+        return DashboardConfig.model_validate(migrations.migrate(raw))
+    except Exception:
+        return None
+
+
+def _load_newest_backup() -> DashboardConfig | None:
+    for b in list_backups():
+        try:
+            raw = json.loads(_safe_backup_path(b["name"]).read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        cfg = _try_validate(raw)
+        if cfg is not None:
+            return cfg
+    return None
+
+
 def load_config() -> DashboardConfig:
-    """Load + validate from disk at startup; seed a default if absent."""
+    """Load + validate from disk at startup; seed a default if absent.
+
+    Corrupt/invalid config falls back to the newest valid backup, then the
+    shipped seed, so a bad write cannot brick the kiosk process.
+    """
+    import logging
+
+    log = logging.getLogger("dashboard.config")
     global _cached
+    recovered = False
+    cfg: DashboardConfig | None = None
+
     if CONFIG_PATH.exists():
-        raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    elif SEED_PATH.exists():
-        raw = json.loads(SEED_PATH.read_text(encoding="utf-8"))  # first run: ship a starter
-    else:
-        raw = None
-    if raw:
-        from . import migrations
-        _cached = DashboardConfig.model_validate(migrations.migrate(raw))
-    else:
-        _cached = DashboardConfig()
-    if not CONFIG_PATH.exists():
+        try:
+            raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            cfg = _try_validate(raw)
+        except Exception as exc:
+            log.error("config JSON unreadable (%s)", exc)
+            cfg = None
+        if cfg is None:
+            log.error("config invalid — trying backups, then seed")
+            cfg = _load_newest_backup()
+            recovered = True
+
+    if cfg is None and SEED_PATH.exists():
+        try:
+            cfg = _try_validate(json.loads(SEED_PATH.read_text(encoding="utf-8")))
+            recovered = True
+        except Exception:
+            cfg = None
+
+    if cfg is None:
+        cfg = DashboardConfig()
+        recovered = True
+
+    _cached = cfg
+    if recovered or not CONFIG_PATH.exists():
         _write_disk(_cached)
     return _cached
 
@@ -143,6 +187,9 @@ async def save_config(new: DashboardConfig, *, base_version: int) -> DashboardCo
         current = get_config()
         if base_version != current.version:
             raise StaleConfigError(current.version)
+        from .redact import preserve_secrets
+
+        preserve_secrets(new, current)
         alerts_changed = current.settings.alerts != new.settings.alerts
         new.version = current.version + 1
         _write_disk(new)

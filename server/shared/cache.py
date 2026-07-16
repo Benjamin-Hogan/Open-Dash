@@ -11,8 +11,9 @@ from typing import Any
 
 
 class TTLCache:
-    def __init__(self) -> None:
+    def __init__(self, max_entries: int = 256) -> None:
         self._store: dict[str, tuple[float, Any]] = {}  # key -> (expires_at, value)
+        self._max_entries = max_entries
 
     def get(self, key: str) -> Any | None:
         item = self._store.get(key)
@@ -22,10 +23,17 @@ class TTLCache:
         if expires_at < time.monotonic():
             self._store.pop(key, None)
             return None
+        # Refresh insertion order for LRU eviction (CPython 3.7+ dict order).
+        self._store.pop(key)
+        self._store[key] = (expires_at, value)
         return value
 
     def set(self, key: str, value: Any, ttl: float) -> None:
+        self._store.pop(key, None)
         self._store[key] = (time.monotonic() + ttl, value)
+        while len(self._store) > self._max_entries:
+            oldest = next(iter(self._store))
+            self._store.pop(oldest, None)
 
     def invalidate(self, key: str) -> bool:
         """Drop a single key. Returns True if it was present."""

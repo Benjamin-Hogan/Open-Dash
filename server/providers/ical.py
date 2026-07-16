@@ -13,12 +13,12 @@ import calendar
 import datetime as dt
 from typing import Any
 
-import httpx
-
 from ..shared.providers import Provider, register
+from ..shared.safe_fetch import UnsafeURLError, get_text
 
 _WINDOW_DAYS = 60
 _MAX_OCCURRENCES = 200          # safety cap per recurring event
+_MAX_EVENTS = 50
 _WEEKDAYS = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
 
 
@@ -126,16 +126,20 @@ class ICalProvider(Provider):
 
     async def fetch(self, params: dict[str, Any]) -> dict[str, Any]:
         url = str(params.get("url", "")).strip()
-        count = int(params.get("count") or 10)
+        try:
+            count = max(1, min(_MAX_EVENTS, int(params.get("count") or 10)))
+        except (TypeError, ValueError):
+            count = 10
         if not url:
             return {"events": [], "error": "no url"}
         headers = {"User-Agent": "PiDashboard/3 (+ical)"}
-        async with httpx.AsyncClient(timeout=10.0, headers=headers, follow_redirects=True) as client:
-            r = await client.get(url)
-            r.raise_for_status()
-            lines = _unfold(r.text)
+        try:
+            text = await get_text(url, headers=headers, timeout=10.0)
+        except UnsafeURLError as exc:
+            return {"events": [], "error": str(exc)}
+        lines = _unfold(text)
 
-        now = dt.datetime.utcnow()
+        now = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
         win_start = now - dt.timedelta(days=1)
         win_end = now + dt.timedelta(days=_WINDOW_DAYS)
 
