@@ -6,3 +6,5 @@ venv/
 # Runtime data (live config, backups, secrets) — not committed.
 data/
 .claude/worktrees/
+*.egg-info/
+.pytest_cache/

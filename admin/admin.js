@@ -21,27 +21,40 @@ function rotation() {
   return state.config.rotation || (state.config.rotation = { enabled: false, defaultDurationSeconds: 30, order: [] });
 }
 
+let dashPort = 8082;
+
 async function load() {
-  const res = await fetch("/api/config");
-  state.config = await res.json();
-  if (!pages().length) pages().push({ id: "page-1", name: "Home", widgets: [] });
-  state.activePage = Math.min(state.activePage, pages().length - 1);
-  $("#version").textContent = "v" + state.config.version;
-  renderAll();
+  try {
+    const [cfgRes, metaRes] = await Promise.all([
+      fetch("/api/config"),
+      fetch("/api/meta").catch(() => null),
+    ]);
+    if (!cfgRes.ok) throw new Error(`config ${cfgRes.status}`);
+    state.config = await cfgRes.json();
+    if (metaRes?.ok) {
+      const meta = await metaRes.json();
+      if (meta.dashboardPort) dashPort = meta.dashboardPort;
+    }
+    if (!pages().length) pages().push({ id: "page-1", name: "Home", widgets: [] });
+    state.activePage = Math.min(state.activePage, pages().length - 1);
+    $("#version").textContent = "v" + state.config.version;
+    renderAll();
+  } catch (e) {
+    toast("Could not load config: " + e.message, "err");
+  }
 }
 
 function renderAll() { renderPageBar(); renderCanvas(); renderList(); updatePreview(); }
 
 // ---- live mini-preview (the real dashboard, one page, scaled down) -----------
-// The dashboard app on :8082 supports ?page=<id>: locked to that page, no
-// rotation, no device registration. It live-reloads over SSE on every save, so
-// this iframe always shows the page as it will actually render.
-const DASH_PORT = 8082;
+// The dashboard app supports ?page=<id>: locked to that page, no rotation, no
+// device registration. It live-reloads over SSE on every save, so this iframe
+// always shows the page as it will actually render. Port comes from /api/meta.
 let previewOn = false;
 
 function previewUrl() {
   const p = currentPage();
-  return `http://${location.hostname}:${DASH_PORT}/?page=${encodeURIComponent(p ? p.id : "")}`;
+  return `http://${location.hostname}:${dashPort}/?page=${encodeURIComponent(p ? p.id : "")}`;
 }
 
 function updatePreview() {
@@ -390,6 +403,9 @@ function openEditor(id) {
   const widget = existing
     ? structuredClone(existing)
     : { id: "", type: registry.types()[0], title: "", enabled: true, grid: { x: 0, y: nextFreeRow(), w: 4, h: 3 }, settings: {} };
+  if (widget.type === "slideshow") {
+    widget.slideshow = widget.slideshow || { enabled: true, durationSeconds: 30, slides: [] };
+  }
   state.editingId = existing ? id : null;
   renderForm(editor, widget);
 }
@@ -402,20 +418,32 @@ function renderForm(editor, widget) {
   editor.appendChild(h);
 
   editor.appendChild(field("Type", select(registry.types(), widget.type, (v) => {
-    widget.type = v;
-    widget.settings = {};
-    renderForm(editor, gather(editor, widget));
+    const next = gather(editor, widget);
+    next.type = v;
+    next.settings = {};
+    if (v !== "slideshow") next.slideshow = null;
+    else next.slideshow = next.slideshow || { enabled: true, durationSeconds: 30, slides: [] };
+    renderForm(editor, next);
   })));
   editor.appendChild(field("Title", input("text", widget.title, "title")));
   editor.appendChild(boolField("Enabled", widget.enabled !== false, "enabled"));
 
   const plugin = registry.get(widget.type);
-  const fields = plugin?.schema?.fields || [];
+  const fields = (plugin?.schema?.fields || []).filter((f) => f.key !== "_slidesNote");
   if (fields.length) editor.appendChild(sectionTitle("Settings"));
   for (const f of fields) editor.appendChild(renderField(f, widget));
 
   editor.appendChild(field("Refresh seconds (blank = none)", input("number", widget.refreshSeconds ?? "", "refreshSeconds")));
   editor.appendChild(noteEl("Position & size are set by dragging on the layout canvas."));
+
+  editor.appendChild(sectionTitle("Schedule"));
+  editor.appendChild(noteEl("Hide this widget outside a time window (same rules as page schedules)."));
+  appendScheduleFields(editor, widget.schedule || {}, "ws");
+
+  if (widget.type === "slideshow") {
+    editor.appendChild(sectionTitle("Slides"));
+    appendSlideshowFields(editor, widget);
+  }
 
   const actions = document.createElement("div");
   actions.className = "editor-actions";
@@ -465,6 +493,9 @@ function gather(editor, base) {
     else if (f.type === "number") w.settings[f.key] = node.value === "" ? null : Number(node.value);
     else w.settings[f.key] = node.value;
   }
+  w.schedule = gatherSchedule(editor, "ws");
+  if (w.type === "slideshow") w.slideshow = gatherSlideshow(editor, w);
+  else w.slideshow = null;
   return w;
 }
 
@@ -479,9 +510,25 @@ async function commit(editor, widget) {
   await save();
 }
 
-// ---- single write path ------------------------------------------------------
+// ---- single write path (queued so rapid canvas drags can't 409 mid-edit) ----
+
+let saving = false;
+let saveAgain = false;
 
 async function save() {
+  if (saving) { saveAgain = true; return; }
+  saving = true;
+  try {
+    do {
+      saveAgain = false;
+      await saveOnce();
+    } while (saveAgain);
+  } finally {
+    saving = false;
+  }
+}
+
+async function saveOnce() {
   try {
     const res = await fetch("/api/config", {
       method: "PUT",
@@ -572,9 +619,17 @@ function openAlerts() {
 
 // ---- form element helpers ---------------------------------------------------
 
+let _fieldSeq = 0;
 function field(label, control) {
   const d = document.createElement("div"); d.className = "field";
-  if (label) { const l = document.createElement("label"); l.textContent = label; d.appendChild(l); }
+  if (label) {
+    const l = document.createElement("label");
+    l.textContent = label;
+    const id = control.id || (control.dataset?.name ? `f-${control.dataset.name}` : `f-${++_fieldSeq}`);
+    control.id = id;
+    l.htmlFor = id;
+    d.appendChild(l);
+  }
   d.appendChild(control); return d;
 }
 function sectionTitle(t) { const d = document.createElement("div"); d.className = "section-title"; d.textContent = t; return d; }
@@ -600,11 +655,181 @@ function select(options, value, onchange, name) {
 function boolField(label, checked, name) {
   const d = document.createElement("div"); d.className = "field";
   const l = document.createElement("label"); l.style.display = "flex"; l.style.gap = "8px"; l.style.alignItems = "center";
-  const c = document.createElement("input"); c.type = "checkbox"; c.checked = checked; c.dataset.name = name; c.style.width = "auto";
+  const c = document.createElement("input"); c.type = "checkbox"; c.checked = checked; c.dataset.name = name; c.id = `f-${name}`; c.style.width = "auto";
   const span = document.createElement("span"); span.textContent = label;
   l.append(c, span); d.appendChild(l); return d;
 }
-function button(text, cls, fn) { const b = document.createElement("button"); b.className = cls; b.textContent = text; b.onclick = fn; return b; }
+function button(text, cls, fn) { const b = document.createElement("button"); b.type = "button"; b.className = cls; b.textContent = text; b.onclick = fn; return b; }
+
+// ---- shared schedule fields (page + widget) ---------------------------------
+
+const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function appendScheduleFields(editor, schedule, prefix) {
+  const s = schedule || {};
+  editor.appendChild(boolField("Enable schedule", s.enabled === true, `${prefix}-enabled`));
+  editor.appendChild(field("Start (HH:MM)", input("time", s.start || "", `${prefix}-start`)));
+  editor.appendChild(field("End (HH:MM)", input("time", s.end || "", `${prefix}-end`)));
+  const dayWrap = document.createElement("div");
+  dayWrap.className = "day-picker";
+  dayWrap.dataset.name = `${prefix}-days`;
+  DAY_LABELS.forEach((label, d) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "day-chip" + ((s.days || []).includes(d) ? " on" : "");
+    b.textContent = label;
+    b.dataset.day = d;
+    b.onclick = () => b.classList.toggle("on");
+    dayWrap.appendChild(b);
+  });
+  editor.appendChild(field("Days (none selected = every day)", dayWrap));
+}
+
+function gatherSchedule(editor, prefix) {
+  const enabled = editor.querySelector(`[data-name="${prefix}-enabled"]`)?.checked === true;
+  const start = editor.querySelector(`[data-name="${prefix}-start"]`)?.value || null;
+  const end = editor.querySelector(`[data-name="${prefix}-end"]`)?.value || null;
+  const dayWrap = editor.querySelector(`[data-name="${prefix}-days"]`);
+  const days = dayWrap
+    ? [...dayWrap.querySelectorAll(".day-chip.on")].map((b) => Number(b.dataset.day))
+    : [];
+  if (!enabled && !start && !end && !days.length) return null;
+  return { enabled, start, end, days };
+}
+
+// ---- slideshow widget slides editor ----------------------------------------
+
+function slideTypeOptions() {
+  return registry.types().filter((t) => t !== "slideshow");
+}
+
+function appendSlideshowFields(editor, widget) {
+  const cfg = widget.slideshow || { enabled: true, durationSeconds: 30, slides: [] };
+  widget.slideshow = cfg;
+  if (!Array.isArray(cfg.slides)) cfg.slides = [];
+
+  editor.appendChild(field("Seconds per slide", input("number", cfg.durationSeconds ?? 30, "ss-duration")));
+  const host = document.createElement("div");
+  host.dataset.name = "ss-slides";
+  editor.appendChild(host);
+
+  const redraw = () => {
+    host.replaceChildren();
+    cfg.slides.forEach((slide, i) => {
+      const card = document.createElement("div");
+      card.className = "slide-card";
+      card.dataset.slideIndex = i;
+      const head = document.createElement("div");
+      head.className = "slide-card-head";
+      head.appendChild(Object.assign(document.createElement("strong"), { textContent: `Slide ${i + 1}` }));
+      const tools = document.createElement("div");
+      tools.style.display = "flex";
+      tools.style.gap = "4px";
+      tools.append(
+        button("↑", "btn small", () => {
+          if (i <= 0) return;
+          const cur = gatherSlideshow(editor, widget);
+          const arr = cur.slides;
+          [arr[i - 1], arr[i]] = [arr[i], arr[i - 1]];
+          widget.slideshow = cur;
+          appendSlideshowFieldsRebuild(editor, widget);
+        }),
+        button("↓", "btn small", () => {
+          const cur = gatherSlideshow(editor, widget);
+          const arr = cur.slides;
+          if (i >= arr.length - 1) return;
+          [arr[i + 1], arr[i]] = [arr[i], arr[i + 1]];
+          widget.slideshow = cur;
+          appendSlideshowFieldsRebuild(editor, widget);
+        }),
+        button("Remove", "btn small danger", () => {
+          const cur = gatherSlideshow(editor, widget);
+          cur.slides.splice(i, 1);
+          widget.slideshow = cur;
+          appendSlideshowFieldsRebuild(editor, widget);
+        }),
+      );
+      head.appendChild(tools);
+      card.appendChild(head);
+
+      const types = slideTypeOptions();
+      const typeSel = select(types, slide.type || types[0], (v) => {
+        const cur = gatherSlideshow(editor, widget);
+        cur.slides[i] = { type: v, title: cur.slides[i]?.title || "", settings: {} };
+        widget.slideshow = cur;
+        appendSlideshowFieldsRebuild(editor, widget);
+      }, `ss-${i}-type`);
+      card.appendChild(field("Type", typeSel));
+      card.appendChild(field("Title", input("text", slide.title || "", `ss-${i}-title`)));
+
+      const plugin = registry.get(slide.type || types[0]);
+      const fields = (plugin?.schema?.fields || []).filter((f) => f.type !== "note");
+      const fakeWidget = { settings: slide.settings || {} };
+      for (const f of fields) {
+        const node = renderField(f, fakeWidget);
+        // Remap settings field names into per-slide namespace
+        node.querySelectorAll("[data-name]").forEach((el) => {
+          const n = el.dataset.name;
+          if (n.startsWith("set-")) el.dataset.name = `ss-${i}-${n}`;
+        });
+        card.appendChild(node);
+      }
+      host.appendChild(card);
+    });
+  };
+  redraw();
+  editor._redrawSlides = redraw;
+
+  editor.appendChild(button("+ Add slide", "btn", () => {
+    const cur = gatherSlideshow(editor, widget);
+    const types = slideTypeOptions();
+    cur.slides.push({ type: types[0], title: "", settings: {} });
+    widget.slideshow = cur;
+    appendSlideshowFieldsRebuild(editor, widget);
+  }));
+}
+
+function appendSlideshowFieldsRebuild(editor, widget) {
+  // Re-render the whole form so slide field names stay consistent with gather.
+  // Preserve the in-memory slides list (reorder/remove already applied) — a
+  // fresh gatherSlideshow would read the pre-mutation DOM order.
+  const slides = widget.slideshow;
+  const w = gather(editor, widget);
+  w.slideshow = slides;
+  renderForm(editor, w);
+}
+
+function gatherSlideshow(editor, widget) {
+  const duration = Math.max(2, Math.round(Number(editor.querySelector('[data-name="ss-duration"]')?.value) || 30));
+  const host = editor.querySelector('[data-name="ss-slides"]');
+  const slides = [];
+  if (host) {
+    host.querySelectorAll(".slide-card").forEach((card, i) => {
+      const type = card.querySelector(`[data-name="ss-${i}-type"]`)?.value || "text";
+      const title = card.querySelector(`[data-name="ss-${i}-title"]`)?.value || "";
+      const settings = {};
+      const plugin = registry.get(type);
+      for (const f of plugin?.schema?.fields || []) {
+        if (f.type === "note" || f.type === "stock-picker") continue;
+        const node = card.querySelector(`[data-name="ss-${i}-set-${f.key}"]`);
+        if (!node) continue;
+        if (f.type === "boolean") settings[f.key] = node.checked;
+        else if (f.type === "password") { if (node.value) settings[f.key] = node.value; }
+        else if (f.type === "number") settings[f.key] = node.value === "" ? null : Number(node.value);
+        else settings[f.key] = node.value;
+      }
+      // Preserve prior password values when blank (same as top-level widgets).
+      const prev = widget.slideshow?.slides?.[i];
+      if (prev?.settings) {
+        for (const [k, v] of Object.entries(prev.settings)) {
+          if ((k === "apiKey" || k.toLowerCase().includes("key")) && !settings[k] && v) settings[k] = v;
+        }
+      }
+      slides.push({ type, title, settings });
+    });
+  }
+  return { enabled: true, durationSeconds: duration, slides };
+}
 
 // ---- url field with quick-fill presets (for embeddable live sites) ----------
 
@@ -744,7 +969,12 @@ async function openKeys() {
       for (const [key, inp] of Object.entries(inputs)) if (!inp.disabled && inp.value) values[key] = inp.value;
       if (!Object.keys(values).length) { toast("Nothing to save", ""); return; }
       try {
-        await fetch("/api/secrets", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ values }) });
+        const res = await fetch("/api/secrets", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ values }),
+        });
+        if (!res.ok) { toast("Save failed: " + res.status, "err"); return; }
         toast("Keys saved · dashboards refreshing", "ok");
         editor.classList.add("hidden");
       } catch (e) { toast("Save failed: " + e.message, "err"); }
@@ -795,12 +1025,9 @@ async function openBackups() {
 // Same Schedule shape widgets use (days 0=Mon..6=Sun, HH:MM window, may wrap
 // past midnight). Displays skip the page outside the window.
 
-const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
 function openPageSchedule(i) {
   const page = pages()[i];
   if (!page) return;
-  const s = page.schedule || {};
   const editor = $("#editor");
   editor.classList.remove("hidden");
   editor.replaceChildren();
@@ -809,34 +1036,13 @@ function openPageSchedule(i) {
   const h = document.createElement("h2"); h.textContent = `Schedule — ${page.name}`; h.style.margin = "0 0 6px";
   editor.appendChild(h);
   editor.appendChild(noteEl("Show this page only during a time window. Outside it, the slideshow skips the page (and a display assigned only this page falls back to the others). The window may wrap past midnight, e.g. 21:00 → 06:00."));
-
-  editor.appendChild(boolField("Enable schedule", s.enabled === true, "ps-enabled"));
-  editor.appendChild(field("Start (HH:MM)", input("time", s.start || "", "ps-start")));
-  editor.appendChild(field("End (HH:MM)", input("time", s.end || "", "ps-end")));
-
-  const dayWrap = document.createElement("div"); dayWrap.className = "day-picker";
-  DAY_LABELS.forEach((label, d) => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "day-chip" + ((s.days || []).includes(d) ? " on" : "");
-    b.textContent = label;
-    b.dataset.day = d;
-    b.onclick = () => b.classList.toggle("on");
-    dayWrap.appendChild(b);
-  });
-  editor.appendChild(field("Days (none selected = every day)", dayWrap));
+  appendScheduleFields(editor, page.schedule || {}, "ps");
 
   const actions = document.createElement("div"); actions.className = "editor-actions";
   actions.append(
     button("Cancel", "btn", () => editor.classList.add("hidden")),
     button("Save", "btn primary", () => {
-      const enabled = editor.querySelector('[data-name="ps-enabled"]').checked;
-      const start = editor.querySelector('[data-name="ps-start"]').value || null;
-      const end = editor.querySelector('[data-name="ps-end"]').value || null;
-      const days = [...dayWrap.querySelectorAll(".day-chip.on")].map((b) => Number(b.dataset.day));
-      page.schedule = enabled || start || end || days.length
-        ? { enabled, start, end, days }
-        : null;
+      page.schedule = gatherSchedule(editor, "ps");
       editor.classList.add("hidden");
       save();
     }),
@@ -857,10 +1063,27 @@ function openLayout() {
   editor.replaceChildren();
   state.editingId = null;
   const s = state.config.settings || (state.config.settings = {});
+  const theme = s.theme || (s.theme = { mode: "dark", accent: "#4aa3ff" });
   const oldCols = s.columns || 12, oldRow = s.rowHeightPx || 90, oldGap = s.gapPx ?? 12;
 
-  const h = document.createElement("h2"); h.textContent = "Layout & grid"; h.style.margin = "0 0 6px";
+  const h = document.createElement("h2"); h.textContent = "Layout & appearance"; h.style.margin = "0 0 6px";
   editor.appendChild(h);
+
+  editor.appendChild(sectionTitle("Dashboard"));
+  editor.appendChild(field("Title", input("text", s.title || "Pi Dashboard", "lay-title")));
+  editor.appendChild(field("Theme", select(
+    [
+      { value: "dark", label: "Dark" },
+      { value: "light", label: "Light" },
+      { value: "auto", label: "Auto (follow system)" },
+    ],
+    theme.mode || "dark",
+    null,
+    "lay-theme",
+  )));
+  editor.appendChild(field("Accent color", input("color", theme.accent || "#4aa3ff", "lay-accent")));
+
+  editor.appendChild(sectionTitle("Grid"));
   editor.appendChild(noteEl("Widgets snap to this grid when you drag-resize on the canvas — so it sets how finely you can size them. More columns = smaller width steps; a shorter row height = smaller height steps. This grid is shared by every display."));
 
   editor.appendChild(field("Columns (1–48)", input("number", oldCols, "lay-cols")));
@@ -892,6 +1115,10 @@ function openLayout() {
 function saveLayout(oldCols, oldRow) {
   const editor = $("#editor");
   const s = state.config.settings || (state.config.settings = {});
+  s.title = editor.querySelector('[data-name="lay-title"]')?.value?.trim() || "Pi Dashboard";
+  s.theme = s.theme || {};
+  s.theme.mode = editor.querySelector('[data-name="lay-theme"]')?.value || "dark";
+  s.theme.accent = editor.querySelector('[data-name="lay-accent"]')?.value || "#4aa3ff";
   const newCols = clamp(Math.round(Number(editor.querySelector('[data-name="lay-cols"]').value) || 12), 1, 48);
   const newRow = Math.max(20, Math.round(Number(editor.querySelector('[data-name="lay-row"]').value) || 90));
   const newGap = Math.max(0, Math.round(Number(editor.querySelector('[data-name="lay-gap"]').value) || 0));
@@ -923,19 +1150,33 @@ const UI_MIN = 0.5, UI_MAX = 2.0, UI_STEP = 0.05;
 const FONT_MIN = 0.6, FONT_MAX = 1.8, FONT_STEP = 0.05;
 const clampScale = (v, lo, hi) => Math.round(Math.max(lo, Math.min(hi, v)) * 1000) / 1000;
 
+// Generation token: overlapping openDisplays() calls (double-click Displays /
+// Refresh while a fetch is in flight) used to append a second full list after
+// the first request completed — every display appeared twice.
+let displaysGen = 0;
+
 async function openDisplays() {
+  const gen = ++displaysGen;
   const editor = $("#editor");
   editor.classList.remove("hidden");
   editor.replaceChildren();
   state.editingId = null;
   const h = document.createElement("h2"); h.textContent = "Displays"; h.style.margin = "0 0 6px";
   editor.appendChild(h);
-  editor.appendChild(noteEl("Every screen loads the same layout, but each keeps its own size overlay so small displays can shrink text and rows to fit. Changes apply live. A display appears here after it has loaded the dashboard once."));
+  editor.appendChild(noteEl("Every screen loads the same layout, but each keeps its own size overlay so small displays can shrink text and rows to fit. Changes apply live. A display appears here after it has loaded the dashboard once. Remove stale duplicates that no longer connect."));
   editor.appendChild(button("Refresh", "btn small", openDisplays));
 
   let devices = [];
-  try { devices = (await (await fetch("/api/devices")).json()).devices || []; }
-  catch { toast("Could not load displays", "err"); return; }
+  try {
+    const res = await fetch("/api/devices");
+    if (!res.ok) throw new Error(String(res.status));
+    devices = (await res.json()).devices || [];
+  } catch {
+    if (gen !== displaysGen) return;
+    toast("Could not load displays", "err");
+    return;
+  }
+  if (gen !== displaysGen) return; // newer openDisplays won the race
 
   if (!devices.length) editor.appendChild(noteEl("No displays have connected yet."));
   const list = document.createElement("div"); list.className = "device-list";
@@ -958,6 +1199,7 @@ function deviceRow(d) {
   const meta = document.createElement("div"); meta.className = "device-meta";
   meta.textContent = [
     d.viewport || "unknown size",
+    `id ${d.id.slice(0, 8)}`,
     seen ? (stale ? "last seen " + seen.toLocaleString([], { dateStyle: "short", timeStyle: "short" }) : "online") : "never seen",
   ].join(" · ");
   if (!stale) row.classList.add("online");
@@ -981,6 +1223,16 @@ function deviceRow(d) {
     scaleStepper("Size", () => cur.uiScale, (v) => { cur.uiScale = clampScale(v, UI_MIN, UI_MAX); push(); }, UI_STEP),
     scaleStepper("Text", () => cur.fontScale, (v) => { cur.fontScale = clampScale(v, FONT_MIN, FONT_MAX); push(); }, FONT_STEP),
     button("Reset", "btn small", () => { cur.uiScale = 1; cur.fontScale = 1; row.querySelectorAll(".device-val").forEach((n) => n.textContent = "100%"); push(); }),
+    button("Remove", "btn small danger", async () => {
+      const label = d.name || d.id.slice(0, 8);
+      if (!confirm(`Remove “${label}” from the display list? It will reappear if that screen loads the dashboard again.`)) return;
+      try {
+        const res = await fetch(`/api/devices/${encodeURIComponent(d.id)}`, { method: "DELETE" });
+        if (!res.ok && res.status !== 404) { toast("Remove failed: " + res.status, "err"); return; }
+        toast("Display removed", "ok");
+        openDisplays();
+      } catch (e) { toast("Remove failed: " + e.message, "err"); }
+    }),
   );
 
   // which pages this display shows ("All" = empty list = follow the rotation)
@@ -1072,10 +1324,24 @@ $("#btn-alerts").onclick = openAlerts;
 $("#btn-add").onclick = () => openEditor(null);
 $("#btn-preview").onclick = togglePreview;
 $("#btn-test-alert").onclick = async () => {
-  const r = await fetch("/api/alerts/test", { method: "POST" });
-  toast(r.ok ? "Test alert sent to all displays" : "Test alert failed", r.ok ? "ok" : "err");
+  try {
+    const r = await fetch("/api/alerts/test", { method: "POST" });
+    toast(r.ok ? "Test alert sent to all displays" : "Test alert failed", r.ok ? "ok" : "err");
+  } catch (e) { toast("Test alert failed: " + e.message, "err"); }
 };
-$("#btn-clear").onclick = async () => { const r = await fetch("/api/cache/clear", { method: "POST" }); const d = await r.json(); toast(`Cache cleared (${d.cleared})`, "ok"); };
-$("#btn-refresh").onclick = async () => { await fetch("/api/refresh", { method: "POST" }); toast("Dashboards refreshing", "ok"); };
+$("#btn-clear").onclick = async () => {
+  try {
+    const r = await fetch("/api/cache/clear", { method: "POST" });
+    if (!r.ok) { toast("Clear cache failed: " + r.status, "err"); return; }
+    const d = await r.json();
+    toast(`Cache cleared (${d.cleared})`, "ok");
+  } catch (e) { toast("Clear cache failed: " + e.message, "err"); }
+};
+$("#btn-refresh").onclick = async () => {
+  try {
+    const r = await fetch("/api/refresh", { method: "POST" });
+    toast(r.ok ? "Dashboards refreshing" : "Refresh failed: " + r.status, r.ok ? "ok" : "err");
+  } catch (e) { toast("Refresh failed: " + e.message, "err"); }
+};
 
 load();

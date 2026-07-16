@@ -115,3 +115,13 @@ async def set_prefs(device_id: str, patch: dict) -> dict:
     prefs = get(device_id)
     await events.broadcast("device-prefs", prefs)
     return prefs
+
+
+async def remove(device_id: str) -> bool:
+    """Forget a device. Returns True if it was present."""
+    async with _lock:
+        existed = device_id in _all()
+        if existed:
+            _all().pop(device_id, None)
+            _write()
+        return existed

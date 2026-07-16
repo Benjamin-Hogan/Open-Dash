@@ -7,7 +7,11 @@ route replaces the per-widget endpoints the original duplicated across files.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request, Response
+import logging
+import os
+import re
+
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from .providers import stocks as stocks_mod
@@ -18,8 +22,19 @@ from .shared import devices as device_store
 from .shared import events, providers
 from .shared.cache import cache
 from .shared.config import WEB_DIR
+from .shared.redact import public_dump
+
+log = logging.getLogger("dashboard.api")
 
 router = APIRouter(prefix="/api")
+
+_DEVICE_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+
+def _require_device_id(device_id: str) -> str:
+    if not _DEVICE_ID_RE.fullmatch(device_id):
+        raise HTTPException(status_code=400, detail="invalid device id")
+    return device_id
 
 
 def _asset_version() -> str:
@@ -65,9 +80,25 @@ async def gif_list():
     return {"sources": list(gifs.SOURCES.keys())}
 
 
+@router.get("/health")
+async def health():
+    cfg = config_store.get_config()
+    return {"ok": True, "configVersion": cfg.version}
+
+
+@router.get("/meta")
+async def meta():
+    """Ports + product stance for admin preview / UI banners."""
+    return {
+        "adminPort": int(os.environ.get("ADMIN_PORT", "8081")),
+        "dashboardPort": int(os.environ.get("DASHBOARD_PORT", "8082")),
+        "auth": "lan-open",
+    }
+
+
 @router.get("/config")
 async def get_config():
-    return config_store.get_config().model_dump(exclude_none=True)
+    return public_dump(config_store.get_config())
 
 
 # --- per-device display prefs (uiScale / fontScale) ---------------------------
@@ -94,17 +125,28 @@ async def list_devices():
 
 @router.get("/devices/{device_id}")
 async def get_device(device_id: str):
-    return device_store.get(device_id)
+    return device_store.get(_require_device_id(device_id))
 
 
 @router.post("/devices/{device_id}/heartbeat")
 async def device_heartbeat(device_id: str, body: DeviceHeartbeat):
-    return await device_store.heartbeat(device_id, body.name, body.viewport)
+    return await device_store.heartbeat(_require_device_id(device_id), body.name, body.viewport)
 
 
 @router.put("/devices/{device_id}/prefs")
 async def set_device_prefs(device_id: str, body: DevicePrefsBody):
-    return await device_store.set_prefs(device_id, body.model_dump(exclude_none=True))
+    return await device_store.set_prefs(
+        _require_device_id(device_id), body.model_dump(exclude_none=True)
+    )
+
+
+@router.delete("/devices/{device_id}")
+async def delete_device(device_id: str):
+    """Remove a stale/duplicate display entry from the store."""
+    removed = await device_store.remove(_require_device_id(device_id))
+    if not removed:
+        raise HTTPException(status_code=404, detail="device not found")
+    return {"removed": True, "id": device_id}
 
 
 # --- alerts (engine in shared/alerts.py; displays catch up here on connect) ----
@@ -165,7 +207,8 @@ async def get_data(provider_name: str, request: Request):
     try:
         result = await provider.fetch(params)
     except Exception as exc:  # upstream failure → 502, don't crash the app
-        raise HTTPException(status_code=502, detail=f"{provider_name} fetch failed: {exc}")
+        log.warning("%s fetch failed: %s", provider_name, exc)
+        raise HTTPException(status_code=502, detail=f"{provider_name} fetch failed")
     if provider.ttl > 0:
         cache.set(key, result, provider.ttl)
     return result
