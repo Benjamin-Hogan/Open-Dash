@@ -154,12 +154,36 @@ class Theme(BaseModel):
     accent: str = "#4aa3ff"
 
 
+class LocationSettings(BaseModel):
+    """Optional home location. When lat+lon are set, geo/NWS/weather defaults use them
+    instead of IP lookup (Phoenix fallback). City/region are display labels only."""
+    model_config = ConfigDict(extra="forbid")
+    lat: float | None = Field(default=None, ge=-90, le=90)
+    lon: float | None = Field(default=None, ge=-180, le=180)
+    city: str = ""
+    region: str = ""
+
+
 class AlertSettings(BaseModel):
-    """Auto-dismiss timing for banner alerts (seconds). 0 = keep until dismissed."""
+    """Banner alert engine settings — TTLs, source toggles, and space-weather knobs.
+
+    TTL ``0`` = keep until dismissed (NWS still capped by official expiry).
+    ``spaceTtlSeconds`` ``0`` = follow the warning severity TTL instead of a fixed window.
+    """
     model_config = ConfigDict(extra="forbid")
     infoTtlSeconds: int = Field(default=90, ge=0)
     warningTtlSeconds: int = Field(default=0, ge=0)
     dangerTtlSeconds: int = Field(default=0, ge=0)
+    # Source enable switches (silent when off; prerequisites still required when on).
+    octoprintEnabled: bool = True
+    nwsEnabled: bool = True
+    spaceEnabled: bool = True
+    # Ignore NWS alerts whose mapped severity is below this floor.
+    nwsMinSeverity: Literal["info", "warning", "danger"] = "info"
+    # Geomagnetic storm: fire when Kp >= threshold; reset hysteresis at threshold - 1.
+    kpThreshold: float = Field(default=6.0, ge=0, le=9)
+    # Explicit space-alert lifetime; 0 = use warningTtlSeconds / keep-until-dismissed.
+    spaceTtlSeconds: int = Field(default=3600, ge=0)
 
 
 class Settings(BaseModel):
@@ -169,6 +193,7 @@ class Settings(BaseModel):
     rowHeightPx: int = Field(default=90, ge=20)
     gapPx: int = Field(default=12, ge=0)
     theme: Theme = Field(default_factory=Theme)
+    location: LocationSettings = Field(default_factory=LocationSettings)
     alerts: AlertSettings = Field(default_factory=AlertSettings)
 
 

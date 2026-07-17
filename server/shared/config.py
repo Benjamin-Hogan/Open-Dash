@@ -183,6 +183,7 @@ async def save_config(new: DashboardConfig, *, base_version: int) -> DashboardCo
     from . import events
 
     alerts_changed = False
+    location_changed = False
     async with _lock:
         current = get_config()
         if base_version != current.version:
@@ -191,11 +192,20 @@ async def save_config(new: DashboardConfig, *, base_version: int) -> DashboardCo
 
         preserve_secrets(new, current)
         alerts_changed = current.settings.alerts != new.settings.alerts
+        location_changed = current.settings.location != new.settings.location
         new.version = current.version + 1
         _write_disk(new)
         _backup(new)
         _cached = new
     await events.broadcast("config-changed", {"version": new.version})
+    if location_changed:
+        # Drop IP cache + provider payloads so weather/AQI/NWS pick up the pin.
+        from . import geo
+        from .cache import cache
+
+        geo.invalidate()
+        cache.clear()
+        await events.broadcast("refresh", {})
     if alerts_changed:
         # Existing banners keep the old expiresAt unless we re-stamp them —
         # otherwise changing TTL in admin looks like "alerts never go away".

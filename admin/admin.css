@@ -115,6 +115,12 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: system
 .backup-list { display: flex; flex-direction: column; gap: 6px; max-height: 60vh; overflow: auto; margin-top: 8px; }
 .backup-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; }
 .backup-row.current { border-color: var(--accent); }
+
+.alert-active-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.alert-active-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; }
+.alert-active-info { flex: 1 1 auto; min-width: 0; }
+.alert-active-title { font-weight: 600; font-size: 13px; }
+.alert-active-msg { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .backup-info { flex: 1 1 auto; min-width: 0; }
 .backup-when { font-weight: 600; font-size: 14px; }
 .backup-meta { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }

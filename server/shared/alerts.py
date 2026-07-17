@@ -5,7 +5,8 @@ when something newsworthy happens; dashboards render it as a banner overlay
 (see app.js). Active alerts are also kept here so a display that (re)connects
 can catch up via GET /api/alerts.
 
-Sources (all silent when unconfigured — no keys, no printer, no location):
+Sources (all silent when unconfigured — no keys, no printer, no location —
+and when disabled in ``settings.alerts``):
 - **OctoPrint**: state *transitions* (started / complete / error), not states —
   so a print that's been running for an hour doesn't re-alert every tick.
   Printer URLs are discovered from octoprint widgets in the config.
@@ -13,7 +14,8 @@ Sources (all silent when unconfigured — no keys, no printer, no location):
   location — Dust Storm Warning, Severe Thunderstorm Warning, etc. Keyless.
   Banner lifetime follows admin severity TTLs (capped by the NWS ``expires``
   time). ✕ / TTL dismiss stays suppressed until NWS drops the alert.
-- **Space weather**: Kp >= 6 (geomagnetic storm) via the existing provider.
+- **Space weather**: Kp >= configured threshold (default 6) via the existing
+  provider. Lifetime follows ``spaceTtlSeconds`` (or warning severity TTL when 0).
 """
 
 from __future__ import annotations
@@ -31,6 +33,8 @@ log = logging.getLogger("dashboard.alerts")
 TICK_SECONDS = 20          # octoprint transition checks
 SLOW_EVERY = 15            # NWS + Kp every 15 ticks (~5 min)
 
+_SEVERITY_RANK = {"info": 0, "warning": 1, "danger": 2}
+
 _active: dict[str, dict] = {}      # id -> alert
 _dismissed: set[str] = set()       # stable ids (NWS) suppressed until upstream drops them
 _op_state: dict[str, dict] = {}    # printer url -> {state, completion}
@@ -45,11 +49,15 @@ def active() -> list[dict]:
     return out
 
 
-def _default_ttl(severity: str) -> float | None:
-    """Configured auto-dismiss for a severity; None = keep until dismissed."""
+def _alert_settings():
     from . import config as config_store
 
-    cfg = config_store.get_config().settings.alerts
+    return config_store.get_config().settings.alerts
+
+
+def _default_ttl(severity: str) -> float | None:
+    """Configured auto-dismiss for a severity; None = keep until dismissed."""
+    cfg = _alert_settings()
     sec = {
         "info": cfg.infoTtlSeconds,
         "warning": cfg.warningTtlSeconds,
@@ -73,8 +81,9 @@ async def push(severity: str, title: str, message: str, *, source: str,
     """Register an alert and broadcast it to every display.
 
     ``ttl=None`` means "use severity settings". An explicit ``ttl`` (e.g. space
-    weather) is left alone when alert settings change later. ``hard_expire_at``
-    caps the banner lifetime (NWS official expiry) without disabling settings TTL.
+    weather with a fixed window) is left alone when alert settings change later.
+    ``hard_expire_at`` caps the banner lifetime (NWS official expiry) without
+    disabling settings TTL.
     """
     from . import events
 
@@ -116,6 +125,16 @@ async def clear(alert_id: str, *, suppress: bool = True) -> bool:
         await events.broadcast("alert-cleared", {"id": alert_id})
         return True
     return False
+
+
+async def clear_all(*, suppress: bool = True) -> int:
+    """Dismiss every active alert. Returns how many were cleared."""
+    ids = list(_active.keys())
+    n = 0
+    for aid in ids:
+        if await clear(aid, suppress=suppress):
+            n += 1
+    return n
 
 
 async def reapply_settings_ttls() -> None:
@@ -191,6 +210,8 @@ def _fmt_eta(seconds: Any) -> str:
 
 
 async def _check_octoprint() -> None:
+    if not _alert_settings().octoprintEnabled:
+        return
     from . import providers
 
     provider = providers.get("octoprint")
@@ -225,7 +246,14 @@ async def _check_octoprint() -> None:
 _NWS_SEVERITY = {"Extreme": "danger", "Severe": "danger", "Moderate": "warning"}
 
 
+def _meets_min_severity(sev: str, floor: str) -> bool:
+    return _SEVERITY_RANK.get(sev, 0) >= _SEVERITY_RANK.get(floor, 0)
+
+
 async def _check_nws() -> None:
+    cfg = _alert_settings()
+    if not cfg.nwsEnabled:
+        return
     from . import geo
 
     try:
@@ -245,11 +273,15 @@ async def _check_nws() -> None:
 
     seen_now: set[str] = set()
     now = time.time()
+    floor = cfg.nwsMinSeverity or "info"
     for f in features:
         p = f.get("properties") or {}
         aid = "nws-" + str(f.get("id") or p.get("id") or "")
         seen_now.add(aid)
         if aid in _active or aid in _dismissed:
+            continue
+        sev = _NWS_SEVERITY.get(p.get("severity"), "info")
+        if not _meets_min_severity(sev, floor):
             continue
         hard_expire_at = None
         try:
@@ -259,7 +291,7 @@ async def _check_nws() -> None:
         except Exception:
             pass
         await push(
-            _NWS_SEVERITY.get(p.get("severity"), "info"),
+            sev,
             f"⚠ {p.get('event', 'Weather alert')}",
             p.get("headline") or p.get("event") or "",
             source="nws", alert_id=aid, hard_expire_at=hard_expire_at,
@@ -275,6 +307,9 @@ async def _check_nws() -> None:
 
 async def _check_kp() -> None:
     global _kp_alerted
+    cfg = _alert_settings()
+    if not cfg.spaceEnabled:
+        return
     from . import providers
     from .cache import cache
 
@@ -290,11 +325,21 @@ async def _check_kp() -> None:
     except Exception:
         return
     kp = float(d.get("kp") or 0)
-    if kp >= 6 and not _kp_alerted:
+    threshold = float(cfg.kpThreshold)
+    reset_at = max(0.0, threshold - 1.0)
+    if kp >= threshold and not _kp_alerted:
         _kp_alerted = True
-        await push("warning", "🌌 Geomagnetic storm", f"Kp {kp:g} — {d.get('aurora', '')}",
-                   source="space", ttl=3600)
-    elif kp < 5:
+        space_ttl = float(cfg.spaceTtlSeconds) if cfg.spaceTtlSeconds > 0 else None
+        # spaceTtlSeconds > 0 → fixed window (usesSettingsTtl=False);
+        # 0 → follow warning severity TTL like other banners.
+        kwargs: dict[str, Any] = {"source": "space"}
+        if space_ttl is not None:
+            kwargs["ttl"] = space_ttl
+        await push(
+            "warning", "🌌 Geomagnetic storm", f"Kp {kp:g} — {d.get('aurora', '')}",
+            **kwargs,
+        )
+    elif kp < reset_at:
         _kp_alerted = False
 
 

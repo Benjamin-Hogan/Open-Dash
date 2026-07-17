@@ -9,7 +9,15 @@ import pytest
 
 from server.shared import config as config_store
 from server.shared import migrations
-from server.shared.schema import DashboardConfig, Page, PageCondition, Schedule
+from server.shared.schema import (
+    AlertSettings,
+    DashboardConfig,
+    LocationSettings,
+    Page,
+    PageCondition,
+    Schedule,
+    Settings,
+)
 
 
 def test_migrate_flat_widgets_to_pages():
@@ -39,6 +47,24 @@ def test_schedule_hhmm_validation():
         Schedule(enabled=True, start="9:00", end="17:30")
     with pytest.raises(Exception):
         Schedule(enabled=True, start="09:00", end="17:30", days=[7])
+
+
+def test_location_and_alert_settings_defaults():
+    s = Settings()
+    assert s.location.lat is None and s.location.lon is None
+    assert s.alerts.octoprintEnabled is True
+    assert s.alerts.nwsEnabled is True
+    assert s.alerts.spaceEnabled is True
+    assert s.alerts.nwsMinSeverity == "info"
+    assert s.alerts.kpThreshold == 6.0
+    assert s.alerts.spaceTtlSeconds == 3600
+    LocationSettings(lat=33.4, lon=-112.0, city="Phoenix", region="AZ")
+    with pytest.raises(Exception):
+        LocationSettings(lat=100.0, lon=0.0)
+    with pytest.raises(Exception):
+        AlertSettings(kpThreshold=10)
+    with pytest.raises(Exception):
+        AlertSettings(nwsMinSeverity="critical")  # type: ignore[arg-type]
 
 
 def test_page_condition_defaults_and_bounds():

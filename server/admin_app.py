@@ -122,6 +122,14 @@ async def test_alert():
     )
 
 
+@app.post("/api/alerts/clear-all")
+async def clear_all_alerts():
+    """Dismiss every active banner on every display."""
+    from .shared import alerts
+
+    return {"cleared": await alerts.clear_all()}
+
+
 @app.post("/api/refresh")
 async def force_refresh():
     """Clear cached upstream data and tell dashboards to re-fetch now."""

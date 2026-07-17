@@ -586,11 +586,15 @@ function openSlideshow() {
   editor.appendChild(actions);
 }
 
-// ---- alert auto-dismiss settings --------------------------------------------
+// ---- alert engine settings + active banners ---------------------------------
 
 function alertsSettings() {
   const s = state.config.settings || (state.config.settings = {});
-  return s.alerts || (s.alerts = { infoTtlSeconds: 90, warningTtlSeconds: 0, dangerTtlSeconds: 0 });
+  return s.alerts || (s.alerts = {
+    infoTtlSeconds: 90, warningTtlSeconds: 0, dangerTtlSeconds: 0,
+    octoprintEnabled: true, nwsEnabled: true, spaceEnabled: true,
+    nwsMinSeverity: "info", kpThreshold: 6, spaceTtlSeconds: 3600,
+  });
 }
 
 function openAlerts() {
@@ -602,21 +606,101 @@ function openAlerts() {
 
   const h = document.createElement("h2"); h.textContent = "Alerts"; h.style.margin = "0 0 6px";
   editor.appendChild(h);
-  editor.appendChild(noteEl("How long banner alerts stay on screen before auto-dismissing (including weather). Set 0 to keep until someone taps ✕ or the official weather expiry (✕ clears every display and stays dismissed until NWS cancels it). Saving new times also updates alerts already on screen."));
+  editor.appendChild(noteEl("Sources push banners to every display. Auto-dismiss times apply to severity (including NWS, capped by the official expiry). ✕ clears every display and stays dismissed until NWS cancels that alert."));
 
+  editor.appendChild(sectionTitle("Sources"));
+  editor.appendChild(boolField("OctoPrint print transitions", a.octoprintEnabled !== false, "al-op"));
+  editor.appendChild(boolField("NWS severe weather", a.nwsEnabled !== false, "al-nws"));
+  editor.appendChild(boolField("Space weather (geomagnetic storm)", a.spaceEnabled !== false, "al-space"));
+
+  editor.appendChild(sectionTitle("NWS"));
+  editor.appendChild(field("Minimum severity", select(
+    [
+      { value: "info", label: "Info and above" },
+      { value: "warning", label: "Warning and above" },
+      { value: "danger", label: "Danger only" },
+    ],
+    a.nwsMinSeverity || "info",
+    null,
+    "al-nws-min",
+  )));
+
+  editor.appendChild(sectionTitle("Space weather"));
+  editor.appendChild(field("Kp threshold (fire when ≥)", input("number", a.kpThreshold ?? 6, "al-kp")));
+  editor.appendChild(field("Space alert lifetime (seconds, 0 = use warning TTL)", input("number", a.spaceTtlSeconds ?? 3600, "al-space-ttl")));
+  editor.appendChild(noteEl("Hysteresis resets when Kp drops below threshold − 1 (same as before for the default of 6)."));
+
+  editor.appendChild(sectionTitle("Auto-dismiss"));
   editor.appendChild(field("Info alerts (seconds, 0 = keep)", input("number", a.infoTtlSeconds ?? 90, "al-info")));
   editor.appendChild(field("Warning alerts (seconds, 0 = keep)", input("number", a.warningTtlSeconds ?? 0, "al-warning")));
   editor.appendChild(field("Danger alerts (seconds, 0 = keep)", input("number", a.dangerTtlSeconds ?? 0, "al-danger")));
-  editor.appendChild(noteEl("Defaults: info = 90s, warning/danger = keep until dismissed. Save, then use Test alert to preview."));
+  editor.appendChild(noteEl("Defaults: info = 90s, warning/danger = keep until dismissed. Saving new times also updates alerts already on screen. Use Test alert to preview."));
+
+  editor.appendChild(sectionTitle("Active on displays"));
+  const activeHost = document.createElement("div");
+  activeHost.className = "alert-active-list";
+  activeHost.appendChild(noteEl("Loading…"));
+  editor.appendChild(activeHost);
+  const refreshActive = async () => {
+    try {
+      const r = await fetch("/api/alerts");
+      const d = await r.json();
+      const list = d.alerts || [];
+      activeHost.replaceChildren();
+      if (!list.length) {
+        activeHost.appendChild(noteEl("No active banners right now."));
+      } else {
+        for (const al of list) {
+          const row = document.createElement("div");
+          row.className = "alert-active-row";
+          const info = document.createElement("div");
+          info.className = "alert-active-info";
+          const title = document.createElement("div");
+          title.className = "alert-active-title";
+          title.textContent = `${al.severity || "info"} · ${al.title || al.id}`;
+          const msg = document.createElement("div");
+          msg.className = "alert-active-msg";
+          msg.textContent = al.message || al.source || "";
+          info.append(title, msg);
+          row.append(
+            info,
+            button("Dismiss", "btn small danger", async () => {
+              await fetch("/api/alerts/" + encodeURIComponent(al.id), { method: "DELETE" });
+              refreshActive();
+            }),
+          );
+          activeHost.appendChild(row);
+        }
+        activeHost.appendChild(button("Dismiss all", "btn small danger", async () => {
+          if (!confirm("Dismiss every active alert on all displays?")) return;
+          await fetch("/api/alerts/clear-all", { method: "POST" });
+          refreshActive();
+        }));
+      }
+    } catch (e) {
+      activeHost.replaceChildren(noteEl("Could not load active alerts: " + e.message));
+    }
+  };
+  refreshActive();
 
   const actions = document.createElement("div"); actions.className = "editor-actions";
   actions.append(
     button("Cancel", "btn", () => editor.classList.add("hidden")),
     button("Save", "btn primary", () => {
-      const read = (name) => Math.max(0, Math.round(Number(editor.querySelector(`[data-name="${name}"]`).value) || 0));
-      a.infoTtlSeconds = read("al-info");
-      a.warningTtlSeconds = read("al-warning");
-      a.dangerTtlSeconds = read("al-danger");
+      const readInt = (name) => Math.max(0, Math.round(Number(editor.querySelector(`[data-name="${name}"]`).value) || 0));
+      const readNum = (name, fallback) => {
+        const v = Number(editor.querySelector(`[data-name="${name}"]`).value);
+        return Number.isFinite(v) ? v : fallback;
+      };
+      a.octoprintEnabled = editor.querySelector('[data-name="al-op"]')?.checked !== false;
+      a.nwsEnabled = editor.querySelector('[data-name="al-nws"]')?.checked !== false;
+      a.spaceEnabled = editor.querySelector('[data-name="al-space"]')?.checked !== false;
+      a.nwsMinSeverity = editor.querySelector('[data-name="al-nws-min"]')?.value || "info";
+      a.kpThreshold = Math.min(9, Math.max(0, readNum("al-kp", 6)));
+      a.spaceTtlSeconds = readInt("al-space-ttl");
+      a.infoTtlSeconds = readInt("al-info");
+      a.warningTtlSeconds = readInt("al-warning");
+      a.dangerTtlSeconds = readInt("al-danger");
       editor.classList.add("hidden");
       save();
     }),
@@ -1469,6 +1553,8 @@ function openLayout() {
   const h = document.createElement("h2"); h.textContent = "Layout & appearance"; h.style.margin = "0 0 6px";
   editor.appendChild(h);
 
+  const loc = s.location || (s.location = { lat: null, lon: null, city: "", region: "" });
+
   editor.appendChild(sectionTitle("Dashboard"));
   editor.appendChild(field("Title", input("text", s.title || "Pi Dashboard", "lay-title")));
   editor.appendChild(field("Theme", select(
@@ -1482,6 +1568,13 @@ function openLayout() {
     "lay-theme",
   )));
   editor.appendChild(field("Accent color", input("color", theme.accent || "#4aa3ff", "lay-accent")));
+
+  editor.appendChild(sectionTitle("Home location"));
+  editor.appendChild(noteEl("Used for NWS weather alerts and as the default for weather / air-quality widgets (unless a widget sets its own lat/lon). Leave lat+lon blank to use IP geolocation (falls back to Phoenix, AZ)."));
+  editor.appendChild(field("Latitude", input("number", loc.lat ?? "", "lay-lat", "e.g. 33.45")));
+  editor.appendChild(field("Longitude", input("number", loc.lon ?? "", "lay-lon", "e.g. -112.07")));
+  editor.appendChild(field("City (label)", input("text", loc.city || "", "lay-city")));
+  editor.appendChild(field("Region (label)", input("text", loc.region || "", "lay-region")));
 
   editor.appendChild(sectionTitle("Grid"));
   editor.appendChild(noteEl("Widgets snap to this grid when you drag-resize on the canvas — so it sets how finely you can size them. More columns = smaller width steps; a shorter row height = smaller height steps. This grid is shared by every display."));
@@ -1519,6 +1612,30 @@ function saveLayout(oldCols, oldRow) {
   s.theme = s.theme || {};
   s.theme.mode = editor.querySelector('[data-name="lay-theme"]')?.value || "dark";
   s.theme.accent = editor.querySelector('[data-name="lay-accent"]')?.value || "#4aa3ff";
+
+  const latRaw = editor.querySelector('[data-name="lay-lat"]')?.value?.trim() ?? "";
+  const lonRaw = editor.querySelector('[data-name="lay-lon"]')?.value?.trim() ?? "";
+  const lat = latRaw === "" ? null : Number(latRaw);
+  const lon = lonRaw === "" ? null : Number(lonRaw);
+  if ((lat == null) !== (lon == null)) {
+    toast("Set both latitude and longitude, or leave both blank for auto", "err");
+    return;
+  }
+  if (lat != null && (!Number.isFinite(lat) || lat < -90 || lat > 90)) {
+    toast("Latitude must be between -90 and 90", "err");
+    return;
+  }
+  if (lon != null && (!Number.isFinite(lon) || lon < -180 || lon > 180)) {
+    toast("Longitude must be between -180 and 180", "err");
+    return;
+  }
+  s.location = {
+    lat,
+    lon,
+    city: editor.querySelector('[data-name="lay-city"]')?.value?.trim() || "",
+    region: editor.querySelector('[data-name="lay-region"]')?.value?.trim() || "",
+  };
+
   const newCols = clamp(Math.round(Number(editor.querySelector('[data-name="lay-cols"]').value) || 12), 1, 48);
   const newRow = Math.max(20, Math.round(Number(editor.querySelector('[data-name="lay-row"]').value) || 90));
   const newGap = Math.max(0, Math.round(Number(editor.querySelector('[data-name="lay-gap"]').value) || 0));

@@ -40,10 +40,13 @@ live-reloads over Server-Sent Events.
   builds forms from each plugin's `schema`. Position/size are edited by **dragging
   and resizing** widgets on a visual grid canvas (per page). Widget **schedules**,
   **slideshow slides**, **scenes**, and global **theme/title** are editable in the admin.
-  Global **alert** auto-dismiss timing (per severity) is editable under **Alerts**;
-  ✕ and TTL changes sync across every display via the server. Weather (NWS)
-  banners use those same TTLs (capped by the official expiry); dismissing one
-  suppresses re-push until NWS cancels it.
+  **Layout** also pins an optional **home location** (lat/lon) used by NWS alerts
+  and as the default for weather / air-quality widgets. **Alerts** configures
+  source toggles (OctoPrint / NWS / space weather), NWS minimum severity, Kp
+  threshold + space-alert lifetime, per-severity auto-dismiss TTLs, and a live
+  list of active banners (dismiss one or all). ✕ and TTL changes sync across
+  every display via the server. Weather (NWS) banners use severity TTLs (capped
+  by the official expiry); dismissing one suppresses re-push until NWS cancels it.
 - **Two apps, one process.** Admin (`:8081`) and dashboard (`:8082`) share
   in-process singletons (config, cache, SSE hub, geo), so they must run together
   (`python -m server.run`).
@@ -94,8 +97,9 @@ Built in: `clock`, `text`, `iframe`, `embed`, `image`, `video`, `pi-stats`,
 status, progress, filament, connection flags — prefer LAN IP over `.local`; API
 key per widget or global; webcam is a separate `image`/`iframe` pointed at
 `/webcam/?action=stream`), `youtube-live` (quota-aware two-tier cache + broken-embed
-auto-recovery), `rss`, `ical`, `air-quality`, `slideshow` (rotates child widgets
-with real media suspend/resume — slides edited in the widget form).
+auto-recovery), `rss`, `ical`, `air-quality` (optional lat/lon + NO₂ toggle;
+blank lat/lon uses the home location from Layout), `slideshow` (rotates child
+widgets with real media suspend/resume — slides edited in the widget form).
 
 `embed` runs a pasted `<div>+<script>` snippet (TradingView and similar) inside a
 sandboxed iframe via `srcdoc` — for third-party widgets that ship code rather than
