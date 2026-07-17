@@ -1,8 +1,14 @@
 // Dashboard runtime: render the active page's grid, rotate through pages in
 // slideshow mode, and live-reload over SSE with no page refresh.
 import * as registry from "./widgets/index.js";
-import { el } from "./widgets/dom.js";
+import { el, setSceneVariantLabel } from "./widgets/dom.js";
 import { initDevices, getPrefs, onDevicePrefs } from "./device.js";
+import {
+  inWindow,
+  resolveActiveScene,
+  settingsWithScene,
+  rotationWithScene,
+} from "./scenes.js";
 
 const grid = document.getElementById("grid");
 const dots = document.getElementById("pagedots");
@@ -15,6 +21,8 @@ let visible = [];        // pages this display currently shows (device prefs + s
 let pageIndex = 0;       // index into `visible`
 let rotationTimer = null;
 let paused = false;      // user tapped a dot → stop auto-advance
+let appliedSceneId = null; // last resolved scene id (for schedule edge detection)
+let effectiveRotation = {}; // rotation after scene overlay
 
 // Preview mode (admin's live mini-preview iframe): ?page=<id> locks to one page,
 // no rotation, no device identity (so previews don't register as displays).
@@ -74,22 +82,7 @@ function teardown() {
   grid.replaceChildren();
 }
 
-// ---- page visibility: device assignment + page schedule ----------------------
-
-// Same semantics as a widget schedule: days 0=Mon, HH:MM window (may wrap).
-function inWindow(s, now = new Date()) {
-  if (!s?.enabled) return true;
-  const dow = (now.getDay() + 6) % 7;
-  if (s.days?.length && !s.days.includes(dow)) return false;
-  if (s.start && s.end) {
-    const cur = now.getHours() * 60 + now.getMinutes();
-    const [sh, sm] = s.start.split(":").map(Number);
-    const [eh, em] = s.end.split(":").map(Number);
-    const start = sh * 60 + sm, end = eh * 60 + em;
-    return start <= end ? cur >= start && cur < end : cur >= start || cur < end;
-  }
-  return true;
-}
+// ---- page visibility: device assignment + page schedule + scene --------------
 
 function computeVisible() {
   let v = order;
@@ -97,21 +90,39 @@ function computeVisible() {
     v = order.filter((p) => p.id === previewPageId);
     return v.length ? v : order.slice(0, 1);
   }
-  // device page assignment (empty = all pages)
+  const scene = resolveActiveScene(config);
+
+  // Scene page set (empty pageIds = all pages)
+  if (scene?.pageIds?.length) {
+    v = v.filter((p) => scene.pageIds.includes(p.id));
+  }
+
+  // Device page assignment (empty = all pages). When a scene restricts pages and
+  // the device filter has no overlap, stay empty rather than falling back to all
+  // (so a kitchen display can exclude the print-watch page).
   const assigned = getPrefs().pages || [];
   if (assigned.length) {
     const keep = v.filter((p) => assigned.includes(p.id));
-    if (keep.length) v = keep;               // all-filtered → fall back to everything
+    if (keep.length) v = keep;
+    else if (scene?.pageIds?.length) v = [];
+    // else: keep v (today's fallback when no scene page filter)
   }
-  // page schedules
+
+  // Page schedules
   const scheduled = v.filter((p) => inWindow(p.schedule));
-  return scheduled.length ? scheduled : v;    // never leave the screen blank
+  return scheduled.length ? scheduled : v; // never leave blank solely due to schedules
 }
 
-// Re-evaluate visibility (device prefs changed, schedule window crossed).
-// Re-renders only when the visible set actually changed.
+// Re-evaluate visibility (device prefs changed, schedule/scene window crossed).
+// Re-renders when the visible set or active scene actually changed.
 function refreshVisibility() {
   if (!config) return;
+  const scene = resolveActiveScene(config);
+  const nextSceneId = scene?.id || null;
+  if (nextSceneId !== appliedSceneId) {
+    show(config);
+    return;
+  }
   const cur = visible.map((p) => p.id).join("|");
   const next = computeVisible();
   if (next.map((p) => p.id).join("|") === cur) return;
@@ -120,20 +131,29 @@ function refreshVisibility() {
   const keep = visible.findIndex((p) => p.id === activeId);
   pageIndex = keep >= 0 ? keep : 0;
   buildDots();
-  renderPage(visible[pageIndex]);
+  if (visible.length) renderPage(visible[pageIndex]);
+  else {
+    teardown();
+    grid.appendChild(el("div", { class: "widget-error" }, "No pages for this display / scene"));
+  }
   scheduleRotation();
 }
 
 // ---- whole-config entry point (initial load + every SSE config-changed) -----
 function show(cfg) {
   config = cfg;
-  applySettings(cfg.settings || {});
+  const scene = resolveActiveScene(cfg);
+  appliedSceneId = scene?.id || null;
+  setSceneVariantLabel(scene?.variantLabel || null);
+
+  applySettings(settingsWithScene(cfg.settings || {}, scene));
+  effectiveRotation = rotationWithScene(cfg.rotation || {}, scene);
+
   const pages = cfg.pages || [];
-  const rotation = cfg.rotation || {};
   // resolve page order (explicit ids first, then any leftovers)
-  if (rotation.order?.length) {
+  if (effectiveRotation.order?.length) {
     const byId = new Map(pages.map((p) => [p.id, p]));
-    order = rotation.order.map((id) => byId.get(id)).filter(Boolean);
+    order = effectiveRotation.order.map((id) => byId.get(id)).filter(Boolean);
     for (const p of pages) if (!order.includes(p)) order.push(p);
   } else {
     order = [...pages];
@@ -143,7 +163,11 @@ function show(cfg) {
   pageIndex = Math.min(pageIndex, Math.max(0, visible.length - 1));
   buildDots();
   if (visible.length) renderPage(visible[pageIndex]);
-  else { teardown(); grid.appendChild(el("div", { class: "widget-error" }, "No pages configured")); }
+  else {
+    teardown();
+    grid.appendChild(el("div", { class: "widget-error" },
+      order.length ? "No pages for this display / scene" : "No pages configured"));
+  }
   scheduleRotation();
 }
 
@@ -202,7 +226,7 @@ async function renderPage(page) {
 // ---- page rotation (slideshow mode) -----------------------------------------
 function scheduleRotation() {
   clearTimeout(rotationTimer);
-  const rotation = config?.rotation || {};
+  const rotation = effectiveRotation || config?.rotation || {};
   if (isPreview || paused || !rotation.enabled || visible.length < 2) return;
   const page = visible[pageIndex];
   const secs = page.durationSeconds || rotation.defaultDurationSeconds || 30;
@@ -392,6 +416,6 @@ function setStatus(ok) {
   connectEvents();
   initAlerts();
   initValuePulse();
-  // page schedules cross their window boundaries without any other trigger
+  // page / scene schedules cross their window boundaries without any other trigger
   setInterval(refreshVisibility, 30000);
 })();
