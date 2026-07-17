@@ -140,3 +140,8 @@ copied to `data/dashboard.config.json` on first run. Corrupt configs fall back t
 the newest backup, then the seed. In Docker this is a named volume
 (`dashboard-data`) — it survives rebuilds and avoids Docker Desktop's
 network-drive bind-mount problems.
+
+## Docs
+
+- Feature ideation (ranked directions): [`docs/ideation/2026-07-17-open-dash-feature-ideas.md`](docs/ideation/2026-07-17-open-dash-feature-ideas.md)
+- Scene modes requirements (selected follow-up): [`docs/plans/2026-07-17-001-feat-scene-modes-plan.md`](docs/plans/2026-07-17-001-feat-scene-modes-plan.md)
