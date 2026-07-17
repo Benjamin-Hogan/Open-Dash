@@ -39,3 +39,11 @@ async def test_distinct_ids_are_distinct_rows():
     await device_store.heartbeat("id-one", "Display id-o", "100×100")
     await device_store.heartbeat("id-two", "Display id-t", "100×100")
     assert len(device_store.list_all()) == 2
+
+
+@pytest.mark.asyncio
+async def test_set_prefs_renames_display():
+    await device_store.heartbeat("dev-rename", "Kitchen", "1920×1080")
+    updated = await device_store.set_prefs("dev-rename", {"name": "Garage TV"})
+    assert updated["name"] == "Garage TV"
+    assert device_store.get("dev-rename")["name"] == "Garage TV"

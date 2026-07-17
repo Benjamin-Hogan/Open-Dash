@@ -78,14 +78,36 @@ window.addEventListener("resize", () => { if (previewOn) updatePreview(); });
 
 // ---- page bar ---------------------------------------------------------------
 
+function pageIsGated(p) {
+  return !!(p?.schedule?.enabled || p?.condition?.enabled);
+}
+
 function renderPageBar() {
   const bar = $("#page-bar");
   bar.replaceChildren();
   pages().forEach((p, i) => {
     const tab = document.createElement("button");
-    tab.className = "page-tab" + (i === state.activePage ? " active" : "");
-    tab.textContent = p.name || "Page";
-    if (rotation().enabled && p.durationSeconds) tab.title = `Shows for ${p.durationSeconds}s`;
+    const gated = pageIsGated(p);
+    tab.className = "page-tab"
+      + (i === state.activePage ? " active" : "")
+      + (gated ? " gated" : "");
+    const label = document.createElement("span");
+    label.textContent = p.name || "Page";
+    tab.appendChild(label);
+    if (gated) {
+      const badge = document.createElement("span");
+      badge.className = "page-tab-badge" + (p.condition?.enabled ? " condition" : "");
+      badge.title = [
+        p.schedule?.enabled ? "Time schedule" : null,
+        p.condition?.enabled ? "Live condition" : null,
+      ].filter(Boolean).join(" · ");
+      tab.appendChild(badge);
+    }
+    const tips = [];
+    if (rotation().enabled && p.durationSeconds) tips.push(`Shows for ${p.durationSeconds}s`);
+    if (p.schedule?.enabled) tips.push("Scheduled");
+    if (p.condition?.enabled) tips.push("Conditional");
+    if (tips.length) tab.title = tips.join(" · ");
     tab.onclick = () => { state.activePage = i; renderAll(); };
     bar.appendChild(tab);
   });
@@ -95,16 +117,15 @@ function renderPageBar() {
   add.onclick = addPage;
   bar.appendChild(add);
 
-  // actions for the active page
+  // actions for the active page (duration lives under Page rotation)
   const acts = document.createElement("div");
   acts.className = "page-actions";
   const mk = (label, cls, fn) => { const b = document.createElement("button"); b.className = "btn small " + (cls || ""); b.textContent = label; b.onclick = fn; return b; };
   acts.append(
     mk("Rename", "", () => renamePage(state.activePage)),
-    mk("Duration", "", () => durationPage(state.activePage)),
     mk(
       "Schedule",
-      (pages()[state.activePage]?.schedule?.enabled || pages()[state.activePage]?.condition?.enabled) ? "scheduled" : "",
+      pageIsGated(pages()[state.activePage]) ? "scheduled" : "",
       () => openPageSchedule(state.activePage),
     ),
     mk("Duplicate", "", () => duplicatePage(state.activePage)),
@@ -127,13 +148,6 @@ function renamePage(i) {
   pages()[i].name = name.trim() || "Page";
   save();
 }
-function durationPage(i) {
-  const cur = pages()[i].durationSeconds ?? "";
-  const v = prompt(`Slideshow duration for this page in seconds (blank = use default ${rotation().defaultDurationSeconds}s):`, cur);
-  if (v == null) return;
-  pages()[i].durationSeconds = v.trim() === "" ? null : Math.max(2, Number(v) || 2);
-  save();
-}
 function duplicatePage(i) {
   const src = pages()[i];
   const clone = structuredClone(src);
@@ -149,14 +163,26 @@ function movePage(i, d) {
   const j = i + d;
   if (j < 0 || j >= pages().length) return;
   const ps = pages();
-  [ps[i], ps[j]] = [ps[j], ps[i]];
+  const a = ps[i], b = ps[j];
+  [ps[i], ps[j]] = [b, a];
+  // Keep an explicit rotation.order in sync when both pages are listed.
+  const order = rotation().order;
+  if (Array.isArray(order) && order.length) {
+    const oi = order.indexOf(a.id), oj = order.indexOf(b.id);
+    if (oi >= 0 && oj >= 0) [order[oi], order[oj]] = [order[oj], order[oi]];
+  }
   state.activePage = j;
   save();
 }
 function deletePage(i) {
   if (pages().length <= 1) { toast("Keep at least one page", "err"); return; }
   if (!confirm(`Delete page “${pages()[i].name}” and its widgets?`)) return;
+  const removedId = pages()[i].id;
   pages().splice(i, 1);
+  const r = rotation();
+  if (Array.isArray(r.order) && r.order.length) {
+    r.order = r.order.filter((id) => id !== removedId);
+  }
   state.activePage = Math.max(0, Math.min(state.activePage, pages().length - 1));
   save();
 }
@@ -447,6 +473,10 @@ function renderForm(editor, widget) {
   editor.appendChild(noteEl("Hide this widget outside a time window (same rules as page schedules)."));
   appendScheduleFields(editor, widget.schedule || {}, "ws");
 
+  editor.appendChild(sectionTitle("Variants"));
+  editor.appendChild(noteEl("Named setting overrides for Scenes (match by label). First variant is the default when no scene is active. Overrides are a JSON object of settings keys."));
+  appendVariantsFields(editor, widget);
+
   if (widget.type === "slideshow") {
     editor.appendChild(sectionTitle("Slides"));
     appendSlideshowFields(editor, widget);
@@ -501,12 +531,19 @@ function gather(editor, base) {
     else w.settings[f.key] = node.value;
   }
   w.schedule = gatherSchedule(editor, "ws");
+  w.variants = gatherVariants(editor);
   if (w.type === "slideshow") w.slideshow = gatherSlideshow(editor, w);
   else w.slideshow = null;
   return w;
 }
 
 async function commit(editor, widget) {
+  try {
+    gatherVariants(editor, { strict: true });
+  } catch (e) {
+    toast(e.message || String(e), "err");
+    return;
+  }
   const w = gather(editor, widget);
   if (!w.id) w.id = `${w.type}-${Date.now().toString(36)}`;
   const ws = currentWidgets();
@@ -559,19 +596,91 @@ async function saveOnce() {
   }
 }
 
-// ---- slideshow settings -----------------------------------------------------
+// ---- page rotation (not the slideshow *widget*) -----------------------------
 
-function openSlideshow() {
+function rotationPageOrder() {
+  const ps = pages();
+  const byId = new Map(ps.map((p) => [p.id, p]));
+  const r = rotation();
+  const order = [];
+  if (Array.isArray(r.order) && r.order.length) {
+    for (const id of r.order) {
+      const p = byId.get(id);
+      if (p) order.push(p);
+    }
+  }
+  for (const p of ps) if (!order.includes(p)) order.push(p);
+  return order;
+}
+
+function openRotation() {
   const editor = $("#editor");
   editor.classList.remove("hidden");
   editor.replaceChildren();
   state.editingId = null;
-  const h = document.createElement("h2"); h.textContent = "Slideshow mode"; h.style.margin = "0 0 6px";
+  const h = document.createElement("h2"); h.textContent = "Page rotation"; h.style.margin = "0 0 6px";
   editor.appendChild(h);
-  editor.appendChild(noteEl("Rotate through pages on a timer. Set a per-page override with the page “Duration” button."));
+  editor.appendChild(noteEl("Cycle through pages on a timer. This is separate from the Slideshow widget (which rotates slides inside one tile). Reorder below; leave order as the page-bar sequence by clicking “Use page list order”."));
   const r = rotation();
-  editor.appendChild(boolField("Enable slideshow (rotate pages)", r.enabled === true, "rot-enabled"));
+  editor.appendChild(boolField("Enable page rotation", r.enabled === true, "rot-enabled"));
   editor.appendChild(field("Default seconds per page", input("number", r.defaultDurationSeconds ?? 30, "rot-default")));
+
+  editor.appendChild(sectionTitle("Order & per-page duration"));
+  editor.appendChild(noteEl("Blank duration = use the default above. ↑↓ changes rotation order only (page-bar ←/→ still reorders the page list)."));
+
+  let draft = rotationPageOrder().map((p) => ({
+    id: p.id,
+    name: p.name || "Page",
+    durationSeconds: p.durationSeconds ?? "",
+  }));
+  const list = document.createElement("div");
+  list.className = "rot-order-list";
+  list.dataset.name = "rot-order";
+  editor.appendChild(list);
+
+  const redraw = () => {
+    list.replaceChildren();
+    draft.forEach((row, i) => {
+      const el = document.createElement("div");
+      el.className = "rot-order-row";
+      el.dataset.pageId = row.id;
+      const name = document.createElement("div");
+      name.className = "rot-order-name";
+      name.textContent = row.name;
+      const dur = input("number", row.durationSeconds, `rot-dur-${row.id}`);
+      dur.className = "rot-order-dur";
+      dur.placeholder = "default";
+      dur.oninput = () => { row.durationSeconds = dur.value; };
+      const tools = document.createElement("div");
+      tools.style.display = "flex";
+      tools.style.gap = "4px";
+      tools.append(
+        button("↑", "btn small", () => {
+          if (i <= 0) return;
+          [draft[i - 1], draft[i]] = [draft[i], draft[i - 1]];
+          redraw();
+        }),
+        button("↓", "btn small", () => {
+          if (i >= draft.length - 1) return;
+          [draft[i + 1], draft[i]] = [draft[i], draft[i + 1]];
+          redraw();
+        }),
+      );
+      el.append(name, field("Seconds", dur), tools);
+      list.appendChild(el);
+    });
+  };
+  redraw();
+
+  editor.appendChild(button("Use page list order", "btn small", () => {
+    draft = pages().map((p) => ({
+      id: p.id,
+      name: p.name || "Page",
+      durationSeconds: draft.find((d) => d.id === p.id)?.durationSeconds ?? (p.durationSeconds ?? ""),
+    }));
+    redraw();
+  }));
+
   const actions = document.createElement("div"); actions.className = "editor-actions";
   actions.append(
     button("Cancel", "btn", () => editor.classList.add("hidden")),
@@ -579,6 +688,16 @@ function openSlideshow() {
       r.enabled = editor.querySelector('[data-name="rot-enabled"]').checked;
       const d = Number(editor.querySelector('[data-name="rot-default"]').value);
       r.defaultDurationSeconds = Math.max(2, d || 30);
+      const natural = pages().map((p) => p.id);
+      const newOrder = draft.map((row) => row.id);
+      r.order = newOrder.every((id, i) => id === natural[i]) ? [] : newOrder;
+      const byId = new Map(pages().map((p) => [p.id, p]));
+      for (const row of draft) {
+        const p = byId.get(row.id);
+        if (!p) continue;
+        const raw = String(row.durationSeconds ?? "").trim();
+        p.durationSeconds = raw === "" ? null : Math.max(2, Number(raw) || 2);
+      }
       editor.classList.add("hidden");
       save();
     }),
@@ -586,11 +705,15 @@ function openSlideshow() {
   editor.appendChild(actions);
 }
 
-// ---- alert auto-dismiss settings --------------------------------------------
+// ---- alert engine settings + active banners ---------------------------------
 
 function alertsSettings() {
   const s = state.config.settings || (state.config.settings = {});
-  return s.alerts || (s.alerts = { infoTtlSeconds: 90, warningTtlSeconds: 0, dangerTtlSeconds: 0 });
+  return s.alerts || (s.alerts = {
+    infoTtlSeconds: 90, warningTtlSeconds: 0, dangerTtlSeconds: 0,
+    octoprintEnabled: true, nwsEnabled: true, spaceEnabled: true,
+    nwsMinSeverity: "info", kpThreshold: 6, spaceTtlSeconds: 3600,
+  });
 }
 
 function openAlerts() {
@@ -602,21 +725,101 @@ function openAlerts() {
 
   const h = document.createElement("h2"); h.textContent = "Alerts"; h.style.margin = "0 0 6px";
   editor.appendChild(h);
-  editor.appendChild(noteEl("How long banner alerts stay on screen before auto-dismissing (including weather). Set 0 to keep until someone taps ✕ or the official weather expiry (✕ clears every display and stays dismissed until NWS cancels it). Saving new times also updates alerts already on screen."));
+  editor.appendChild(noteEl("Sources push banners to every display. Auto-dismiss times apply to severity (including NWS, capped by the official expiry). ✕ clears every display and stays dismissed until NWS cancels that alert."));
 
+  editor.appendChild(sectionTitle("Sources"));
+  editor.appendChild(boolField("OctoPrint print transitions", a.octoprintEnabled !== false, "al-op"));
+  editor.appendChild(boolField("NWS severe weather", a.nwsEnabled !== false, "al-nws"));
+  editor.appendChild(boolField("Space weather (geomagnetic storm)", a.spaceEnabled !== false, "al-space"));
+
+  editor.appendChild(sectionTitle("NWS"));
+  editor.appendChild(field("Minimum severity", select(
+    [
+      { value: "info", label: "Info and above" },
+      { value: "warning", label: "Warning and above" },
+      { value: "danger", label: "Danger only" },
+    ],
+    a.nwsMinSeverity || "info",
+    null,
+    "al-nws-min",
+  )));
+
+  editor.appendChild(sectionTitle("Space weather"));
+  editor.appendChild(field("Kp threshold (fire when ≥)", input("number", a.kpThreshold ?? 6, "al-kp")));
+  editor.appendChild(field("Space alert lifetime (seconds, 0 = use warning TTL)", input("number", a.spaceTtlSeconds ?? 3600, "al-space-ttl")));
+  editor.appendChild(noteEl("Hysteresis resets when Kp drops below threshold − 1 (same as before for the default of 6)."));
+
+  editor.appendChild(sectionTitle("Auto-dismiss"));
   editor.appendChild(field("Info alerts (seconds, 0 = keep)", input("number", a.infoTtlSeconds ?? 90, "al-info")));
   editor.appendChild(field("Warning alerts (seconds, 0 = keep)", input("number", a.warningTtlSeconds ?? 0, "al-warning")));
   editor.appendChild(field("Danger alerts (seconds, 0 = keep)", input("number", a.dangerTtlSeconds ?? 0, "al-danger")));
-  editor.appendChild(noteEl("Defaults: info = 90s, warning/danger = keep until dismissed. Save, then use Test alert to preview."));
+  editor.appendChild(noteEl("Defaults: info = 90s, warning/danger = keep until dismissed. Saving new times also updates alerts already on screen. Use Test alert to preview."));
+
+  editor.appendChild(sectionTitle("Active on displays"));
+  const activeHost = document.createElement("div");
+  activeHost.className = "alert-active-list";
+  activeHost.appendChild(noteEl("Loading…"));
+  editor.appendChild(activeHost);
+  const refreshActive = async () => {
+    try {
+      const r = await fetch("/api/alerts");
+      const d = await r.json();
+      const list = d.alerts || [];
+      activeHost.replaceChildren();
+      if (!list.length) {
+        activeHost.appendChild(noteEl("No active banners right now."));
+      } else {
+        for (const al of list) {
+          const row = document.createElement("div");
+          row.className = "alert-active-row";
+          const info = document.createElement("div");
+          info.className = "alert-active-info";
+          const title = document.createElement("div");
+          title.className = "alert-active-title";
+          title.textContent = `${al.severity || "info"} · ${al.title || al.id}`;
+          const msg = document.createElement("div");
+          msg.className = "alert-active-msg";
+          msg.textContent = al.message || al.source || "";
+          info.append(title, msg);
+          row.append(
+            info,
+            button("Dismiss", "btn small danger", async () => {
+              await fetch("/api/alerts/" + encodeURIComponent(al.id), { method: "DELETE" });
+              refreshActive();
+            }),
+          );
+          activeHost.appendChild(row);
+        }
+        activeHost.appendChild(button("Dismiss all", "btn small danger", async () => {
+          if (!confirm("Dismiss every active alert on all displays?")) return;
+          await fetch("/api/alerts/clear-all", { method: "POST" });
+          refreshActive();
+        }));
+      }
+    } catch (e) {
+      activeHost.replaceChildren(noteEl("Could not load active alerts: " + e.message));
+    }
+  };
+  refreshActive();
 
   const actions = document.createElement("div"); actions.className = "editor-actions";
   actions.append(
     button("Cancel", "btn", () => editor.classList.add("hidden")),
     button("Save", "btn primary", () => {
-      const read = (name) => Math.max(0, Math.round(Number(editor.querySelector(`[data-name="${name}"]`).value) || 0));
-      a.infoTtlSeconds = read("al-info");
-      a.warningTtlSeconds = read("al-warning");
-      a.dangerTtlSeconds = read("al-danger");
+      const readInt = (name) => Math.max(0, Math.round(Number(editor.querySelector(`[data-name="${name}"]`).value) || 0));
+      const readNum = (name, fallback) => {
+        const v = Number(editor.querySelector(`[data-name="${name}"]`).value);
+        return Number.isFinite(v) ? v : fallback;
+      };
+      a.octoprintEnabled = editor.querySelector('[data-name="al-op"]')?.checked !== false;
+      a.nwsEnabled = editor.querySelector('[data-name="al-nws"]')?.checked !== false;
+      a.spaceEnabled = editor.querySelector('[data-name="al-space"]')?.checked !== false;
+      a.nwsMinSeverity = editor.querySelector('[data-name="al-nws-min"]')?.value || "info";
+      a.kpThreshold = Math.min(9, Math.max(0, readNum("al-kp", 6)));
+      a.spaceTtlSeconds = readInt("al-space-ttl");
+      a.infoTtlSeconds = readInt("al-info");
+      a.warningTtlSeconds = readInt("al-warning");
+      a.dangerTtlSeconds = readInt("al-danger");
       editor.classList.add("hidden");
       save();
     }),
@@ -881,36 +1084,120 @@ function button(text, cls, fn) { const b = document.createElement("button"); b.t
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-function appendScheduleFields(editor, schedule, prefix) {
-  const s = schedule || {};
-  editor.appendChild(boolField("Enable schedule", s.enabled === true, `${prefix}-enabled`));
-  editor.appendChild(field("Start (HH:MM)", input("time", s.start || "", `${prefix}-start`)));
-  editor.appendChild(field("End (HH:MM)", input("time", s.end || "", `${prefix}-end`)));
+function scheduleWindowsOf(s) {
+  if (Array.isArray(s?.windows) && s.windows.length) return s.windows.map((w) => ({
+    start: w.start || null, end: w.end || null, days: [...(w.days || [])],
+  }));
+  if (s?.start || s?.end || (s?.days && s.days.length)) {
+    return [{ start: s.start || null, end: s.end || null, days: [...(s.days || [])] }];
+  }
+  return [{ start: null, end: null, days: [] }];
+}
+
+function dayPicker(days, name) {
   const dayWrap = document.createElement("div");
   dayWrap.className = "day-picker";
-  dayWrap.dataset.name = `${prefix}-days`;
+  dayWrap.dataset.name = name;
   DAY_LABELS.forEach((label, d) => {
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "day-chip" + ((s.days || []).includes(d) ? " on" : "");
+    b.className = "day-chip" + ((days || []).includes(d) ? " on" : "");
     b.textContent = label;
     b.dataset.day = d;
     b.onclick = () => b.classList.toggle("on");
     dayWrap.appendChild(b);
   });
-  editor.appendChild(field("Days (none selected = every day)", dayWrap));
+  return dayWrap;
+}
+
+function appendScheduleFields(editor, schedule, prefix) {
+  const s = schedule || {};
+  let windows = scheduleWindowsOf(s);
+
+  editor.appendChild(boolField("Enable schedule", s.enabled === true, `${prefix}-enabled`));
+  editor.appendChild(field("Timezone (IANA, blank = this device)", input("text", s.timeZone || "", `${prefix}-tz`, "America/Phoenix")));
+  editor.appendChild(field("Date from (YYYY-MM-DD, optional)", input("date", s.dateFrom || "", `${prefix}-from`)));
+  editor.appendChild(field("Date to (YYYY-MM-DD, optional)", input("date", s.dateTo || "", `${prefix}-to`)));
+  editor.appendChild(noteEl("Multiple windows are OR’d (any matching window shows the page/widget). A window may wrap past midnight."));
+
+  const host = document.createElement("div");
+  host.className = "schedule-windows";
+  host.dataset.name = `${prefix}-windows`;
+  editor.appendChild(host);
+
+  const redraw = () => {
+    host.replaceChildren();
+    windows.forEach((w, i) => {
+      const card = document.createElement("div");
+      card.className = "schedule-window-card";
+      card.dataset.windowIndex = i;
+      const head = document.createElement("div");
+      head.className = "schedule-window-head";
+      head.appendChild(Object.assign(document.createElement("strong"), { textContent: `Window ${i + 1}` }));
+      if (windows.length > 1) {
+        head.appendChild(button("Remove", "btn small danger", () => {
+          windows = gatherScheduleWindows(host, prefix);
+          windows.splice(i, 1);
+          if (!windows.length) windows = [{ start: null, end: null, days: [] }];
+          redraw();
+        }));
+      }
+      card.appendChild(head);
+      card.appendChild(field("Start (HH:MM)", input("time", w.start || "", `${prefix}-w-${i}-start`)));
+      card.appendChild(field("End (HH:MM)", input("time", w.end || "", `${prefix}-w-${i}-end`)));
+      card.appendChild(field("Days (none selected = every day)", dayPicker(w.days, `${prefix}-w-${i}-days`)));
+      host.appendChild(card);
+    });
+  };
+  redraw();
+  editor.appendChild(button("+ Add window", "btn small", () => {
+    windows = gatherScheduleWindows(host, prefix);
+    windows.push({ start: null, end: null, days: [] });
+    redraw();
+  }));
+}
+
+function gatherScheduleWindows(host, prefix) {
+  if (!host) return [];
+  const out = [];
+  host.querySelectorAll(".schedule-window-card").forEach((card, i) => {
+    const start = card.querySelector(`[data-name="${prefix}-w-${i}-start"]`)?.value || null;
+    const end = card.querySelector(`[data-name="${prefix}-w-${i}-end"]`)?.value || null;
+    const dayWrap = card.querySelector(`[data-name="${prefix}-w-${i}-days"]`);
+    const days = dayWrap
+      ? [...dayWrap.querySelectorAll(".day-chip.on")].map((b) => Number(b.dataset.day))
+      : [];
+    out.push({ start, end, days });
+  });
+  return out;
 }
 
 function gatherSchedule(editor, prefix) {
   const enabled = editor.querySelector(`[data-name="${prefix}-enabled"]`)?.checked === true;
-  const start = editor.querySelector(`[data-name="${prefix}-start"]`)?.value || null;
-  const end = editor.querySelector(`[data-name="${prefix}-end"]`)?.value || null;
-  const dayWrap = editor.querySelector(`[data-name="${prefix}-days"]`);
-  const days = dayWrap
-    ? [...dayWrap.querySelectorAll(".day-chip.on")].map((b) => Number(b.dataset.day))
-    : [];
-  if (!enabled && !start && !end && !days.length) return null;
-  return { enabled, start, end, days };
+  const timeZone = editor.querySelector(`[data-name="${prefix}-tz"]`)?.value?.trim() || null;
+  const dateFrom = editor.querySelector(`[data-name="${prefix}-from"]`)?.value || null;
+  const dateTo = editor.querySelector(`[data-name="${prefix}-to"]`)?.value || null;
+  const host = editor.querySelector(`[data-name="${prefix}-windows"]`);
+  const windows = gatherScheduleWindows(host, prefix);
+  const hasBounds = windows.some((w) => w.start || w.end || w.days.length)
+    || timeZone || dateFrom || dateTo;
+  if (!enabled && !hasBounds) return null;
+
+  // Keep legacy single-window shape when there's only one simple window.
+  if (windows.length <= 1 && !timeZone && !dateFrom && !dateTo) {
+    const w = windows[0] || { start: null, end: null, days: [] };
+    return { enabled, start: w.start, end: w.end, days: w.days, windows: [], timeZone: null, dateFrom: null, dateTo: null };
+  }
+  return {
+    enabled,
+    start: null,
+    end: null,
+    days: [],
+    windows,
+    timeZone,
+    dateFrom,
+    dateTo,
+  };
 }
 
 // ---- slideshow widget slides editor ----------------------------------------
@@ -919,11 +1206,78 @@ function slideTypeOptions() {
   return registry.types().filter((t) => t !== "slideshow");
 }
 
+function appendVariantsFields(editor, widget) {
+  if (!Array.isArray(widget.variants)) widget.variants = [];
+  const host = document.createElement("div");
+  host.className = "variant-list";
+  host.dataset.name = "variants";
+  editor.appendChild(host);
+
+  const redraw = () => {
+    host.replaceChildren();
+    widget.variants.forEach((v, i) => {
+      const card = document.createElement("div");
+      card.className = "variant-card";
+      card.dataset.variantIndex = i;
+      const head = document.createElement("div");
+      head.className = "variant-card-head";
+      head.appendChild(Object.assign(document.createElement("strong"), {
+        textContent: i === 0 ? `Variant ${i + 1} (default)` : `Variant ${i + 1}`,
+      }));
+      head.appendChild(button("Remove", "btn small danger", () => {
+        widget.variants = gatherVariants(editor);
+        widget.variants.splice(i, 1);
+        redraw();
+      }));
+      card.appendChild(head);
+      card.appendChild(field("Label", input("text", v.label || "", `var-${i}-label`, "night")));
+      const ta = textarea(
+        typeof v.overrides === "object" && v.overrides
+          ? JSON.stringify(v.overrides, null, 2)
+          : "{}",
+        `var-${i}-overrides`,
+      );
+      ta.rows = 3;
+      card.appendChild(field("Overrides (JSON object)", ta));
+      host.appendChild(card);
+    });
+  };
+  redraw();
+  editor.appendChild(button("+ Add variant", "btn small", () => {
+    widget.variants = gatherVariants(editor);
+    widget.variants.push({ label: "", overrides: {} });
+    redraw();
+  }));
+}
+
+function gatherVariants(editor, { strict = false } = {}) {
+  const host = editor.querySelector('[data-name="variants"]');
+  if (!host) return [];
+  const out = [];
+  host.querySelectorAll(".variant-card").forEach((card, i) => {
+    const label = (card.querySelector(`[data-name="var-${i}-label"]`)?.value || "").trim();
+    const raw = card.querySelector(`[data-name="var-${i}-overrides"]`)?.value || "{}";
+    let overrides = {};
+    try {
+      const parsed = JSON.parse(raw || "{}");
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) overrides = parsed;
+      else throw new Error("not an object");
+    } catch (err) {
+      if (strict) throw new Error(`Variant ${i + 1}: overrides must be a JSON object`);
+      overrides = {};
+    }
+    if (!label && !Object.keys(overrides).length) return;
+    out.push({ label: label || `variant-${i + 1}`, overrides });
+  });
+  return out;
+}
+
 function appendSlideshowFields(editor, widget) {
   const cfg = widget.slideshow || { enabled: true, durationSeconds: 30, slides: [] };
   widget.slideshow = cfg;
   if (!Array.isArray(cfg.slides)) cfg.slides = [];
 
+  editor.appendChild(boolField("Enable slideshow", cfg.enabled !== false, "ss-enabled"));
   editor.appendChild(field("Seconds per slide", input("number", cfg.durationSeconds ?? 30, "ss-duration")));
   const host = document.createElement("div");
   host.dataset.name = "ss-slides";
@@ -1016,6 +1370,7 @@ function appendSlideshowFieldsRebuild(editor, widget) {
 }
 
 function gatherSlideshow(editor, widget) {
+  const enabled = editor.querySelector('[data-name="ss-enabled"]')?.checked !== false;
   const duration = Math.max(2, Math.round(Number(editor.querySelector('[data-name="ss-duration"]')?.value) || 30));
   const host = editor.querySelector('[data-name="ss-slides"]');
   const slides = [];
@@ -1044,7 +1399,7 @@ function gatherSlideshow(editor, widget) {
       slides.push({ type, title, settings });
     });
   }
-  return { enabled: true, durationSeconds: duration, slides };
+  return { enabled, durationSeconds: duration, slides };
 }
 
 // ---- url field with quick-fill presets (for embeddable live sites) ----------
@@ -1469,6 +1824,8 @@ function openLayout() {
   const h = document.createElement("h2"); h.textContent = "Layout & appearance"; h.style.margin = "0 0 6px";
   editor.appendChild(h);
 
+  const loc = s.location || (s.location = { lat: null, lon: null, city: "", region: "" });
+
   editor.appendChild(sectionTitle("Dashboard"));
   editor.appendChild(field("Title", input("text", s.title || "Pi Dashboard", "lay-title")));
   editor.appendChild(field("Theme", select(
@@ -1482,6 +1839,13 @@ function openLayout() {
     "lay-theme",
   )));
   editor.appendChild(field("Accent color", input("color", theme.accent || "#4aa3ff", "lay-accent")));
+
+  editor.appendChild(sectionTitle("Home location"));
+  editor.appendChild(noteEl("Used for NWS weather alerts and as the default for weather / air-quality widgets (unless a widget sets its own lat/lon). Leave lat+lon blank to use IP geolocation (falls back to Phoenix, AZ)."));
+  editor.appendChild(field("Latitude", input("number", loc.lat ?? "", "lay-lat", "e.g. 33.45")));
+  editor.appendChild(field("Longitude", input("number", loc.lon ?? "", "lay-lon", "e.g. -112.07")));
+  editor.appendChild(field("City (label)", input("text", loc.city || "", "lay-city")));
+  editor.appendChild(field("Region (label)", input("text", loc.region || "", "lay-region")));
 
   editor.appendChild(sectionTitle("Grid"));
   editor.appendChild(noteEl("Widgets snap to this grid when you drag-resize on the canvas — so it sets how finely you can size them. More columns = smaller width steps; a shorter row height = smaller height steps. This grid is shared by every display."));
@@ -1519,6 +1883,30 @@ function saveLayout(oldCols, oldRow) {
   s.theme = s.theme || {};
   s.theme.mode = editor.querySelector('[data-name="lay-theme"]')?.value || "dark";
   s.theme.accent = editor.querySelector('[data-name="lay-accent"]')?.value || "#4aa3ff";
+
+  const latRaw = editor.querySelector('[data-name="lay-lat"]')?.value?.trim() ?? "";
+  const lonRaw = editor.querySelector('[data-name="lay-lon"]')?.value?.trim() ?? "";
+  const lat = latRaw === "" ? null : Number(latRaw);
+  const lon = lonRaw === "" ? null : Number(lonRaw);
+  if ((lat == null) !== (lon == null)) {
+    toast("Set both latitude and longitude, or leave both blank for auto", "err");
+    return;
+  }
+  if (lat != null && (!Number.isFinite(lat) || lat < -90 || lat > 90)) {
+    toast("Latitude must be between -90 and 90", "err");
+    return;
+  }
+  if (lon != null && (!Number.isFinite(lon) || lon < -180 || lon > 180)) {
+    toast("Longitude must be between -180 and 180", "err");
+    return;
+  }
+  s.location = {
+    lat,
+    lon,
+    city: editor.querySelector('[data-name="lay-city"]')?.value?.trim() || "",
+    region: editor.querySelector('[data-name="lay-region"]')?.value?.trim() || "",
+  };
+
   const newCols = clamp(Math.round(Number(editor.querySelector('[data-name="lay-cols"]').value) || 12), 1, 48);
   const newRow = Math.max(20, Math.round(Number(editor.querySelector('[data-name="lay-row"]').value) || 90));
   const newGap = Math.max(0, Math.round(Number(editor.querySelector('[data-name="lay-gap"]').value) || 0));
@@ -1594,8 +1982,12 @@ function deviceRow(d) {
   const stale = seen ? (Date.now() - seen.getTime()) > 90_000 : true;
 
   const info = document.createElement("div"); info.className = "device-info";
-  const name = document.createElement("div"); name.className = "device-name";
-  name.textContent = d.name || `Display ${d.id.slice(0, 4)}`;
+  const name = document.createElement("input");
+  name.type = "text";
+  name.className = "device-name-input";
+  name.value = d.name || `Display ${d.id.slice(0, 4)}`;
+  name.title = "Click to rename";
+  name.setAttribute("aria-label", "Display name");
   const meta = document.createElement("div"); meta.className = "device-meta";
   meta.textContent = [
     d.viewport || "unknown size",
@@ -1606,16 +1998,32 @@ function deviceRow(d) {
   info.append(name, meta);
 
   // Live-editable local copy; PUT (debounced) on each nudge.
-  const cur = { uiScale: d.uiScale ?? 1, fontScale: d.fontScale ?? 1, pages: [...(d.pages || [])] };
+  const cur = {
+    uiScale: d.uiScale ?? 1,
+    fontScale: d.fontScale ?? 1,
+    pages: [...(d.pages || [])],
+    name: name.value,
+  };
   let putTimer = null;
   const push = () => {
     clearTimeout(putTimer);
     putTimer = setTimeout(() => {
       fetch(`/api/devices/${encodeURIComponent(d.id)}/prefs`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ uiScale: cur.uiScale, fontScale: cur.fontScale, pages: cur.pages }),
+        body: JSON.stringify({
+          uiScale: cur.uiScale,
+          fontScale: cur.fontScale,
+          pages: cur.pages,
+          name: cur.name,
+        }),
       }).then((r) => { if (r.ok) toast("Display updated", "ok"); }).catch(() => toast("Update failed", "err"));
     }, 350);
+  };
+  name.onchange = () => {
+    const next = name.value.trim() || `Display ${d.id.slice(0, 4)}`;
+    name.value = next;
+    cur.name = next;
+    push();
   };
 
   const controls = document.createElement("div"); controls.className = "device-controls";
@@ -1720,7 +2128,7 @@ $("#btn-scenes").onclick = openScenes;
 $("#btn-keys").onclick = openKeys;
 $("#btn-displays").onclick = openDisplays;
 $("#btn-backups").onclick = openBackups;
-$("#btn-slideshow").onclick = openSlideshow;
+$("#btn-rotation").onclick = openRotation;
 $("#btn-alerts").onclick = openAlerts;
 $("#btn-add").onclick = () => openEditor(null);
 $("#btn-preview").onclick = togglePreview;

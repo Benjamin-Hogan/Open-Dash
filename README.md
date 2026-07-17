@@ -24,13 +24,15 @@ live-reloads over Server-Sent Events.
   Slideshow mode rotates through them on a timer (global default + optional
   per-page override). Old single-`widgets` configs auto-migrate to one page
   (`server/shared/migrations.py`).
-- **Page schedules & live conditions.** Each page can combine a **time window**
+- **Page schedules & live conditions.** Each page can combine a **time schedule**
   with a curated **live condition** (OctoPrint printing/paused/error, active NWS
   weather alert, YouTube channel live, or an iCal event starting soon). Time and
-  condition are **AND**'d. Modes: **soft-join** (page enters the normal slideshow
-  while true) or **force-override** (jump immediately, honor page duration as a
-  minimum hold, then stay until the condition clears). Highest **priority** wins
-  when multiple force-overrides match. Configured in admin under **Schedule**.
+  condition are **AND**'d. Schedules support **multiple OR’d windows**, optional
+  IANA **timezone**, and **dateFrom/dateTo** bounds (legacy single start/end/days
+  still works). Modes: **soft-join** (page enters the normal slideshow while true)
+  or **force-override** (jump immediately, honor page duration as a minimum hold,
+  then stay until the condition clears). Highest **priority** wins when multiple
+  force-overrides match. Configured in admin under **Schedule**.
 - **Scenes.** Named context presets flip which pages rotate, theme mode/accent,
   active widget variant labels, and optional rotation timing in one action.
   Activate from the admin (holds until Clear) or auto-switch via a scene
@@ -39,11 +41,18 @@ live-reloads over Server-Sent Events.
 - **Self-generating admin.** The admin imports the same widget registry and
   builds forms from each plugin's `schema`. Position/size are edited by **dragging
   and resizing** widgets on a visual grid canvas (per page). Widget **schedules**,
-  **slideshow slides**, **scenes**, and global **theme/title** are editable in the admin.
-  Global **alert** auto-dismiss timing (per severity) is editable under **Alerts**;
-  ✕ and TTL changes sync across every display via the server. Weather (NWS)
-  banners use those same TTLs (capped by the official expiry); dismissing one
-  suppresses re-push until NWS cancels it.
+  **variants** (for Scenes), **slideshow slides**, **scenes**, and global
+  **theme/title** are editable in the admin. **Page rotation** (separate from the
+  Slideshow widget) edits enable/default duration, explicit page order, and
+  per-page duration. Page tabs show a badge when a schedule or live condition is
+  on. **Displays** support rename plus scale/page filters. **Layout** also pins
+  an optional **home location** (lat/lon) used by NWS alerts and as the default
+  for weather / air-quality widgets. **Alerts** configures source toggles
+  (OctoPrint / NWS / space weather), NWS minimum severity, Kp threshold +
+  space-alert lifetime, per-severity auto-dismiss TTLs, and a live list of
+  active banners (dismiss one or all). ✕ and TTL changes sync across every
+  display via the server. Weather (NWS) banners use severity TTLs (capped by
+  the official expiry); dismissing one suppresses re-push until NWS cancels it.
 - **Two apps, one process.** Admin (`:8081`) and dashboard (`:8082`) share
   in-process singletons (config, cache, SSE hub, geo), so they must run together
   (`python -m server.run`).
@@ -88,14 +97,18 @@ pytest
 
 ## Widgets
 
-Built in: `clock`, `text`, `iframe`, `embed`, `image`, `video`, `pi-stats`,
-`weather` (Open-Meteo, keyless), `space-weather` (NOAA, keyless), `space-imagery`,
-`stocks` (Finnhub — searchable ticker picker in the admin), `octoprint` (printer
-status, progress, filament, connection flags — prefer LAN IP over `.local`; API
-key per widget or global; webcam is a separate `image`/`iframe` pointed at
-`/webcam/?action=stream`), `youtube-live` (quota-aware two-tier cache + broken-embed
-auto-recovery), `rss`, `ical`, `air-quality`, `slideshow` (rotates child widgets
-with real media suspend/resume — slides edited in the widget form).
+Built in: `clock`, `text`, `iframe`, `embed`, `image`, `video`, `pi-stats`
+(configurable CPU/mem warn/hot thresholds), `weather` (Open-Meteo, keyless;
+optional server cache TTL), `space-weather` (NOAA, keyless), `space-imagery`
+(GIF re-fetch interval + caption toggle), `stocks` (Finnhub — searchable ticker
+picker in the admin), `octoprint` (printer status, progress, filament, connection
+flags — prefer LAN IP over `.local`; API key per widget or global; webcam is a
+separate `image`/`iframe` pointed at `/webcam/?action=stream`), `youtube-live`
+(quota-aware two-tier cache + broken-embed auto-recovery), `rss` (optional cache
+TTL), `ical` (lookahead days, location line, optional cache TTL), `air-quality`
+(optional lat/lon + NO₂ toggle + cache TTL; blank lat/lon uses the home location
+from Layout), `slideshow` (rotates child widgets with real media suspend/resume —
+slides edited in the widget form).
 
 `embed` runs a pasted `<div>+<script>` snippet (TradingView and similar) inside a
 sandboxed iframe via `srcdoc` — for third-party widgets that ship code rather than

@@ -220,9 +220,10 @@ body {
 .ical { height: 100%; overflow: hidden; }
 .ical-list { display: flex; flex-direction: column; gap: 3px; }
 .ical-day { font-size: 0.6875rem; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: .04em; margin-top: 6px; }
-.ical-ev { display: flex; gap: 8px; font-size: 0.8125rem; line-height: 1.3; }
+.ical-ev { display: flex; gap: 8px; font-size: 0.8125rem; line-height: 1.3; flex-wrap: wrap; }
 .ical-time { color: #8a93a3; min-width: 62px; font-variant-numeric: tabular-nums; }
 .ical-sum { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ical-loc { flex: 1 1 100%; font-size: 0.6875rem; color: var(--muted); padding-left: 70px; }
 
 /* slideshow */
 .slideshow { position: absolute; inset: 0; }

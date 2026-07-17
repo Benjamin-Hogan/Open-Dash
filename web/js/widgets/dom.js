@@ -30,7 +30,8 @@ export function getSceneVariantLabel() {
 }
 
 // Apply variant overrides over a widget's settings (shallow merge), so heavy
-// embeds don't repeat full URLs N times in config.
+// embeds don't repeat full URLs N times in config. Scene label wins when it
+// matches a variant; otherwise the first variant is the default (if any).
 export function effectiveSettings(widget) {
   const base = { ...(widget.settings || {}) };
   const variants = widget.variants || [];
@@ -38,9 +39,7 @@ export function effectiveSettings(widget) {
   if (sceneVariantLabel) {
     active = variants.find((v) => v.label === sceneVariantLabel) || null;
   }
-  if (!active) {
-    active = variants.find((v) => v.active) || variants[0] || null;
-  }
+  if (!active) active = variants[0] || null;
   return active ? { ...base, ...(active.overrides || {}) } : base;
 }
 

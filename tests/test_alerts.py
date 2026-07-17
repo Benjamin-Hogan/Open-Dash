@@ -241,3 +241,92 @@ async def test_reapply_migrates_legacy_nws_explicit_ttl(monkeypatch):
     assert updated["usesSettingsTtl"] is True
     assert updated["hardExpiresAt"] == pytest.approx(hard, abs=2)
     assert updated["expiresAt"] == pytest.approx(time.time() + 45, abs=2)
+
+
+@pytest.mark.asyncio
+async def test_nws_disabled_skips_poll(monkeypatch):
+    cfg = config_store.get_config()
+    cfg.settings.alerts.nwsEnabled = False
+    monkeypatch.setattr(config_store, "_cached", cfg)
+    _mock_nws(monkeypatch, [_nws_feature(fid="heat-off")])
+    await alerts._check_nws()
+    assert alerts.active() == []
+
+
+@pytest.mark.asyncio
+async def test_nws_min_severity_filters_info(monkeypatch):
+    cfg = config_store.get_config()
+    cfg.settings.alerts.nwsMinSeverity = "warning"
+    monkeypatch.setattr(config_store, "_cached", cfg)
+    # Unknown NWS severity maps to info — should be filtered.
+    _mock_nws(monkeypatch, [_nws_feature(severity="Minor", fid="minor-1")])
+    await alerts._check_nws()
+    assert alerts.active() == []
+
+    _mock_nws(monkeypatch, [_nws_feature(severity="Moderate", fid="mod-1")])
+    await alerts._check_nws()
+    assert any(a["id"] == "nws-mod-1" for a in alerts.active())
+
+
+@pytest.mark.asyncio
+async def test_space_disabled_skips_kp(monkeypatch):
+    cfg = config_store.get_config()
+    cfg.settings.alerts.spaceEnabled = False
+    monkeypatch.setattr(config_store, "_cached", cfg)
+
+    class FakeProvider:
+        name = "space-weather"
+        ttl = 900.0
+
+        def cache_key(self, params):
+            return "space"
+
+        async def fetch(self, params):
+            return {"kp": 9, "aurora": "extreme"}
+
+    from server.shared import providers
+    from server.shared.cache import cache
+
+    monkeypatch.setattr(providers, "get", lambda name: FakeProvider() if name == "space-weather" else None)
+    cache.clear()
+    await alerts._check_kp()
+    assert alerts.active() == []
+
+
+@pytest.mark.asyncio
+async def test_kp_threshold_and_space_ttl_zero_uses_warning_settings(monkeypatch):
+    cfg = config_store.get_config()
+    cfg.settings.alerts.kpThreshold = 5
+    cfg.settings.alerts.spaceTtlSeconds = 0
+    cfg.settings.alerts.warningTtlSeconds = 120
+    monkeypatch.setattr(config_store, "_cached", cfg)
+
+    class FakeProvider:
+        name = "space-weather"
+        ttl = 900.0
+
+        def cache_key(self, params):
+            return "space"
+
+        async def fetch(self, params):
+            return {"kp": 5.5, "aurora": "active"}
+
+    from server.shared import providers
+    from server.shared.cache import cache
+
+    monkeypatch.setattr(providers, "get", lambda name: FakeProvider() if name == "space-weather" else None)
+    cache.clear()
+    await alerts._check_kp()
+    assert len(alerts.active()) == 1
+    a = alerts.active()[0]
+    assert a["usesSettingsTtl"] is True
+    assert a["expiresAt"] == pytest.approx(time.time() + 120, abs=2)
+
+
+@pytest.mark.asyncio
+async def test_clear_all_dismisses_every_alert():
+    await alerts.push("info", "a", "1", source="test", alert_id="t-1")
+    await alerts.push("warning", "b", "2", source="test", alert_id="t-2")
+    n = await alerts.clear_all()
+    assert n == 2
+    assert alerts.active() == []

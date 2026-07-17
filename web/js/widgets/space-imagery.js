@@ -23,13 +23,15 @@ const SOURCES = [
 ];
 const LABELS = Object.fromEntries(SOURCES.map((s) => [s.value, s.label]));
 const DEFAULT = "aurora-north";
-const REFRESH_MS = 600000; // re-fetch the rebuilt GIF every 10 min
+const DEFAULT_REFRESH_SEC = 600;
 
 define("space-imagery", {
   meta: { label: "Space imagery", description: "Aurora / LASCO / SUVI loops", category: "embed" },
   schema: {
     fields: [
       { key: "source", label: "Source", type: "select", options: SOURCES, default: DEFAULT },
+      { key: "gifRefreshSeconds", label: "Re-fetch GIF every N seconds", type: "number", default: DEFAULT_REFRESH_SEC },
+      { key: "showCaption", label: "Show source caption", type: "boolean", default: true },
     ],
   },
   async mount(root, widget) {
@@ -39,10 +41,18 @@ define("space-imagery", {
     wrap.append(img, cap);
     root.appendChild(wrap);
     const handle = { wrap, img, cap, widget };
-    img.addEventListener("load", () => { handle.cap.textContent = LABELS[handle.slug] || ""; });
-    img.addEventListener("error", () => { handle.cap.textContent = `${LABELS[handle.slug] || handle.slug} — building…`; });
+    img.addEventListener("load", () => {
+      const s = effectiveSettings(handle.widget);
+      handle.cap.textContent = s.showCaption === false ? "" : (LABELS[handle.slug] || "");
+    });
+    img.addEventListener("error", () => {
+      const s = effectiveSettings(handle.widget);
+      handle.cap.textContent = s.showCaption === false
+        ? ""
+        : `${LABELS[handle.slug] || handle.slug} — building…`;
+    });
     load(handle);
-    handle.timer = setInterval(() => load(handle), REFRESH_MS);
+    armTimer(handle);
     return handle;
   },
   refresh(handle) { load(handle); },
@@ -55,11 +65,22 @@ define("space-imagery", {
   destroy(handle) { clearInterval(handle.timer); },
 });
 
+function refreshMs(widget) {
+  const s = effectiveSettings(widget);
+  const sec = Number(s.gifRefreshSeconds) || DEFAULT_REFRESH_SEC;
+  return Math.max(30, sec) * 1000;
+}
+
+function armTimer(handle) {
+  clearInterval(handle.timer);
+  handle.timer = setInterval(() => load(handle), refreshMs(handle.widget));
+}
+
 function load(handle) {
   const s = effectiveSettings(handle.widget);
   const slug = LABELS[s.source] ? s.source : DEFAULT;
   handle.slug = slug;
-  handle.cap.textContent = `${LABELS[slug]} — building…`;
+  handle.cap.textContent = s.showCaption === false ? "" : `${LABELS[slug]} — building…`;
   // cache-bust so a rebuilt GIF is picked up; the endpoint caches for its TTL
   handle.img.src = `/api/gif/${slug}?_r=${Date.now()}`;
 }

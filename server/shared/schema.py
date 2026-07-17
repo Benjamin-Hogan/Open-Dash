@@ -39,32 +39,90 @@ class Slideshow(BaseModel):
     slides: list[Slide] = Field(default_factory=list)
 
 
-class Schedule(BaseModel):
-    """Time-window visibility. ``days``: 0=Mon .. 6=Sun (empty = every day)."""
+def _hhmm(v: str | None) -> str | None:
+    if v is None or v == "":
+        return None
+    import re
+
+    if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", v):
+        raise ValueError("time must be HH:MM (24h)")
+    return v
+
+
+def _days_range(days: list[int]) -> list[int]:
+    for d in days:
+        if d < 0 or d > 6:
+            raise ValueError("days must be integers 0–6 (Mon–Sun)")
+    return days
+
+
+def _ymd(v: str | None) -> str | None:
+    if v is None or v == "":
+        return None
+    import re
+
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+        raise ValueError("date must be YYYY-MM-DD")
+    return v
+
+
+class ScheduleWindow(BaseModel):
+    """One day/time window. Empty ``days`` = every day; missing times = all day."""
     model_config = ConfigDict(extra="forbid")
-    enabled: bool = False
     start: str | None = None  # "HH:MM"
-    end: str | None = None    # "HH:MM"
+    end: str | None = None
     days: list[int] = Field(default_factory=list)
 
     @field_validator("start", "end")
     @classmethod
     def _hhmm(cls, v: str | None) -> str | None:
-        if v is None or v == "":
-            return None
-        import re
-
-        if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", v):
-            raise ValueError("time must be HH:MM (24h)")
-        return v
+        return _hhmm(v)
 
     @field_validator("days")
     @classmethod
     def _days_range(cls, days: list[int]) -> list[int]:
-        for d in days:
-            if d < 0 or d > 6:
-                raise ValueError("days must be integers 0–6 (Mon–Sun)")
-        return days
+        return _days_range(days)
+
+
+class Schedule(BaseModel):
+    """Time-window visibility for pages, widgets, and scenes.
+
+    Legacy single window: ``start`` / ``end`` / ``days``. Prefer ``windows`` for
+    multiple OR'd ranges. Optional ``timeZone`` (IANA) and ``dateFrom``/``dateTo``
+    bound the whole schedule. ``days``: 0=Mon .. 6=Sun (empty = every day).
+    """
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = False
+    start: str | None = None  # legacy single window
+    end: str | None = None
+    days: list[int] = Field(default_factory=list)
+    windows: list[ScheduleWindow] = Field(default_factory=list)
+    timeZone: str | None = None  # IANA; None = device local
+    dateFrom: str | None = None  # YYYY-MM-DD inclusive
+    dateTo: str | None = None
+
+    @field_validator("start", "end")
+    @classmethod
+    def _hhmm(cls, v: str | None) -> str | None:
+        return _hhmm(v)
+
+    @field_validator("days")
+    @classmethod
+    def _days_range(cls, days: list[int]) -> list[int]:
+        return _days_range(days)
+
+    @field_validator("dateFrom", "dateTo")
+    @classmethod
+    def _ymd(cls, v: str | None) -> str | None:
+        return _ymd(v)
+
+    @field_validator("timeZone")
+    @classmethod
+    def _tz(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        v = v.strip()
+        return v or None
 
 
 class PageCondition(BaseModel):
@@ -105,15 +163,11 @@ class PageCondition(BaseModel):
         return seen or ["printing"]
 
 
-class Availability(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    enabled: bool = True
-
-
 class Variant(BaseModel):
     """A named override set, so heavy embeds aren't pasted N times.
 
-    ``overrides`` is shallow-merged over ``settings`` when the variant is active.
+    ``overrides`` is shallow-merged over ``settings`` when a scene selects this
+    ``label`` (or, with no scene, the first variant is used as the default).
     """
     model_config = ConfigDict(extra="forbid")
     label: str = ""
@@ -140,7 +194,6 @@ class Widget(BaseModel):
     refreshSeconds: int | None = Field(default=None, ge=1)
     slideshow: Slideshow | None = None
     schedule: Schedule | None = None
-    availability: Availability | None = None
     variants: list[Variant] = Field(default_factory=list)
     embed: Embed | None = None
     # Type-specific options (url, units, symbols, channelId, ...). Validated by
@@ -154,12 +207,36 @@ class Theme(BaseModel):
     accent: str = "#4aa3ff"
 
 
+class LocationSettings(BaseModel):
+    """Optional home location. When lat+lon are set, geo/NWS/weather defaults use them
+    instead of IP lookup (Phoenix fallback). City/region are display labels only."""
+    model_config = ConfigDict(extra="forbid")
+    lat: float | None = Field(default=None, ge=-90, le=90)
+    lon: float | None = Field(default=None, ge=-180, le=180)
+    city: str = ""
+    region: str = ""
+
+
 class AlertSettings(BaseModel):
-    """Auto-dismiss timing for banner alerts (seconds). 0 = keep until dismissed."""
+    """Banner alert engine settings — TTLs, source toggles, and space-weather knobs.
+
+    TTL ``0`` = keep until dismissed (NWS still capped by official expiry).
+    ``spaceTtlSeconds`` ``0`` = follow the warning severity TTL instead of a fixed window.
+    """
     model_config = ConfigDict(extra="forbid")
     infoTtlSeconds: int = Field(default=90, ge=0)
     warningTtlSeconds: int = Field(default=0, ge=0)
     dangerTtlSeconds: int = Field(default=0, ge=0)
+    # Source enable switches (silent when off; prerequisites still required when on).
+    octoprintEnabled: bool = True
+    nwsEnabled: bool = True
+    spaceEnabled: bool = True
+    # Ignore NWS alerts whose mapped severity is below this floor.
+    nwsMinSeverity: Literal["info", "warning", "danger"] = "info"
+    # Geomagnetic storm: fire when Kp >= threshold; reset hysteresis at threshold - 1.
+    kpThreshold: float = Field(default=6.0, ge=0, le=9)
+    # Explicit space-alert lifetime; 0 = use warningTtlSeconds / keep-until-dismissed.
+    spaceTtlSeconds: int = Field(default=3600, ge=0)
 
 
 class Settings(BaseModel):
@@ -169,6 +246,7 @@ class Settings(BaseModel):
     rowHeightPx: int = Field(default=90, ge=20)
     gapPx: int = Field(default=12, ge=0)
     theme: Theme = Field(default_factory=Theme)
+    location: LocationSettings = Field(default_factory=LocationSettings)
     alerts: AlertSettings = Field(default_factory=AlertSettings)
 
 

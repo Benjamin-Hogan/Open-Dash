@@ -199,8 +199,17 @@ async def get_data(provider_name: str, request: Request):
     if provider is None:
         raise HTTPException(status_code=404, detail=f"unknown provider: {provider_name}")
     params = dict(request.query_params)
+    # Optional per-request cache TTL (seconds). Stripped from the cache key so
+    # the same upstream fetch is shared; only the store duration changes.
+    ttl_raw = params.pop("cacheTtl", None)
+    ttl = float(provider.ttl)
+    if ttl_raw not in (None, ""):
+        try:
+            ttl = max(5.0, min(86400.0, float(ttl_raw)))
+        except (TypeError, ValueError):
+            pass
     key = provider.cache_key(params)
-    if provider.ttl > 0:
+    if ttl > 0:
         cached = cache.get(key)
         if cached is not None:
             return cached
@@ -209,6 +218,6 @@ async def get_data(provider_name: str, request: Request):
     except Exception as exc:  # upstream failure → 502, don't crash the app
         log.warning("%s fetch failed: %s", provider_name, exc)
         raise HTTPException(status_code=502, detail=f"{provider_name} fetch failed")
-    if provider.ttl > 0:
-        cache.set(key, result, provider.ttl)
+    if ttl > 0:
+        cache.set(key, result, ttl)
     return result

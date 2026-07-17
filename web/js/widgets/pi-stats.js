@@ -15,6 +15,10 @@ define("pi-stats", {
     fields: [
       { key: "showSpark", label: "Show CPU history graph", type: "boolean", default: true },
       { key: "tempMax", label: "Temp gauge max °C", type: "number", default: 85 },
+      { key: "cpuWarn", label: "CPU warn at %", type: "number", default: 60 },
+      { key: "cpuHot", label: "CPU hot at %", type: "number", default: 85 },
+      { key: "memWarn", label: "Memory warn at %", type: "number", default: 70 },
+      { key: "memHot", label: "Memory hot at %", type: "number", default: 88 },
     ],
   },
   async mount(root, widget) {
@@ -50,9 +54,13 @@ define("pi-stats", {
       const d = await fetchData("pi-stats");
       const memory = d.memory || {};
       const tempMax = Number(s.tempMax) || 85;
+      const cpuWarn = Number(s.cpuWarn) || 60;
+      const cpuHot = Number(s.cpuHot) || 85;
+      const memWarn = Number(s.memWarn) || 70;
+      const memHot = Number(s.memHot) || 88;
 
-      setRing(handle.cpu, d.cpuPercent, 100, d.cpuPercent != null ? `${fmtNum(d.cpuPercent, 0)}%` : "—", 60, 85);
-      setRing(handle.mem, memory.percent, 100, memory.percent != null ? `${fmtNum(memory.percent, 0)}%` : "—", 70, 88);
+      setRing(handle.cpu, d.cpuPercent, 100, d.cpuPercent != null ? `${fmtNum(d.cpuPercent, 0)}%` : "—", cpuWarn, cpuHot);
+      setRing(handle.mem, memory.percent, 100, memory.percent != null ? `${fmtNum(memory.percent, 0)}%` : "—", memWarn, memHot);
       setRing(handle.temp, d.tempC, tempMax, d.tempC != null ? `${fmtNum(d.tempC, 0)}°` : "—",
         tempMax * 0.7, tempMax * 0.88);
 

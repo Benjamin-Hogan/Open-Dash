@@ -9,7 +9,15 @@ import pytest
 
 from server.shared import config as config_store
 from server.shared import migrations
-from server.shared.schema import DashboardConfig, Page, PageCondition, Schedule
+from server.shared.schema import (
+    AlertSettings,
+    DashboardConfig,
+    LocationSettings,
+    Page,
+    PageCondition,
+    Schedule,
+    Settings,
+)
 
 
 def test_migrate_flat_widgets_to_pages():
@@ -26,6 +34,32 @@ def test_migrate_flat_widgets_to_pages():
     assert out["pages"][0]["widgets"][0]["id"] == "c1"
 
 
+def test_migrate_strips_widget_availability():
+    raw = {
+        "version": 1,
+        "settings": {"title": "T"},
+        "pages": [
+            {
+                "id": "page-1",
+                "name": "Home",
+                "widgets": [
+                    {
+                        "id": "c1",
+                        "type": "clock",
+                        "title": "Clock",
+                        "grid": {"x": 0, "y": 0, "w": 3, "h": 2},
+                        "availability": {"enabled": True},
+                    },
+                ],
+            }
+        ],
+    }
+    out = migrations.migrate(raw)
+    assert "availability" not in out["pages"][0]["widgets"][0]
+    cfg = DashboardConfig.model_validate(out)
+    assert cfg.pages[0].widgets[0].id == "c1"
+
+
 def test_safe_backup_path_rejects_traversal():
     with pytest.raises(ValueError):
         config_store._safe_backup_path("../evil.json")
@@ -39,6 +73,45 @@ def test_schedule_hhmm_validation():
         Schedule(enabled=True, start="9:00", end="17:30")
     with pytest.raises(Exception):
         Schedule(enabled=True, start="09:00", end="17:30", days=[7])
+
+
+def test_schedule_windows_timezone_and_dates():
+    from server.shared.schema import ScheduleWindow
+
+    s = Schedule(
+        enabled=True,
+        windows=[
+            ScheduleWindow(start="07:00", end="09:00", days=[0, 1, 2, 3, 4]),
+            ScheduleWindow(start="17:00", end="19:00", days=[0, 1, 2, 3, 4]),
+        ],
+        timeZone="America/Phoenix",
+        dateFrom="2026-07-01",
+        dateTo="2026-07-31",
+    )
+    assert len(s.windows) == 2
+    assert s.timeZone == "America/Phoenix"
+    with pytest.raises(Exception):
+        Schedule(enabled=True, dateFrom="07/01/2026")
+    with pytest.raises(Exception):
+        ScheduleWindow(start="25:00", end="09:00")
+
+
+def test_location_and_alert_settings_defaults():
+    s = Settings()
+    assert s.location.lat is None and s.location.lon is None
+    assert s.alerts.octoprintEnabled is True
+    assert s.alerts.nwsEnabled is True
+    assert s.alerts.spaceEnabled is True
+    assert s.alerts.nwsMinSeverity == "info"
+    assert s.alerts.kpThreshold == 6.0
+    assert s.alerts.spaceTtlSeconds == 3600
+    LocationSettings(lat=33.4, lon=-112.0, city="Phoenix", region="AZ")
+    with pytest.raises(Exception):
+        LocationSettings(lat=100.0, lon=0.0)
+    with pytest.raises(Exception):
+        AlertSettings(kpThreshold=10)
+    with pytest.raises(Exception):
+        AlertSettings(nwsMinSeverity="critical")  # type: ignore[arg-type]
 
 
 def test_page_condition_defaults_and_bounds():

@@ -16,7 +16,8 @@ from typing import Any
 from ..shared.providers import Provider, register
 from ..shared.safe_fetch import UnsafeURLError, get_text
 
-_WINDOW_DAYS = 60
+_DEFAULT_WINDOW_DAYS = 60
+_MAX_WINDOW_DAYS = 366
 _MAX_OCCURRENCES = 200          # safety cap per recurring event
 _MAX_EVENTS = 50
 _WEEKDAYS = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
@@ -130,6 +131,11 @@ class ICalProvider(Provider):
             count = max(1, min(_MAX_EVENTS, int(params.get("count") or 10)))
         except (TypeError, ValueError):
             count = 10
+        try:
+            window_days = int(params.get("lookaheadDays") or _DEFAULT_WINDOW_DAYS)
+        except (TypeError, ValueError):
+            window_days = _DEFAULT_WINDOW_DAYS
+        window_days = max(1, min(_MAX_WINDOW_DAYS, window_days))
         if not url:
             return {"events": [], "error": "no url"}
         headers = {"User-Agent": "PiDashboard/3 (+ical)"}
@@ -141,17 +147,18 @@ class ICalProvider(Provider):
 
         now = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
         win_start = now - dt.timedelta(days=1)
-        win_end = now + dt.timedelta(days=_WINDOW_DAYS)
+        win_end = now + dt.timedelta(days=window_days)
 
         events: list[dict[str, Any]] = []
         in_ev = False
         summary = ""
+        location = ""
         start = None
         all_day = False
         rrule: dict = {}
         for line in lines:
             if line == "BEGIN:VEVENT":
-                in_ev, summary, start, all_day, rrule = True, "", None, False, {}
+                in_ev, summary, location, start, all_day, rrule = True, "", "", None, False, {}
             elif line == "END:VEVENT":
                 if start is not None:
                     for occ in _expand(start, rrule, win_start, win_end):
@@ -159,6 +166,7 @@ class ICalProvider(Provider):
                             "summary": summary or "(no title)",
                             "start": _naive(occ).isoformat(),
                             "allDay": all_day,
+                            "location": location or "",
                         })
                 in_ev = False
             elif in_ev:
@@ -166,6 +174,8 @@ class ICalProvider(Provider):
                 key = name.split(";")[0].upper()
                 if key == "SUMMARY":
                     summary = val.strip()
+                elif key == "LOCATION":
+                    location = val.strip()
                 elif key == "DTSTART":
                     try:
                         start, all_day = _parse_dt(val)
@@ -178,7 +188,7 @@ class ICalProvider(Provider):
 
         events = [e for e in events if e["start"] >= _naive(win_start).isoformat()]
         events.sort(key=lambda e: e["start"])
-        return {"events": events[:count]}
+        return {"events": events[:count], "lookaheadDays": window_days}
 
 
 register(ICalProvider())
