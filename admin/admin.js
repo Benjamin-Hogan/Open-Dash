@@ -102,7 +102,11 @@ function renderPageBar() {
   acts.append(
     mk("Rename", "", () => renamePage(state.activePage)),
     mk("Duration", "", () => durationPage(state.activePage)),
-    mk("Schedule", pages()[state.activePage]?.schedule?.enabled ? "scheduled" : "", () => openPageSchedule(state.activePage)),
+    mk(
+      "Schedule",
+      (pages()[state.activePage]?.schedule?.enabled || pages()[state.activePage]?.condition?.enabled) ? "scheduled" : "",
+      () => openPageSchedule(state.activePage),
+    ),
     mk("Duplicate", "", () => duplicatePage(state.activePage)),
     mk("←", "", () => movePage(state.activePage, -1)),
     mk("→", "", () => movePage(state.activePage, 1)),
@@ -1237,6 +1241,185 @@ async function openBackups() {
 // Same Schedule shape widgets use (days 0=Mon..6=Sun, HH:MM window, may wrap
 // past midnight). Displays skip the page outside the window.
 
+const CONDITION_TYPES = [
+  { value: "octoprint", label: "OctoPrint (printer state)" },
+  { value: "weather-alert", label: "Weather alert (NWS)" },
+  { value: "youtube-live", label: "YouTube live" },
+  { value: "calendar-soon", label: "Calendar event soon" },
+];
+
+function defaultConditionPriority(type, matchStates) {
+  if (type === "weather-alert") return 90;
+  if (type === "youtube-live") return 40;
+  if (type === "calendar-soon") return 30;
+  if (type === "octoprint") {
+    const states = matchStates || [];
+    if (states.includes("error") && !states.includes("printing") && !states.includes("paused")) return 80;
+    if (states.includes("error")) return 80;
+    return 50;
+  }
+  return 50;
+}
+
+function widgetsOfType(type) {
+  const out = [];
+  for (const p of pages()) {
+    for (const w of p.widgets || []) {
+      if (w.type === type) out.push({ id: w.id, label: `${w.title || w.id} (${p.name})` });
+    }
+  }
+  return out;
+}
+
+function appendConditionFields(editor, condition) {
+  const c = condition || {};
+  const host = document.createElement("div");
+  host.dataset.name = "pc-host";
+  editor.appendChild(host);
+
+  const redraw = (next) => {
+    const cur = { ...c, ...next };
+    host.replaceChildren();
+    host.appendChild(boolField("Enable condition", cur.enabled === true, "pc-enabled"));
+    host.appendChild(noteEl(
+      "Time window AND condition must both match. Soft-join adds the page to the slideshow while true; force-override jumps to it immediately (highest priority wins)."
+    ));
+
+    const typeSel = select(CONDITION_TYPES, cur.type || "octoprint", (v) => {
+      const states = gatherMatchStates(host);
+      redraw({
+        enabled: host.querySelector('[data-name="pc-enabled"]')?.checked === true,
+        type: v,
+        mode: host.querySelector('[data-name="pc-mode"]')?.value || cur.mode || "soft-join",
+        priority: defaultConditionPriority(v, states),
+        sourceWidgetId: "",
+        matchStates: v === "octoprint" ? (states.length ? states : ["printing"]) : cur.matchStates,
+        minSeverity: host.querySelector('[data-name="pc-minSeverity"]')?.value || cur.minSeverity || "",
+        leadMinutes: Number(host.querySelector('[data-name="pc-leadMinutes"]')?.value) || cur.leadMinutes || 30,
+        pollSeconds: host.querySelector('[data-name="pc-pollSeconds"]')?.value ?? cur.pollSeconds,
+      });
+    }, "pc-type");
+    host.appendChild(field("When", typeSel));
+
+    host.appendChild(field("Mode", select(
+      [
+        { value: "soft-join", label: "Soft-join (rotate with other pages)" },
+        { value: "force-override", label: "Force-override (jump and hold)" },
+      ],
+      cur.mode || "soft-join",
+      null,
+      "pc-mode",
+    )));
+
+    const pri = cur.priority ?? defaultConditionPriority(cur.type || "octoprint", cur.matchStates);
+    host.appendChild(field("Priority (0–100, higher wins)", input("number", pri, "pc-priority")));
+
+    const type = cur.type || "octoprint";
+    if (type === "octoprint") {
+      const src = widgetsOfType("octoprint");
+      const opts = [{ value: "", label: src.length ? "— pick OctoPrint widget —" : "— add an OctoPrint widget first —" },
+        ...src.map((w) => ({ value: w.id, label: w.label }))];
+      host.appendChild(field("Source widget", select(opts, cur.sourceWidgetId || "", null, "pc-source")));
+      const states = cur.matchStates?.length ? cur.matchStates : ["printing"];
+      const wrap = document.createElement("div");
+      wrap.className = "day-picker";
+      wrap.dataset.name = "pc-matchStates";
+      for (const s of ["printing", "paused", "error"]) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "day-chip" + (states.includes(s) ? " on" : "");
+        b.textContent = s;
+        b.dataset.state = s;
+        b.onclick = () => {
+          b.classList.toggle("on");
+          const nextStates = gatherMatchStates(host);
+          const priEl = host.querySelector('[data-name="pc-priority"]');
+          if (priEl && document.activeElement !== priEl) {
+            priEl.value = String(defaultConditionPriority("octoprint", nextStates));
+          }
+        };
+        wrap.appendChild(b);
+      }
+      host.appendChild(field("Match states", wrap));
+    } else if (type === "weather-alert") {
+      host.appendChild(field("Minimum severity", select(
+        [
+          { value: "", label: "Any" },
+          { value: "info", label: "Info+" },
+          { value: "warning", label: "Warning+" },
+          { value: "danger", label: "Danger only" },
+        ],
+        cur.minSeverity || "",
+        null,
+        "pc-minSeverity",
+      )));
+    } else if (type === "youtube-live") {
+      const src = widgetsOfType("youtube-live");
+      const opts = [{ value: "", label: src.length ? "— pick YouTube widget —" : "— add a YouTube widget first —" },
+        ...src.map((w) => ({ value: w.id, label: w.label }))];
+      host.appendChild(field("Source widget", select(opts, cur.sourceWidgetId || "", null, "pc-source")));
+      host.appendChild(noteEl("The YouTube widget must use Channel ID live mode (not a fixed video URL)."));
+    } else if (type === "calendar-soon") {
+      const src = widgetsOfType("ical");
+      const opts = [{ value: "", label: src.length ? "— pick Calendar widget —" : "— add an iCal widget first —" },
+        ...src.map((w) => ({ value: w.id, label: w.label }))];
+      host.appendChild(field("Source widget", select(opts, cur.sourceWidgetId || "", null, "pc-source")));
+      host.appendChild(field("Lead minutes", input("number", cur.leadMinutes ?? 30, "pc-leadMinutes")));
+    }
+
+    host.appendChild(field(
+      "Re-check every (seconds, blank = default 5)",
+      input("number", cur.pollSeconds ?? "", "pc-pollSeconds"),
+    ));
+  };
+
+  redraw({});
+}
+
+function gatherMatchStates(root) {
+  const wrap = root.querySelector('[data-name="pc-matchStates"]');
+  if (!wrap) return [];
+  return [...wrap.querySelectorAll(".day-chip.on")].map((b) => b.dataset.state);
+}
+
+function gatherCondition(editor) {
+  const host = editor.querySelector('[data-name="pc-host"]') || editor;
+  const enabled = host.querySelector('[data-name="pc-enabled"]')?.checked === true;
+  const type = host.querySelector('[data-name="pc-type"]')?.value || "octoprint";
+  const mode = host.querySelector('[data-name="pc-mode"]')?.value || "soft-join";
+  let priority = Math.round(Number(host.querySelector('[data-name="pc-priority"]')?.value));
+  if (!Number.isFinite(priority)) priority = defaultConditionPriority(type, gatherMatchStates(host));
+  priority = Math.max(0, Math.min(100, priority));
+  const sourceWidgetId = host.querySelector('[data-name="pc-source"]')?.value || null;
+  const matchStates = gatherMatchStates(host);
+  const minRaw = host.querySelector('[data-name="pc-minSeverity"]')?.value || "";
+  const minSeverity = minRaw || null;
+  let leadMinutes = Math.round(Number(host.querySelector('[data-name="pc-leadMinutes"]')?.value));
+  if (!Number.isFinite(leadMinutes) || leadMinutes < 1) leadMinutes = 30;
+  leadMinutes = Math.min(10080, leadMinutes);
+  const pollRaw = host.querySelector('[data-name="pc-pollSeconds"]')?.value;
+  let pollSeconds = null;
+  if (pollRaw !== "" && pollRaw != null) {
+    pollSeconds = Math.round(Number(pollRaw));
+    if (!Number.isFinite(pollSeconds) || pollSeconds < 2) pollSeconds = null;
+    else pollSeconds = Math.min(300, pollSeconds);
+  }
+  if (!enabled) return null;
+  const out = { enabled, type, mode, priority, pollSeconds };
+  if (type === "octoprint") {
+    out.sourceWidgetId = sourceWidgetId;
+    out.matchStates = matchStates.length ? matchStates : ["printing"];
+  } else if (type === "weather-alert") {
+    out.minSeverity = minSeverity;
+  } else if (type === "youtube-live") {
+    out.sourceWidgetId = sourceWidgetId;
+  } else if (type === "calendar-soon") {
+    out.sourceWidgetId = sourceWidgetId;
+    out.leadMinutes = leadMinutes;
+  }
+  return out;
+}
+
 function openPageSchedule(i) {
   const page = pages()[i];
   if (!page) return;
@@ -1245,16 +1428,21 @@ function openPageSchedule(i) {
   editor.replaceChildren();
   state.editingId = null;
 
-  const h = document.createElement("h2"); h.textContent = `Schedule — ${page.name}`; h.style.margin = "0 0 6px";
+  const h = document.createElement("h2"); h.textContent = `Schedule & conditions — ${page.name}`; h.style.margin = "0 0 6px";
   editor.appendChild(h);
+  editor.appendChild(sectionTitle("Time window"));
   editor.appendChild(noteEl("Show this page only during a time window. Outside it, the slideshow skips the page (and a display assigned only this page falls back to the others). The window may wrap past midnight, e.g. 21:00 → 06:00."));
   appendScheduleFields(editor, page.schedule || {}, "ps");
+
+  editor.appendChild(sectionTitle("Live condition"));
+  appendConditionFields(editor, page.condition || {});
 
   const actions = document.createElement("div"); actions.className = "editor-actions";
   actions.append(
     button("Cancel", "btn", () => editor.classList.add("hidden")),
     button("Save", "btn primary", () => {
       page.schedule = gatherSchedule(editor, "ps");
+      page.condition = gatherCondition(editor);
       editor.classList.add("hidden");
       save();
     }),

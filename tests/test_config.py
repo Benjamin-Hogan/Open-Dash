@@ -9,7 +9,7 @@ import pytest
 
 from server.shared import config as config_store
 from server.shared import migrations
-from server.shared.schema import DashboardConfig, Schedule
+from server.shared.schema import DashboardConfig, Page, PageCondition, Schedule
 
 
 def test_migrate_flat_widgets_to_pages():
@@ -39,6 +39,64 @@ def test_schedule_hhmm_validation():
         Schedule(enabled=True, start="9:00", end="17:30")
     with pytest.raises(Exception):
         Schedule(enabled=True, start="09:00", end="17:30", days=[7])
+
+
+def test_page_condition_defaults_and_bounds():
+    c = PageCondition(enabled=True, type="octoprint")
+    assert c.mode == "soft-join"
+    assert c.priority == 50
+    assert c.matchStates == ["printing"]
+    assert c.leadMinutes == 30
+
+    PageCondition(
+        enabled=True,
+        type="weather-alert",
+        mode="force-override",
+        priority=90,
+        minSeverity="warning",
+    )
+    PageCondition(
+        enabled=True,
+        type="calendar-soon",
+        sourceWidgetId="cal-1",
+        leadMinutes=15,
+        pollSeconds=5,
+    )
+    with pytest.raises(Exception):
+        PageCondition(enabled=True, type="octoprint", priority=101)
+    with pytest.raises(Exception):
+        PageCondition(enabled=True, type="calendar-soon", leadMinutes=0)
+    with pytest.raises(Exception):
+        PageCondition(enabled=True, type="octoprint", pollSeconds=1)
+    with pytest.raises(Exception):
+        PageCondition(enabled=True, type="not-a-trigger")  # type: ignore[arg-type]
+
+
+def test_page_condition_match_states_dedupe_and_default():
+    c = PageCondition(enabled=True, type="octoprint", matchStates=["error", "printing", "error"])
+    assert c.matchStates == ["error", "printing"]
+    empty = PageCondition(enabled=True, type="octoprint", matchStates=[])
+    assert empty.matchStates == ["printing"]
+
+
+def test_page_accepts_condition():
+    p = Page(
+        id="page-print",
+        name="Printing",
+        condition=PageCondition(
+            enabled=True,
+            type="octoprint",
+            mode="force-override",
+            priority=50,
+            sourceWidgetId="octo-1",
+            matchStates=["printing", "paused"],
+        ),
+        widgets=[],
+    )
+    assert p.condition is not None
+    assert p.condition.type == "octoprint"
+    # Existing pages without condition stay valid.
+    assert Page(id="page-1", name="Home", widgets=[]).condition is None
 
 
 @pytest.mark.asyncio
