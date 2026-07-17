@@ -90,11 +90,14 @@ define("embed", {
     handle.frame.srcdoc = "";
     requestAnimationFrame(() => { handle.frame.srcdoc = buildEmbedDoc(handle.code, handle.bg); });
   },
-  suspend(handle) {
+  suspend(handle, opts = {}) {
+    // Soft page-hide: leave the embed running so it doesn't cold-start on return.
+    if (opts.releaseMedia === false) return;
     // Removing srcdoc tears down the embed's scripts/sockets while off-screen.
     handle.frame.removeAttribute("srcdoc");
   },
-  resume(handle) {
+  resume(handle, opts = {}) {
+    if (opts.releaseMedia === false) return;
     handle.frame.srcdoc = buildEmbedDoc(handle.code, handle.bg);
   },
 });

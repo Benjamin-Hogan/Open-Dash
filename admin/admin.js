@@ -2152,5 +2152,23 @@ $("#btn-refresh").onclick = async () => {
     toast(r.ok ? "Dashboards refreshing" : "Refresh failed: " + r.status, r.ok ? "ok" : "err");
   } catch (e) { toast("Refresh failed: " + e.message, "err"); }
 };
+$("#btn-update").onclick = async () => {
+  const btn = $("#btn-update");
+  btn.disabled = true;
+  try {
+    const r = await fetch("/api/system/update", { method: "POST" });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      toast("Update failed: " + (d.detail || r.status), "err");
+      return;
+    }
+    if (d.restarting) {
+      toast(`Updated ${d.branch} ${d.previousSha} → ${d.sha}; restarting`, "ok");
+    } else {
+      toast(`Already up to date (${d.branch} ${d.sha})`, "ok");
+    }
+  } catch (e) { toast("Update failed: " + e.message, "err"); }
+  finally { btn.disabled = false; }
+};
 
 load();

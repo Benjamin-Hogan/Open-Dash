@@ -22,7 +22,10 @@ live-reloads over Server-Sent Events.
   one provider file + one plugin file.
 - **Pages + slideshow.** The config holds multiple named **pages** (layouts).
   Slideshow mode rotates through them on a timer (global default + optional
-  per-page override). Old single-`widgets` configs auto-migrate to one page
+  per-page override). Mounted pages stay alive across rotation: inactive pages
+  soft-suspend media (pause in place) so video/YouTube resume instead of
+  restarting. Config reloads and pages that leave the visible set still fully
+  tear down. Old single-`widgets` configs auto-migrate to one page
   (`server/shared/migrations.py`).
 - **Page schedules & live conditions.** Each page can combine a **time schedule**
   with a curated **live condition** (OctoPrint printing/paused/error, active NWS

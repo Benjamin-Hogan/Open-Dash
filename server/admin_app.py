@@ -11,10 +11,11 @@ ADMIN_TOKEN remains future work.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -136,6 +137,27 @@ async def force_refresh():
     cleared = cache.clear()
     await events.broadcast("refresh", {})
     return {"cleared": cleared}
+
+
+@app.post("/api/system/update")
+async def system_update_now(background: BackgroundTasks):
+    """Pull the current branch and restart in place so new commits take effect.
+
+    The restart only happens when the pull actually moved HEAD, so a no-op
+    update leaves the running process alone. It runs after the response is
+    flushed, since it replaces this process.
+    """
+    from .shared import system_update
+
+    try:
+        result = await asyncio.to_thread(system_update.pull_current_branch)
+    except system_update.UpdateError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    changed = result["sha"] != result["previousSha"]
+    if changed:
+        background.add_task(system_update.restart_process)
+    return {**result, "restarting": changed}
 
 
 # Serve the widget plugin modules same-origin so the admin can import the SAME

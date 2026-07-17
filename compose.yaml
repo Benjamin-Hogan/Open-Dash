@@ -12,6 +12,8 @@ services:
       FINNHUB_API_KEY: ${FINNHUB_API_KEY:-}
       YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
       OCTOPRINT_API_KEY: ${OCTOPRINT_API_KEY:-}
+      # Where the admin "Update" control runs `git pull --ff-only`.
+      REPO_DIR: /repo
     volumes:
       # Named volume persists config + backups + secrets across rebuilds.
       # (A named volume avoids Docker Desktop's network-drive bind-mount issues.)
@@ -20,6 +22,10 @@ services:
       - ./server:/app/server
       - ./web:/app/web
       - ./admin:/app/admin
+      # The git checkout itself, so the admin "Update" control can pull. It is
+      # the same host directory as the mounts above, so a pull updates the code
+      # under /app too and the in-place restart picks it up.
+      - ./:/repo
 
     # Production default: run the dual-port app directly.
     # For local hot-reload, override command to:

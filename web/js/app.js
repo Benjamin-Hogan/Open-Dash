@@ -1,5 +1,5 @@
-// Dashboard runtime: render the active page's grid, rotate through pages in
-// slideshow mode, and live-reload over SSE with no page refresh.
+// Dashboard runtime: render pages into a keep-alive cache, rotate through them in
+// slideshow mode (soft-suspend media so video resumes), and live-reload over SSE.
 import * as registry from "./widgets/index.js";
 import { el, fetchData, setSceneVariantLabel } from "./widgets/dom.js";
 import { initDevices, getPrefs, onDevicePrefs } from "./device.js";
@@ -12,7 +12,12 @@ import {
 
 const grid = document.getElementById("grid");
 const dots = document.getElementById("pagedots");
-let active = []; // [{ widget, card, plugin, handle, refreshTimer, scheduleTimer }]
+let active = []; // current page: [{ widget, card, plugin, handle, refreshTimer, scheduleTimer }]
+// Keep mounted pages across rotation so video/YouTube don't remount from t=0.
+// Soft-suspend pauses media; hard release (slideshow/schedule) still blanks src.
+const pageCache = new Map(); // pageId -> { pageId, entries, pane }
+let activePageId = null;
+let renderGen = 0;
 
 // page/rotation state
 let config = null;
@@ -81,16 +86,102 @@ function applyScale() {
   root.style.setProperty("--font-scale", uiScale * fontScale);
 }
 
-function teardown() {
-  for (const a of active) {
+function destroyCachedPage(cached) {
+  for (const a of cached.entries) {
     clearInterval(a.refreshTimer);
     clearInterval(a.scheduleTimer);
-    // suspend first (releases media/timers); destroy is the hard cleanup.
+    // Hard release then destroy — config reload / page left the visible set.
     a.plugin?.suspend?.(a.handle);
     a.plugin?.destroy?.(a.handle);
   }
+  cached.pane.remove();
+}
+
+function teardown() {
+  for (const cached of pageCache.values()) destroyCachedPage(cached);
+  pageCache.clear();
   active = [];
+  activePageId = null;
   grid.replaceChildren();
+}
+
+function prunePageCache() {
+  const keep = new Set(visible.map((p) => p.id));
+  for (const [id, cached] of [...pageCache]) {
+    if (keep.has(id)) continue;
+    destroyCachedPage(cached);
+    pageCache.delete(id);
+    if (activePageId === id) {
+      activePageId = null;
+      active = [];
+    }
+  }
+}
+
+function suspendCachedPage(cached) {
+  cached.pane.classList.remove("active");
+  cached.pane.inert = true;
+  cached.pane.setAttribute("aria-hidden", "true");
+  for (const a of cached.entries) {
+    // Soft suspend: pause without tearing down media buffers.
+    a.plugin?.suspend?.(a.handle, { releaseMedia: false });
+  }
+}
+
+function resumeCachedPage(cached) {
+  cached.pane.inert = false;
+  cached.pane.removeAttribute("aria-hidden");
+  for (const a of cached.entries) {
+    if (a.widget.schedule?.enabled) applySchedule(a);
+    else a.plugin?.resume?.(a.handle, { releaseMedia: false });
+  }
+}
+
+async function mountPage(page) {
+  const pane = el("div", { class: "page-pane", "data-page": page.id });
+  pane.inert = true;
+  pane.setAttribute("aria-hidden", "true");
+  grid.appendChild(pane);
+  const entries = [];
+  let cardIndex = 0;
+  for (const widget of page.widgets || []) {
+    if (widget.enabled === false) continue;
+    const plugin = registry.get(widget.type);
+    const card = el("div", { class: "card card-enter", "data-id": widget.id });
+    card.style.animationDelay = `${Math.min(cardIndex++ * 45, 450)}ms`;
+    card.addEventListener("animationend", () => card.classList.remove("card-enter"), { once: true });
+    card.style.gridColumn = `${(widget.grid?.x ?? 0) + 1} / span ${widget.grid?.w ?? 3}`;
+    card.style.gridRow = `${(widget.grid?.y ?? 0) + 1} / span ${widget.grid?.h ?? 3}`;
+    if (widget.title) card.appendChild(el("div", { class: "card-title" }, widget.title));
+    const body = el("div", { class: "card-body" });
+    card.appendChild(body);
+    pane.appendChild(card);
+
+    const entry = { widget, card, plugin, handle: null };
+    entries.push(entry);
+
+    if (!plugin) {
+      body.appendChild(el("div", { class: "widget-error" }, `Unsupported widget type: ${widget.type}`));
+      continue;
+    }
+    try {
+      entry.handle = await plugin.mount(body, widget, {});
+    } catch (err) {
+      body.appendChild(el("div", { class: "widget-error" }, `Failed: ${err.message}`));
+      continue;
+    }
+    if (widget.refreshSeconds && plugin.refresh) {
+      entry.refreshTimer = setInterval(
+        () => plugin.refresh(entry.handle, widget),
+        widget.refreshSeconds * 1000
+      );
+    }
+    if (widget.schedule?.enabled) {
+      applySchedule(entry);
+      entry.scheduleTimer = setInterval(() => applySchedule(entry), 30000);
+    }
+  }
+  return { pageId: page.id, entries, pane };
 }
 
 // ---- page visibility: device + scene + schedule + live conditions -----------
@@ -236,6 +327,7 @@ function refreshVisibility() {
     pageIndex = keep >= 0 ? keep : 0;
   }
   buildDots();
+  prunePageCache();
   if (visible.length) renderPage(visible[pageIndex]);
   else {
     teardown();
@@ -384,9 +476,10 @@ function show(cfg) {
   visible = computeVisible();
   pageIndex = Math.min(pageIndex, Math.max(0, visible.length - 1));
   buildDots();
+  // Config may have changed widget trees — drop cached pages and remount.
+  teardown();
   if (visible.length) renderPage(visible[pageIndex]);
   else {
-    teardown();
     grid.appendChild(el("div", { class: "widget-error" },
       order.length ? "No pages for this display / scene" : "No pages configured"));
   }
@@ -397,53 +490,52 @@ function show(cfg) {
 let rendering = false; // pause the value-pulse observer during full rebuilds
 
 async function renderPage(page) {
+  const gen = ++renderGen;
+  // Already showing this cached page — nothing to swap.
+  if (activePageId === page.id && pageCache.has(page.id)) {
+    prunePageCache();
+    return;
+  }
   rendering = true;
-  // crossfade: fade the old grid out before rebuilding (skipped by reduced-motion CSS)
-  if (grid.childElementCount) {
-    grid.classList.add("page-out");
-    await new Promise((r) => setTimeout(r, 180));
-  }
-  teardown();
-  grid.classList.remove("page-out");
-  let cardIndex = 0;
-  for (const widget of page.widgets || []) {
-    if (widget.enabled === false) continue;
-    const plugin = registry.get(widget.type);
-    const card = el("div", { class: "card card-enter", "data-id": widget.id });
-    card.style.animationDelay = `${Math.min(cardIndex++ * 45, 450)}ms`;
-    card.addEventListener("animationend", () => card.classList.remove("card-enter"), { once: true });
-    card.style.gridColumn = `${(widget.grid?.x ?? 0) + 1} / span ${widget.grid?.w ?? 3}`;
-    card.style.gridRow = `${(widget.grid?.y ?? 0) + 1} / span ${widget.grid?.h ?? 3}`;
-    if (widget.title) card.appendChild(el("div", { class: "card-title" }, widget.title));
-    const body = el("div", { class: "card-body" });
-    card.appendChild(body);
-    grid.appendChild(card);
+  try {
+    // crossfade: fade the host out before swapping panes (skipped by reduced-motion CSS)
+    if (grid.querySelector(".page-pane.active") || grid.querySelector(".widget-error")) {
+      grid.classList.add("page-out");
+      await new Promise((r) => setTimeout(r, 180));
+      if (gen !== renderGen) return;
+    }
+    // Clear empty-state message if present.
+    for (const child of [...grid.children]) {
+      if (child.classList?.contains("widget-error")) child.remove();
+    }
 
-    const entry = { widget, card, plugin, handle: null };
-    active.push(entry);
+    if (activePageId && pageCache.has(activePageId)) {
+      suspendCachedPage(pageCache.get(activePageId));
+    }
 
-    if (!plugin) {
-      body.appendChild(el("div", { class: "widget-error" }, `Unsupported widget type: ${widget.type}`));
-      continue;
+    let cached = pageCache.get(page.id);
+    if (!cached) {
+      cached = await mountPage(page);
+      if (gen !== renderGen) {
+        // A newer switch won — discard this mount.
+        destroyCachedPage(cached);
+        return;
+      }
+      pageCache.set(page.id, cached);
+    } else {
+      resumeCachedPage(cached);
     }
-    try {
-      entry.handle = await plugin.mount(body, widget, {});
-    } catch (err) {
-      body.appendChild(el("div", { class: "widget-error" }, `Failed: ${err.message}`));
-      continue;
-    }
-    if (widget.refreshSeconds && plugin.refresh) {
-      entry.refreshTimer = setInterval(
-        () => plugin.refresh(entry.handle, widget),
-        widget.refreshSeconds * 1000
-      );
-    }
-    if (widget.schedule?.enabled) {
-      applySchedule(entry);
-      entry.scheduleTimer = setInterval(() => applySchedule(entry), 30000);
-    }
+    cached.pane.classList.add("active");
+    cached.pane.inert = false;
+    cached.pane.removeAttribute("aria-hidden");
+    active = cached.entries;
+    activePageId = page.id;
+    prunePageCache();
+
+    grid.classList.remove("page-out");
+  } finally {
+    if (gen === renderGen) rendering = false;
   }
-  rendering = false;
 }
 
 // ---- page rotation (slideshow mode) -----------------------------------------

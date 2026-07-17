@@ -5,6 +5,10 @@
 // plays it. For an always-on "whatever this channel is streaming live right now",
 // set "channelId" instead — the backend resolves the live videoId (quota-aware)
 // and we re-check liveness periodically so a dead stream recovers on its own.
+//
+// Soft suspend/resume (page rotation and slideshow) pause/plays via the IFrame
+// API so the player keeps its position. The iframe stays mounted — blanking it
+// would restart from t=0.
 import { define } from "./registry.js";
 import { el, effectiveSettings, fetchData } from "./dom.js";
 
@@ -23,7 +27,7 @@ define("youtube-live", {
   async mount(root, widget) {
     const wrap = el("div", { class: "yt-wrap" });
     root.appendChild(wrap);
-    const handle = { wrap, root, widget, alive: true };
+    const handle = { wrap, root, widget, alive: true, ready: false, pending: [] };
     await load(handle);
     return handle;
   },
@@ -35,6 +39,7 @@ define("youtube-live", {
   destroy(handle) {
     handle.alive = false;
     clearInterval(handle.recheck);
+    if (handle.onMessage) window.removeEventListener("message", handle.onMessage);
   },
 });
 
@@ -97,7 +102,9 @@ function scheduleRecheck(handle, channelId) {
 function ytParams(s) {
   const mute = s.mute !== false ? 1 : 0;
   const autoplay = s.autoplay !== false ? 1 : 0;
-  return `?autoplay=${autoplay}&mute=${mute}&playsinline=1&rel=0&enablejsapi=1`;
+  // origin is required for reliable IFrame API postMessage (pause/play across pages)
+  const origin = encodeURIComponent(location.origin);
+  return `?autoplay=${autoplay}&mute=${mute}&playsinline=1&rel=0&enablejsapi=1&origin=${origin}`;
 }
 
 function embed(handle, src) {
@@ -109,7 +116,41 @@ function embed(handle, src) {
     allowfullscreen: "",
   });
   handle.frame = frame;
+  handle.ready = false;
+  handle.pending = [];
   handle.wrap.replaceChildren(frame);
+  armReady(handle);
+}
+
+// Queue pause/play until the player signals onReady — otherwise soft suspend
+// right after mount (or after a hard remount) silently no-ops.
+function armReady(handle) {
+  if (handle.onMessage) window.removeEventListener("message", handle.onMessage);
+  const onMessage = (e) => {
+    if (!handle.alive || e.source !== handle.frame?.contentWindow) return;
+    let data = e.data;
+    if (typeof data === "string") {
+      try { data = JSON.parse(data); } catch { return; }
+    }
+    if (!data || data.event !== "onReady") return;
+    handle.ready = true;
+    window.removeEventListener("message", onMessage);
+    handle.onMessage = null;
+    const pending = handle.pending || [];
+    handle.pending = [];
+    for (const func of pending) command(handle, func);
+  };
+  handle.onMessage = onMessage;
+  window.addEventListener("message", onMessage);
+  // Tell the player we want events (including onReady).
+  frameListen(handle);
+  handle.frame.addEventListener("load", () => frameListen(handle));
+}
+
+function frameListen(handle) {
+  try {
+    handle.frame?.contentWindow?.postMessage(JSON.stringify({ event: "listening", id: handle.widget?.id || 1 }), "*");
+  } catch { /* ignore */ }
 }
 
 // Turn any YouTube link (or bare id) into an /embed/ URL (without query string).
@@ -132,7 +173,18 @@ function embedFromUrl(input) {
 }
 
 function command(handle, func) {
-  handle.frame?.contentWindow?.postMessage(
-    JSON.stringify({ event: "command", func, args: [] }), "*"
-  );
+  if (!handle.frame) return;
+  if (!handle.ready) {
+    handle.pending = handle.pending || [];
+    // Keep only the latest intent (pause then play → play).
+    handle.pending = [func];
+    frameListen(handle);
+    return;
+  }
+  try {
+    handle.frame.contentWindow?.postMessage(
+      JSON.stringify({ event: "command", func, args: [] }),
+      "*"
+    );
+  } catch { /* ignore */ }
 }

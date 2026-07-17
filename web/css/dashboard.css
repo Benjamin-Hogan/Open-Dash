@@ -28,13 +28,34 @@ body {
 }
 
 .grid {
+  position: relative;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+/* One pane per mounted page — kept alive across rotation so media can soft-pause.
+   Do NOT use visibility:hidden: Chromium discards YouTube iframes and they
+   remount from t=0 when the page returns. Opacity + inert is enough. */
+.page-pane {
+  position: absolute;
+  inset: 0;
   display: grid;
   grid-template-columns: repeat(var(--columns), 1fr);
   grid-auto-rows: var(--row-height);
   gap: var(--gap);
   padding: var(--gap);
-  height: 100vh;
-  width: 100vw;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+.page-pane.active {
+  opacity: 1;
+  pointer-events: auto;
+  z-index: 1;
+}
+.grid > .widget-error {
+  position: absolute;
+  inset: 0;
 }
 
 .card {

@@ -9,7 +9,8 @@
 //     schema: { fields: [ {key, label, type, ...} ] },  // drives the admin form
 //     async mount(el, widget, ctx) -> handle,
 //     async refresh(handle, widget),                      // optional
-//     suspend(handle), resume(handle),                    // optional (slideshow)
+//     suspend(handle, opts?), resume(handle, opts?),      // optional (slideshow / pages)
+//       opts.releaseMedia === false → soft pause (page rotation); default hard release
 //   }
 
 const _plugins = new Map();

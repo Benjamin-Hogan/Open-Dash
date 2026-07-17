@@ -41,11 +41,13 @@ define("iframe", {
     u.searchParams.set("_r", Date.now().toString());
     handle.frame.src = u.toString();
   },
-  suspend(handle) {
+  suspend(handle, opts = {}) {
+    if (opts.releaseMedia === false) return;
     handle.frame.dataset.src = handle.frame.src;
     handle.frame.src = "about:blank";
   },
-  resume(handle) {
+  resume(handle, opts = {}) {
+    if (opts.releaseMedia === false) return;
     if (handle.frame.dataset.src) handle.frame.src = handle.frame.dataset.src;
   },
 });

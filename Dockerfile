@@ -2,6 +2,14 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# git is required by the admin "Update" control, which pulls the repo mounted
+# at /repo and restarts in place. The bind-mounted checkout is owned by the host
+# user, not root, so git needs /repo marked safe or it refuses every command.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/* \
+    && git config --global --add safe.directory /repo
+
 # Install runtime deps directly (no `pip install .`, which would need the source
 # present to build the wheel). Keep this list in sync with pyproject.toml.
 RUN pip install --no-cache-dir \
