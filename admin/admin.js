@@ -595,7 +595,7 @@ function openAlerts() {
 
   const h = document.createElement("h2"); h.textContent = "Alerts"; h.style.margin = "0 0 6px";
   editor.appendChild(h);
-  editor.appendChild(noteEl("How long banner alerts stay on screen before auto-dismissing. Set 0 to keep until someone taps ✕ (✕ clears every display). Saving new times also updates alerts already on screen."));
+  editor.appendChild(noteEl("How long banner alerts stay on screen before auto-dismissing (including weather). Set 0 to keep until someone taps ✕ or the official weather expiry (✕ clears every display and stays dismissed until NWS cancels it). Saving new times also updates alerts already on screen."));
 
   editor.appendChild(field("Info alerts (seconds, 0 = keep)", input("number", a.infoTtlSeconds ?? 90, "al-info")));
   editor.appendChild(field("Warning alerts (seconds, 0 = keep)", input("number", a.warningTtlSeconds ?? 0, "al-warning")));

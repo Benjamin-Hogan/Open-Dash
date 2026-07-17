@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
 from server.shared import alerts
 from server.shared import config as config_store
+from server.shared import geo
 from server.shared.schema import AlertSettings, DashboardConfig, Settings
 
 
@@ -15,6 +19,7 @@ from server.shared.schema import AlertSettings, DashboardConfig, Settings
 def _clean_alerts(monkeypatch):
     """Isolate each test from in-memory alert state and config."""
     alerts._active.clear()
+    alerts._dismissed.clear()
     alerts._op_state.clear()
     alerts._kp_alerted = False
     cfg = DashboardConfig(
@@ -25,6 +30,47 @@ def _clean_alerts(monkeypatch):
     monkeypatch.setattr(config_store, "_cached", cfg)
     yield
     alerts._active.clear()
+    alerts._dismissed.clear()
+
+
+def _nws_feature(*, event="Heat Advisory", severity="Moderate", hours=6, fid="alert-1"):
+    expires = (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
+    return {
+        "id": fid,
+        "properties": {
+            "id": fid,
+            "event": event,
+            "headline": f"{event} in effect",
+            "severity": severity,
+            "expires": expires,
+        },
+    }
+
+
+def _mock_nws(monkeypatch, features: list[dict]):
+    monkeypatch.setattr(geo, "get_location", AsyncMock(return_value={"lat": 33.4, "lon": -112.0}))
+
+    class FakeResp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"features": features}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url):
+            return FakeResp()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
 
 
 @pytest.mark.asyncio
@@ -91,3 +137,107 @@ async def test_past_expires_filtered_from_active():
     a = await alerts.push("info", "t", "m", source="test", ttl=60)
     alerts._active[a["id"]]["expiresAt"] = time.time() - 5
     assert alerts.active() == []
+
+
+@pytest.mark.asyncio
+async def test_nws_dismiss_suppresses_repost(monkeypatch):
+    """✕ must stick while NWS still lists the same alert — no ~5min bounce-back."""
+    _mock_nws(monkeypatch, [_nws_feature(fid="heat-1")])
+    await alerts._check_nws()
+    aid = "nws-heat-1"
+    assert any(a["id"] == aid for a in alerts.active())
+
+    await alerts.clear(aid)
+    assert alerts.active() == []
+
+    await alerts._check_nws()
+    assert alerts.active() == []
+    assert aid in alerts._dismissed
+
+
+@pytest.mark.asyncio
+async def test_nws_ttl_expiry_suppresses_repost(monkeypatch):
+    """Admin severity TTL must expire weather banners and not let the next poll revive them."""
+    cfg = config_store.get_config()
+    cfg.settings.alerts.warningTtlSeconds = 30
+    monkeypatch.setattr(config_store, "_cached", cfg)
+
+    _mock_nws(monkeypatch, [_nws_feature(severity="Moderate", hours=6, fid="heat-2")])
+    await alerts._check_nws()
+    aid = "nws-heat-2"
+    a = alerts._active[aid]
+    assert a["usesSettingsTtl"] is True
+    assert a["expiresAt"] == pytest.approx(time.time() + 30, abs=2)
+
+    alerts._active[aid]["expiresAt"] = time.time() - 1
+    await alerts._prune()
+    assert alerts.active() == []
+
+    await alerts._check_nws()
+    assert alerts.active() == []
+
+
+@pytest.mark.asyncio
+async def test_nws_zero_settings_ttl_falls_back_to_nws_expiry(monkeypatch):
+    """Keep-until-dismissed settings still end when the official NWS expiry hits."""
+    _mock_nws(monkeypatch, [_nws_feature(severity="Moderate", hours=6, fid="heat-3")])
+    await alerts._check_nws()
+    a = alerts._active["nws-heat-3"]
+    assert a["usesSettingsTtl"] is True
+    assert a["expiresAt"] == pytest.approx(time.time() + 6 * 3600, abs=5)
+    assert a["hardExpiresAt"] == pytest.approx(a["expiresAt"], abs=1)
+
+
+@pytest.mark.asyncio
+async def test_nws_dismissed_clears_when_feed_drops_then_can_repost(monkeypatch):
+    """Once NWS cancels an alert, a later reissue with the same id may alert again."""
+    feat = _nws_feature(fid="heat-4")
+    _mock_nws(monkeypatch, [feat])
+    await alerts._check_nws()
+    aid = "nws-heat-4"
+    await alerts.clear(aid)
+    assert aid in alerts._dismissed
+
+    _mock_nws(monkeypatch, [])
+    await alerts._check_nws()
+    assert aid not in alerts._dismissed
+
+    _mock_nws(monkeypatch, [feat])
+    await alerts._check_nws()
+    assert any(a["id"] == aid for a in alerts.active())
+
+
+@pytest.mark.asyncio
+async def test_reapply_caps_nws_alert_by_hard_expiry(monkeypatch):
+    _mock_nws(monkeypatch, [_nws_feature(severity="Moderate", hours=1, fid="heat-5")])
+    await alerts._check_nws()
+    aid = "nws-heat-5"
+    hard = alerts._active[aid]["hardExpiresAt"]
+
+    cfg = config_store.get_config()
+    cfg.settings.alerts.warningTtlSeconds = 10 * 3600  # longer than NWS expiry
+    monkeypatch.setattr(config_store, "_cached", cfg)
+
+    await alerts.reapply_settings_ttls()
+    assert alerts._active[aid]["expiresAt"] == pytest.approx(hard, abs=2)
+
+
+@pytest.mark.asyncio
+async def test_reapply_migrates_legacy_nws_explicit_ttl(monkeypatch):
+    """Pre-fix NWS rows (explicit ttl) should pick up admin settings on save."""
+    a = await alerts.push(
+        "warning", "⚠ Heat Advisory", "Hot",
+        source="nws", alert_id="nws-legacy", ttl=6 * 3600,
+    )
+    assert a["usesSettingsTtl"] is False
+    hard = a["expiresAt"]
+
+    cfg = config_store.get_config()
+    cfg.settings.alerts.warningTtlSeconds = 45
+    monkeypatch.setattr(config_store, "_cached", cfg)
+
+    await alerts.reapply_settings_ttls()
+    updated = alerts._active["nws-legacy"]
+    assert updated["usesSettingsTtl"] is True
+    assert updated["hardExpiresAt"] == pytest.approx(hard, abs=2)
+    assert updated["expiresAt"] == pytest.approx(time.time() + 45, abs=2)

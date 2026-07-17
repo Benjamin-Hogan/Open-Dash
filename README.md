@@ -29,7 +29,9 @@ live-reloads over Server-Sent Events.
   and resizing** widgets on a visual grid canvas (per page). Widget **schedules**,
   **slideshow slides**, and global **theme/title** are editable in the admin.
   Global **alert** auto-dismiss timing (per severity) is editable under **Alerts**;
-  ✕ and TTL changes sync across every display via the server.
+  ✕ and TTL changes sync across every display via the server. Weather (NWS)
+  banners use those same TTLs (capped by the official expiry); dismissing one
+  suppresses re-push until NWS cancels it.
 - **Two apps, one process.** Admin (`:8081`) and dashboard (`:8082`) share
   in-process singletons (config, cache, SSE hub, geo), so they must run together
   (`python -m server.run`).

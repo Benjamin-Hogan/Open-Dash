@@ -11,6 +11,8 @@ Sources (all silent when unconfigured — no keys, no printer, no location):
   Printer URLs are discovered from octoprint widgets in the config.
 - **NWS** (api.weather.gov): official severe-weather alerts for the resolved
   location — Dust Storm Warning, Severe Thunderstorm Warning, etc. Keyless.
+  Banner lifetime follows admin severity TTLs (capped by the NWS ``expires``
+  time). ✕ / TTL dismiss stays suppressed until NWS drops the alert.
 - **Space weather**: Kp >= 6 (geomagnetic storm) via the existing provider.
 """
 
@@ -30,6 +32,7 @@ TICK_SECONDS = 20          # octoprint transition checks
 SLOW_EVERY = 15            # NWS + Kp every 15 ticks (~5 min)
 
 _active: dict[str, dict] = {}      # id -> alert
+_dismissed: set[str] = set()       # stable ids (NWS) suppressed until upstream drops them
 _op_state: dict[str, dict] = {}    # printer url -> {state, completion}
 _kp_alerted = False
 
@@ -55,12 +58,23 @@ def _default_ttl(severity: str) -> float | None:
     return float(sec) if sec > 0 else None
 
 
+def _cap_expires(expires_at: float | None, hard_expire_at: float | None) -> float | None:
+    """Apply an upstream hard expiry ceiling (e.g. NWS ``expires``)."""
+    if hard_expire_at is None:
+        return expires_at
+    if expires_at is None or expires_at > hard_expire_at:
+        return hard_expire_at
+    return expires_at
+
+
 async def push(severity: str, title: str, message: str, *, source: str,
-               alert_id: str | None = None, ttl: float | None = None) -> dict:
+               alert_id: str | None = None, ttl: float | None = None,
+               hard_expire_at: float | None = None) -> dict:
     """Register an alert and broadcast it to every display.
 
-    ``ttl=None`` means "use severity settings". An explicit ``ttl`` (including
-    from NWS / space weather) is left alone when alert settings change later.
+    ``ttl=None`` means "use severity settings". An explicit ``ttl`` (e.g. space
+    weather) is left alone when alert settings change later. ``hard_expire_at``
+    caps the banner lifetime (NWS official expiry) without disabling settings TTL.
     """
     from . import events
 
@@ -69,6 +83,7 @@ async def push(severity: str, title: str, message: str, *, source: str,
     if uses_settings_ttl:
         ttl = _default_ttl(sev)
     aid = alert_id or f"{source}-{int(time.time() * 1000)}"
+    expires_at = _cap_expires((time.time() + ttl) if ttl else None, hard_expire_at)
     alert = {
         "id": aid,
         "severity": sev,
@@ -76,20 +91,28 @@ async def push(severity: str, title: str, message: str, *, source: str,
         "message": message,
         "source": source,
         "ts": time.time(),
-        "expiresAt": (time.time() + ttl) if ttl else None,
+        "expiresAt": expires_at,
         "usesSettingsTtl": uses_settings_ttl,
     }
+    if hard_expire_at is not None:
+        alert["hardExpiresAt"] = hard_expire_at
     _active[aid] = alert
     await events.broadcast("alert", alert)
     log.info("alert [%s] %s: %s", severity, title, message)
     return alert
 
 
-async def clear(alert_id: str) -> bool:
-    """Dismiss one alert on every display. Returns True if it was active."""
+async def clear(alert_id: str, *, suppress: bool = True) -> bool:
+    """Dismiss one alert on every display. Returns True if it was active.
+
+    For stable-id sources (NWS), ``suppress=True`` (default) remembers the id so
+    the next poll does not immediately re-push the same hazard after ✕ or TTL.
+    """
     from . import events
 
     if _active.pop(alert_id, None):
+        if suppress and alert_id.startswith("nws-"):
+            _dismissed.add(alert_id)
         await events.broadcast("alert-cleared", {"id": alert_id})
         return True
     return False
@@ -105,12 +128,17 @@ async def reapply_settings_ttls() -> None:
 
     now = time.time()
     for aid, a in list(_active.items()):
-        # Explicit False = caller passed ttl= (NWS/space). Missing key = legacy
+        # Explicit False = caller passed ttl= (space). Missing key = legacy
         # in-memory alert from before this flag existed — treat as settings-based.
+        # Legacy NWS rows used an explicit NWS TTL; migrate them onto settings + hard cap.
+        if a.get("source") == "nws" and a.get("usesSettingsTtl") is False:
+            if a.get("hardExpiresAt") is None and a.get("expiresAt"):
+                a["hardExpiresAt"] = a["expiresAt"]
+            a["usesSettingsTtl"] = True
         if a.get("usesSettingsTtl") is False:
             continue
         ttl = _default_ttl(a.get("severity") or "info")
-        new_exp = (now + ttl) if ttl else None
+        new_exp = _cap_expires((now + ttl) if ttl else None, a.get("hardExpiresAt"))
         if a.get("expiresAt") == new_exp:
             continue
         a["expiresAt"] = new_exp
@@ -122,12 +150,10 @@ async def reapply_settings_ttls() -> None:
 
 
 async def _prune() -> None:
-    from . import events
-
     now = time.time()
     for aid in [k for k, a in _active.items() if a.get("expiresAt") and a["expiresAt"] <= now]:
-        if _active.pop(aid, None):
-            await events.broadcast("alert-cleared", {"id": aid})
+        # suppress=True so NWS polls do not revive TTL-expired banners
+        await clear(aid)
 
 
 # ---- OctoPrint: state transitions ---------------------------------------------
@@ -218,26 +244,31 @@ async def _check_nws() -> None:
         return
 
     seen_now: set[str] = set()
+    now = time.time()
     for f in features:
         p = f.get("properties") or {}
         aid = "nws-" + str(f.get("id") or p.get("id") or "")
         seen_now.add(aid)
-        if aid in _active:
+        if aid in _active or aid in _dismissed:
             continue
-        expires = None
+        hard_expire_at = None
         try:
-            expires = datetime.fromisoformat(p["expires"]).astimezone(timezone.utc).timestamp() - time.time()
+            hard_expire_at = datetime.fromisoformat(p["expires"]).astimezone(timezone.utc).timestamp()
+            if hard_expire_at <= now:
+                continue
         except Exception:
             pass
         await push(
             _NWS_SEVERITY.get(p.get("severity"), "info"),
             f"⚠ {p.get('event', 'Weather alert')}",
             p.get("headline") or p.get("event") or "",
-            source="nws", alert_id=aid, ttl=max(expires or 0, 300),
+            source="nws", alert_id=aid, hard_expire_at=hard_expire_at,
         )
-    # NWS alerts that got cancelled upstream: clear our banner too
+    # NWS alerts cancelled upstream: drop banners and lift dismiss suppression
     for aid in [k for k in _active if k.startswith("nws-") and k not in seen_now]:
-        await clear(aid)
+        await clear(aid, suppress=False)
+    for aid in [k for k in list(_dismissed) if k.startswith("nws-") and k not in seen_now]:
+        _dismissed.discard(aid)
 
 
 # ---- space weather: geomagnetic storm -----------------------------------------
