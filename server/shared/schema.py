@@ -206,6 +206,34 @@ class PageRotation(BaseModel):
     order: list[str] = Field(default_factory=list)  # explicit page-id order; empty = natural
 
 
+class SceneThemeOverlay(BaseModel):
+    """Optional theme overrides while a scene is active (unset fields keep baseline)."""
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["dark", "light", "auto"] | None = None
+    accent: str | None = None
+
+
+class SceneRotationOverlay(BaseModel):
+    """Optional rotation tweaks while a scene is active."""
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool | None = None
+    defaultDurationSeconds: int | None = Field(default=None, ge=2)
+
+
+class Scene(BaseModel):
+    """Named context preset — composes pages, theme, variants, and rotation."""
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1)
+    name: str = "Scene"
+    # Empty = all pages (theme/variant-only scenes). Non-empty = only these page ids.
+    pageIds: list[str] = Field(default_factory=list)
+    theme: SceneThemeOverlay | None = None
+    # When set, widgets that define a variant with this label use it.
+    variantLabel: str | None = None
+    rotation: SceneRotationOverlay | None = None
+    schedule: Schedule | None = None
+
+
 class DashboardConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     # Bumped on every successful write — drives optimistic concurrency (409 on stale).
@@ -213,6 +241,12 @@ class DashboardConfig(BaseModel):
     settings: Settings = Field(default_factory=Settings)
     pages: list[Page] = Field(default_factory=list)
     rotation: PageRotation = Field(default_factory=PageRotation)
+    scenes: list[Scene] = Field(default_factory=list)
+    # Manual activation target; ignored for display while sceneManualHold is false
+    # and a scene schedule is in window (dashboard resolves that at runtime).
+    activeSceneId: str | None = None
+    # True after admin Activate — schedule auto-switch is suppressed until Clear.
+    sceneManualHold: bool = False
 
     @field_validator("pages")
     @classmethod
@@ -223,6 +257,23 @@ class DashboardConfig(BaseModel):
                 raise ValueError(f"duplicate page id: {p.id!r}")
             seen.add(p.id)
         return pages
+
+    @field_validator("scenes")
+    @classmethod
+    def _unique_scene_ids(cls, scenes: list[Scene]) -> list[Scene]:
+        seen: set[str] = set()
+        for s in scenes:
+            if s.id in seen:
+                raise ValueError(f"duplicate scene id: {s.id!r}")
+            seen.add(s.id)
+        return scenes
+
+    @field_validator("activeSceneId")
+    @classmethod
+    def _empty_active_to_none(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        return v
 
 
 # resolve the forward ref in Slide.embed

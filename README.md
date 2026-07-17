@@ -31,10 +31,15 @@ live-reloads over Server-Sent Events.
   while true) or **force-override** (jump immediately, honor page duration as a
   minimum hold, then stay until the condition clears). Highest **priority** wins
   when multiple force-overrides match. Configured in admin under **Schedule**.
+- **Scenes.** Named context presets flip which pages rotate, theme mode/accent,
+  active widget variant labels, and optional rotation timing in one action.
+  Activate from the admin (holds until Clear) or auto-switch via a scene
+  schedule. Device page filters still apply on top. See
+  [`docs/plans/2026-07-17-001-feat-scene-modes-plan.md`](docs/plans/2026-07-17-001-feat-scene-modes-plan.md).
 - **Self-generating admin.** The admin imports the same widget registry and
   builds forms from each plugin's `schema`. Position/size are edited by **dragging
   and resizing** widgets on a visual grid canvas (per page). Widget **schedules**,
-  **slideshow slides**, and global **theme/title** are editable in the admin.
+  **slideshow slides**, **scenes**, and global **theme/title** are editable in the admin.
   Global **alert** auto-dismiss timing (per severity) is editable under **Alerts**;
   ✕ and TTL changes sync across every display via the server. Weather (NWS)
   banners use those same TTLs (capped by the official expiry); dismissing one
@@ -147,3 +152,17 @@ copied to `data/dashboard.config.json` on first run. Corrupt configs fall back t
 the newest backup, then the seed. In Docker this is a named volume
 (`dashboard-data`) — it survives rebuilds and avoids Docker Desktop's
 network-drive bind-mount problems.
+
+## Docs
+
+- Feature ideation (ranked directions): [`docs/ideation/2026-07-17-open-dash-feature-ideas.md`](docs/ideation/2026-07-17-open-dash-feature-ideas.md)
+- Scene modes requirements: [`docs/plans/2026-07-17-001-feat-scene-modes-plan.md`](docs/plans/2026-07-17-001-feat-scene-modes-plan.md)
+
+### Scene modes (admin)
+
+1. Open **Scenes** in the admin top bar.
+2. Create a scene (pages, optional theme / variant label / rotation / schedule).
+3. **Activate** holds that scene on every display until **Clear / follow schedules**.
+4. With no manual hold, the first scene whose schedule is in-window auto-applies (list order).
+
+Device **Shows** filters still intersect with a scene’s page set.

@@ -20,6 +20,9 @@ function currentWidgets() {
 function rotation() {
   return state.config.rotation || (state.config.rotation = { enabled: false, defaultDurationSeconds: 30, order: [] });
 }
+function scenes() {
+  return state.config.scenes || (state.config.scenes = []);
+}
 
 let dashPort = 8082;
 
@@ -616,6 +619,215 @@ function openAlerts() {
       a.dangerTtlSeconds = read("al-danger");
       editor.classList.add("hidden");
       save();
+    }),
+  );
+  editor.appendChild(actions);
+}
+
+// ---- scenes (named context presets) -----------------------------------------
+
+function openScenes() {
+  const editor = $("#editor");
+  editor.classList.remove("hidden");
+  editor.replaceChildren();
+  state.editingId = null;
+
+  const h = document.createElement("h2"); h.textContent = "Scenes"; h.style.margin = "0 0 6px";
+  editor.appendChild(h);
+  editor.appendChild(noteEl("Scenes flip pages, theme, widget variants, and rotation in one shot. Activate holds until you Clear; otherwise schedules auto-switch (first matching scene in list order wins)."));
+
+  const hold = !!state.config.sceneManualHold;
+  const activeId = state.config.activeSceneId || null;
+  const status = document.createElement("div");
+  status.className = "note";
+  if (hold && activeId) {
+    const sc = scenes().find((s) => s.id === activeId);
+    status.textContent = `Manual hold: “${sc?.name || activeId}” (schedules paused until Clear).`;
+  } else {
+    status.textContent = "Following schedules (no manual hold). Outside schedule windows the dashboard uses the baseline layout.";
+  }
+  editor.appendChild(status);
+
+  const toolbar = document.createElement("div");
+  toolbar.style.display = "flex";
+  toolbar.style.gap = "8px";
+  toolbar.style.flexWrap = "wrap";
+  toolbar.style.margin = "8px 0";
+  toolbar.append(
+    button("+ New scene", "btn primary small", () => openSceneEditor(null)),
+    button("Clear / follow schedules", "btn small", async () => {
+      state.config.activeSceneId = null;
+      state.config.sceneManualHold = false;
+      await save();
+      openScenes();
+    }),
+  );
+  editor.appendChild(toolbar);
+
+  const list = document.createElement("div");
+  list.className = "device-list";
+  if (!scenes().length) {
+    editor.appendChild(noteEl("No scenes yet — create Morning, Print watch, Night ambient, etc."));
+  }
+  for (const sc of scenes()) {
+    list.appendChild(sceneRow(sc));
+  }
+  editor.appendChild(list);
+
+  const actions = document.createElement("div"); actions.className = "editor-actions";
+  actions.append(button("Close", "btn", () => editor.classList.add("hidden")));
+  editor.appendChild(actions);
+}
+
+function sceneRow(sc) {
+  const row = document.createElement("div");
+  row.className = "device-row" + (state.config.sceneManualHold && state.config.activeSceneId === sc.id ? " online" : "");
+  const info = document.createElement("div");
+  info.className = "device-info";
+  const name = document.createElement("div");
+  name.className = "device-name";
+  name.textContent = sc.name || sc.id;
+  const meta = document.createElement("div");
+  meta.className = "device-meta";
+  const bits = [];
+  if (sc.pageIds?.length) bits.push(`${sc.pageIds.length} page(s)`);
+  else bits.push("all pages");
+  if (sc.theme?.mode || sc.theme?.accent) bits.push("theme");
+  if (sc.variantLabel) bits.push(`variant “${sc.variantLabel}”`);
+  if (sc.schedule?.enabled) bits.push("scheduled");
+  meta.textContent = bits.join(" · ");
+  info.append(name, meta);
+
+  const controls = document.createElement("div");
+  controls.className = "device-controls";
+  controls.append(
+    button("Activate", "btn small primary", async () => {
+      state.config.activeSceneId = sc.id;
+      state.config.sceneManualHold = true;
+      await save();
+      openScenes();
+    }),
+    button("Edit", "btn small", () => openSceneEditor(sc.id)),
+    button("Delete", "btn small danger", async () => {
+      if (!confirm(`Delete scene “${sc.name}”?`)) return;
+      const idx = scenes().findIndex((s) => s.id === sc.id);
+      if (idx >= 0) scenes().splice(idx, 1);
+      if (state.config.activeSceneId === sc.id) {
+        state.config.activeSceneId = null;
+        state.config.sceneManualHold = false;
+      }
+      await save();
+      openScenes();
+    }),
+  );
+  row.append(info, controls);
+  return row;
+}
+
+function openSceneEditor(sceneId) {
+  const editor = $("#editor");
+  editor.classList.remove("hidden");
+  editor.replaceChildren();
+  state.editingId = null;
+
+  const existing = sceneId ? scenes().find((s) => s.id === sceneId) : null;
+  const draft = existing
+    ? JSON.parse(JSON.stringify(existing))
+    : {
+      id: "scene-" + Date.now().toString(36),
+      name: "New scene",
+      pageIds: [],
+      theme: null,
+      variantLabel: null,
+      rotation: null,
+      schedule: null,
+    };
+
+  const h = document.createElement("h2");
+  h.textContent = existing ? `Edit scene — ${draft.name}` : "New scene";
+  h.style.margin = "0 0 6px";
+  editor.appendChild(h);
+
+  editor.appendChild(field("Name", input("text", draft.name || "", "sc-name")));
+
+  editor.appendChild(sectionTitle("Pages"));
+  editor.appendChild(noteEl("Leave all unchecked to include every page. Checking any page restricts the scene to those pages only."));
+  const pageWrap = document.createElement("div");
+  pageWrap.className = "day-picker";
+  pageWrap.dataset.name = "sc-pages";
+  const pageChips = pages().map((p) => {
+    const c = document.createElement("button");
+    c.type = "button";
+    c.className = "day-chip" + (draft.pageIds?.includes(p.id) ? " on" : "");
+    c.textContent = p.name || p.id;
+    c.dataset.pageId = p.id;
+    c.onclick = () => c.classList.toggle("on");
+    pageWrap.appendChild(c);
+    return c;
+  });
+  editor.appendChild(pageWrap);
+
+  editor.appendChild(sectionTitle("Theme overlay"));
+  const themeMode = draft.theme?.mode || "";
+  editor.appendChild(field("Mode override", select(
+    [
+      { value: "", label: "No change" },
+      { value: "dark", label: "Dark" },
+      { value: "light", label: "Light" },
+      { value: "auto", label: "Auto" },
+    ],
+    themeMode,
+    null,
+    "sc-theme-mode",
+  )));
+  editor.appendChild(field("Accent override (blank = no change)", input("text", draft.theme?.accent || "", "sc-theme-accent", "#4aa3ff")));
+
+  editor.appendChild(sectionTitle("Variants & rotation"));
+  editor.appendChild(field("Variant label (blank = none)", input("text", draft.variantLabel || "", "sc-variant", "night")));
+  editor.appendChild(noteEl("Widgets that define a variant with this label switch to it while the scene is active."));
+  const rotEn = draft.rotation?.enabled;
+  editor.appendChild(field("Rotation override", select(
+    [
+      { value: "", label: "No change" },
+      { value: "on", label: "Force slideshow on" },
+      { value: "off", label: "Force slideshow off" },
+    ],
+    rotEn === true ? "on" : rotEn === false ? "off" : "",
+    null,
+    "sc-rot-enabled",
+  )));
+  editor.appendChild(field("Default seconds/page override (blank = no change)", input("number", draft.rotation?.defaultDurationSeconds ?? "", "sc-rot-secs")));
+
+  editor.appendChild(sectionTitle("Schedule (auto-activate)"));
+  appendScheduleFields(editor, draft.schedule || {}, "sc");
+
+  const actions = document.createElement("div"); actions.className = "editor-actions";
+  actions.append(
+    button("Cancel", "btn", () => openScenes()),
+    button("Save scene", "btn primary", async () => {
+      draft.name = editor.querySelector('[data-name="sc-name"]')?.value?.trim() || "Scene";
+      draft.pageIds = pageChips.filter((c) => c.classList.contains("on")).map((c) => c.dataset.pageId);
+      const mode = editor.querySelector('[data-name="sc-theme-mode"]')?.value || "";
+      const accent = editor.querySelector('[data-name="sc-theme-accent"]')?.value?.trim() || "";
+      draft.theme = (mode || accent) ? { mode: mode || null, accent: accent || null } : null;
+      const vl = editor.querySelector('[data-name="sc-variant"]')?.value?.trim() || "";
+      draft.variantLabel = vl || null;
+      const rotSel = editor.querySelector('[data-name="sc-rot-enabled"]')?.value || "";
+      const rotSecsRaw = editor.querySelector('[data-name="sc-rot-secs"]')?.value;
+      const rotSecs = rotSecsRaw === "" || rotSecsRaw == null ? null : Math.max(2, Number(rotSecsRaw) || 2);
+      if (rotSel === "" && rotSecs == null) draft.rotation = null;
+      else {
+        draft.rotation = {
+          enabled: rotSel === "on" ? true : rotSel === "off" ? false : null,
+          defaultDurationSeconds: rotSecs,
+        };
+      }
+      draft.schedule = gatherSchedule(editor, "sc");
+      const idx = scenes().findIndex((s) => s.id === draft.id);
+      if (idx >= 0) scenes()[idx] = draft;
+      else scenes().push(draft);
+      await save();
+      openScenes();
     }),
   );
   editor.appendChild(actions);
@@ -1504,6 +1716,7 @@ function toast(msg, kind) {
 })();
 
 $("#btn-layout").onclick = openLayout;
+$("#btn-scenes").onclick = openScenes;
 $("#btn-keys").onclick = openKeys;
 $("#btn-displays").onclick = openDisplays;
 $("#btn-backups").onclick = openBackups;
