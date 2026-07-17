@@ -78,14 +78,36 @@ window.addEventListener("resize", () => { if (previewOn) updatePreview(); });
 
 // ---- page bar ---------------------------------------------------------------
 
+function pageIsGated(p) {
+  return !!(p?.schedule?.enabled || p?.condition?.enabled);
+}
+
 function renderPageBar() {
   const bar = $("#page-bar");
   bar.replaceChildren();
   pages().forEach((p, i) => {
     const tab = document.createElement("button");
-    tab.className = "page-tab" + (i === state.activePage ? " active" : "");
-    tab.textContent = p.name || "Page";
-    if (rotation().enabled && p.durationSeconds) tab.title = `Shows for ${p.durationSeconds}s`;
+    const gated = pageIsGated(p);
+    tab.className = "page-tab"
+      + (i === state.activePage ? " active" : "")
+      + (gated ? " gated" : "");
+    const label = document.createElement("span");
+    label.textContent = p.name || "Page";
+    tab.appendChild(label);
+    if (gated) {
+      const badge = document.createElement("span");
+      badge.className = "page-tab-badge" + (p.condition?.enabled ? " condition" : "");
+      badge.title = [
+        p.schedule?.enabled ? "Time schedule" : null,
+        p.condition?.enabled ? "Live condition" : null,
+      ].filter(Boolean).join(" · ");
+      tab.appendChild(badge);
+    }
+    const tips = [];
+    if (rotation().enabled && p.durationSeconds) tips.push(`Shows for ${p.durationSeconds}s`);
+    if (p.schedule?.enabled) tips.push("Scheduled");
+    if (p.condition?.enabled) tips.push("Conditional");
+    if (tips.length) tab.title = tips.join(" · ");
     tab.onclick = () => { state.activePage = i; renderAll(); };
     bar.appendChild(tab);
   });
@@ -95,16 +117,15 @@ function renderPageBar() {
   add.onclick = addPage;
   bar.appendChild(add);
 
-  // actions for the active page
+  // actions for the active page (duration lives under Page rotation)
   const acts = document.createElement("div");
   acts.className = "page-actions";
   const mk = (label, cls, fn) => { const b = document.createElement("button"); b.className = "btn small " + (cls || ""); b.textContent = label; b.onclick = fn; return b; };
   acts.append(
     mk("Rename", "", () => renamePage(state.activePage)),
-    mk("Duration", "", () => durationPage(state.activePage)),
     mk(
       "Schedule",
-      (pages()[state.activePage]?.schedule?.enabled || pages()[state.activePage]?.condition?.enabled) ? "scheduled" : "",
+      pageIsGated(pages()[state.activePage]) ? "scheduled" : "",
       () => openPageSchedule(state.activePage),
     ),
     mk("Duplicate", "", () => duplicatePage(state.activePage)),
@@ -127,13 +148,6 @@ function renamePage(i) {
   pages()[i].name = name.trim() || "Page";
   save();
 }
-function durationPage(i) {
-  const cur = pages()[i].durationSeconds ?? "";
-  const v = prompt(`Slideshow duration for this page in seconds (blank = use default ${rotation().defaultDurationSeconds}s):`, cur);
-  if (v == null) return;
-  pages()[i].durationSeconds = v.trim() === "" ? null : Math.max(2, Number(v) || 2);
-  save();
-}
 function duplicatePage(i) {
   const src = pages()[i];
   const clone = structuredClone(src);
@@ -149,14 +163,26 @@ function movePage(i, d) {
   const j = i + d;
   if (j < 0 || j >= pages().length) return;
   const ps = pages();
-  [ps[i], ps[j]] = [ps[j], ps[i]];
+  const a = ps[i], b = ps[j];
+  [ps[i], ps[j]] = [b, a];
+  // Keep an explicit rotation.order in sync when both pages are listed.
+  const order = rotation().order;
+  if (Array.isArray(order) && order.length) {
+    const oi = order.indexOf(a.id), oj = order.indexOf(b.id);
+    if (oi >= 0 && oj >= 0) [order[oi], order[oj]] = [order[oj], order[oi]];
+  }
   state.activePage = j;
   save();
 }
 function deletePage(i) {
   if (pages().length <= 1) { toast("Keep at least one page", "err"); return; }
   if (!confirm(`Delete page “${pages()[i].name}” and its widgets?`)) return;
+  const removedId = pages()[i].id;
   pages().splice(i, 1);
+  const r = rotation();
+  if (Array.isArray(r.order) && r.order.length) {
+    r.order = r.order.filter((id) => id !== removedId);
+  }
   state.activePage = Math.max(0, Math.min(state.activePage, pages().length - 1));
   save();
 }
@@ -447,6 +473,10 @@ function renderForm(editor, widget) {
   editor.appendChild(noteEl("Hide this widget outside a time window (same rules as page schedules)."));
   appendScheduleFields(editor, widget.schedule || {}, "ws");
 
+  editor.appendChild(sectionTitle("Variants"));
+  editor.appendChild(noteEl("Named setting overrides for Scenes (match by label). First variant is the default when no scene is active. Overrides are a JSON object of settings keys."));
+  appendVariantsFields(editor, widget);
+
   if (widget.type === "slideshow") {
     editor.appendChild(sectionTitle("Slides"));
     appendSlideshowFields(editor, widget);
@@ -501,12 +531,19 @@ function gather(editor, base) {
     else w.settings[f.key] = node.value;
   }
   w.schedule = gatherSchedule(editor, "ws");
+  w.variants = gatherVariants(editor);
   if (w.type === "slideshow") w.slideshow = gatherSlideshow(editor, w);
   else w.slideshow = null;
   return w;
 }
 
 async function commit(editor, widget) {
+  try {
+    gatherVariants(editor, { strict: true });
+  } catch (e) {
+    toast(e.message || String(e), "err");
+    return;
+  }
   const w = gather(editor, widget);
   if (!w.id) w.id = `${w.type}-${Date.now().toString(36)}`;
   const ws = currentWidgets();
@@ -559,19 +596,91 @@ async function saveOnce() {
   }
 }
 
-// ---- slideshow settings -----------------------------------------------------
+// ---- page rotation (not the slideshow *widget*) -----------------------------
 
-function openSlideshow() {
+function rotationPageOrder() {
+  const ps = pages();
+  const byId = new Map(ps.map((p) => [p.id, p]));
+  const r = rotation();
+  const order = [];
+  if (Array.isArray(r.order) && r.order.length) {
+    for (const id of r.order) {
+      const p = byId.get(id);
+      if (p) order.push(p);
+    }
+  }
+  for (const p of ps) if (!order.includes(p)) order.push(p);
+  return order;
+}
+
+function openRotation() {
   const editor = $("#editor");
   editor.classList.remove("hidden");
   editor.replaceChildren();
   state.editingId = null;
-  const h = document.createElement("h2"); h.textContent = "Slideshow mode"; h.style.margin = "0 0 6px";
+  const h = document.createElement("h2"); h.textContent = "Page rotation"; h.style.margin = "0 0 6px";
   editor.appendChild(h);
-  editor.appendChild(noteEl("Rotate through pages on a timer. Set a per-page override with the page “Duration” button."));
+  editor.appendChild(noteEl("Cycle through pages on a timer. This is separate from the Slideshow widget (which rotates slides inside one tile). Reorder below; leave order as the page-bar sequence by clicking “Use page list order”."));
   const r = rotation();
-  editor.appendChild(boolField("Enable slideshow (rotate pages)", r.enabled === true, "rot-enabled"));
+  editor.appendChild(boolField("Enable page rotation", r.enabled === true, "rot-enabled"));
   editor.appendChild(field("Default seconds per page", input("number", r.defaultDurationSeconds ?? 30, "rot-default")));
+
+  editor.appendChild(sectionTitle("Order & per-page duration"));
+  editor.appendChild(noteEl("Blank duration = use the default above. ↑↓ changes rotation order only (page-bar ←/→ still reorders the page list)."));
+
+  let draft = rotationPageOrder().map((p) => ({
+    id: p.id,
+    name: p.name || "Page",
+    durationSeconds: p.durationSeconds ?? "",
+  }));
+  const list = document.createElement("div");
+  list.className = "rot-order-list";
+  list.dataset.name = "rot-order";
+  editor.appendChild(list);
+
+  const redraw = () => {
+    list.replaceChildren();
+    draft.forEach((row, i) => {
+      const el = document.createElement("div");
+      el.className = "rot-order-row";
+      el.dataset.pageId = row.id;
+      const name = document.createElement("div");
+      name.className = "rot-order-name";
+      name.textContent = row.name;
+      const dur = input("number", row.durationSeconds, `rot-dur-${row.id}`);
+      dur.className = "rot-order-dur";
+      dur.placeholder = "default";
+      dur.oninput = () => { row.durationSeconds = dur.value; };
+      const tools = document.createElement("div");
+      tools.style.display = "flex";
+      tools.style.gap = "4px";
+      tools.append(
+        button("↑", "btn small", () => {
+          if (i <= 0) return;
+          [draft[i - 1], draft[i]] = [draft[i], draft[i - 1]];
+          redraw();
+        }),
+        button("↓", "btn small", () => {
+          if (i >= draft.length - 1) return;
+          [draft[i + 1], draft[i]] = [draft[i], draft[i + 1]];
+          redraw();
+        }),
+      );
+      el.append(name, field("Seconds", dur), tools);
+      list.appendChild(el);
+    });
+  };
+  redraw();
+
+  editor.appendChild(button("Use page list order", "btn small", () => {
+    draft = pages().map((p) => ({
+      id: p.id,
+      name: p.name || "Page",
+      durationSeconds: draft.find((d) => d.id === p.id)?.durationSeconds ?? (p.durationSeconds ?? ""),
+    }));
+    redraw();
+  }));
+
   const actions = document.createElement("div"); actions.className = "editor-actions";
   actions.append(
     button("Cancel", "btn", () => editor.classList.add("hidden")),
@@ -579,6 +688,16 @@ function openSlideshow() {
       r.enabled = editor.querySelector('[data-name="rot-enabled"]').checked;
       const d = Number(editor.querySelector('[data-name="rot-default"]').value);
       r.defaultDurationSeconds = Math.max(2, d || 30);
+      const natural = pages().map((p) => p.id);
+      const newOrder = draft.map((row) => row.id);
+      r.order = newOrder.every((id, i) => id === natural[i]) ? [] : newOrder;
+      const byId = new Map(pages().map((p) => [p.id, p]));
+      for (const row of draft) {
+        const p = byId.get(row.id);
+        if (!p) continue;
+        const raw = String(row.durationSeconds ?? "").trim();
+        p.durationSeconds = raw === "" ? null : Math.max(2, Number(raw) || 2);
+      }
       editor.classList.add("hidden");
       save();
     }),
@@ -1003,11 +1122,78 @@ function slideTypeOptions() {
   return registry.types().filter((t) => t !== "slideshow");
 }
 
+function appendVariantsFields(editor, widget) {
+  if (!Array.isArray(widget.variants)) widget.variants = [];
+  const host = document.createElement("div");
+  host.className = "variant-list";
+  host.dataset.name = "variants";
+  editor.appendChild(host);
+
+  const redraw = () => {
+    host.replaceChildren();
+    widget.variants.forEach((v, i) => {
+      const card = document.createElement("div");
+      card.className = "variant-card";
+      card.dataset.variantIndex = i;
+      const head = document.createElement("div");
+      head.className = "variant-card-head";
+      head.appendChild(Object.assign(document.createElement("strong"), {
+        textContent: i === 0 ? `Variant ${i + 1} (default)` : `Variant ${i + 1}`,
+      }));
+      head.appendChild(button("Remove", "btn small danger", () => {
+        widget.variants = gatherVariants(editor);
+        widget.variants.splice(i, 1);
+        redraw();
+      }));
+      card.appendChild(head);
+      card.appendChild(field("Label", input("text", v.label || "", `var-${i}-label`, "night")));
+      const ta = textarea(
+        typeof v.overrides === "object" && v.overrides
+          ? JSON.stringify(v.overrides, null, 2)
+          : "{}",
+        `var-${i}-overrides`,
+      );
+      ta.rows = 3;
+      card.appendChild(field("Overrides (JSON object)", ta));
+      host.appendChild(card);
+    });
+  };
+  redraw();
+  editor.appendChild(button("+ Add variant", "btn small", () => {
+    widget.variants = gatherVariants(editor);
+    widget.variants.push({ label: "", overrides: {} });
+    redraw();
+  }));
+}
+
+function gatherVariants(editor, { strict = false } = {}) {
+  const host = editor.querySelector('[data-name="variants"]');
+  if (!host) return [];
+  const out = [];
+  host.querySelectorAll(".variant-card").forEach((card, i) => {
+    const label = (card.querySelector(`[data-name="var-${i}-label"]`)?.value || "").trim();
+    const raw = card.querySelector(`[data-name="var-${i}-overrides"]`)?.value || "{}";
+    let overrides = {};
+    try {
+      const parsed = JSON.parse(raw || "{}");
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) overrides = parsed;
+      else throw new Error("not an object");
+    } catch (err) {
+      if (strict) throw new Error(`Variant ${i + 1}: overrides must be a JSON object`);
+      overrides = {};
+    }
+    if (!label && !Object.keys(overrides).length) return;
+    out.push({ label: label || `variant-${i + 1}`, overrides });
+  });
+  return out;
+}
+
 function appendSlideshowFields(editor, widget) {
   const cfg = widget.slideshow || { enabled: true, durationSeconds: 30, slides: [] };
   widget.slideshow = cfg;
   if (!Array.isArray(cfg.slides)) cfg.slides = [];
 
+  editor.appendChild(boolField("Enable slideshow", cfg.enabled !== false, "ss-enabled"));
   editor.appendChild(field("Seconds per slide", input("number", cfg.durationSeconds ?? 30, "ss-duration")));
   const host = document.createElement("div");
   host.dataset.name = "ss-slides";
@@ -1100,6 +1286,7 @@ function appendSlideshowFieldsRebuild(editor, widget) {
 }
 
 function gatherSlideshow(editor, widget) {
+  const enabled = editor.querySelector('[data-name="ss-enabled"]')?.checked !== false;
   const duration = Math.max(2, Math.round(Number(editor.querySelector('[data-name="ss-duration"]')?.value) || 30));
   const host = editor.querySelector('[data-name="ss-slides"]');
   const slides = [];
@@ -1128,7 +1315,7 @@ function gatherSlideshow(editor, widget) {
       slides.push({ type, title, settings });
     });
   }
-  return { enabled: true, durationSeconds: duration, slides };
+  return { enabled, durationSeconds: duration, slides };
 }
 
 // ---- url field with quick-fill presets (for embeddable live sites) ----------
@@ -1711,8 +1898,12 @@ function deviceRow(d) {
   const stale = seen ? (Date.now() - seen.getTime()) > 90_000 : true;
 
   const info = document.createElement("div"); info.className = "device-info";
-  const name = document.createElement("div"); name.className = "device-name";
-  name.textContent = d.name || `Display ${d.id.slice(0, 4)}`;
+  const name = document.createElement("input");
+  name.type = "text";
+  name.className = "device-name-input";
+  name.value = d.name || `Display ${d.id.slice(0, 4)}`;
+  name.title = "Click to rename";
+  name.setAttribute("aria-label", "Display name");
   const meta = document.createElement("div"); meta.className = "device-meta";
   meta.textContent = [
     d.viewport || "unknown size",
@@ -1723,16 +1914,32 @@ function deviceRow(d) {
   info.append(name, meta);
 
   // Live-editable local copy; PUT (debounced) on each nudge.
-  const cur = { uiScale: d.uiScale ?? 1, fontScale: d.fontScale ?? 1, pages: [...(d.pages || [])] };
+  const cur = {
+    uiScale: d.uiScale ?? 1,
+    fontScale: d.fontScale ?? 1,
+    pages: [...(d.pages || [])],
+    name: name.value,
+  };
   let putTimer = null;
   const push = () => {
     clearTimeout(putTimer);
     putTimer = setTimeout(() => {
       fetch(`/api/devices/${encodeURIComponent(d.id)}/prefs`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ uiScale: cur.uiScale, fontScale: cur.fontScale, pages: cur.pages }),
+        body: JSON.stringify({
+          uiScale: cur.uiScale,
+          fontScale: cur.fontScale,
+          pages: cur.pages,
+          name: cur.name,
+        }),
       }).then((r) => { if (r.ok) toast("Display updated", "ok"); }).catch(() => toast("Update failed", "err"));
     }, 350);
+  };
+  name.onchange = () => {
+    const next = name.value.trim() || `Display ${d.id.slice(0, 4)}`;
+    name.value = next;
+    cur.name = next;
+    push();
   };
 
   const controls = document.createElement("div"); controls.className = "device-controls";
@@ -1837,7 +2044,7 @@ $("#btn-scenes").onclick = openScenes;
 $("#btn-keys").onclick = openKeys;
 $("#btn-displays").onclick = openDisplays;
 $("#btn-backups").onclick = openBackups;
-$("#btn-slideshow").onclick = openSlideshow;
+$("#btn-rotation").onclick = openRotation;
 $("#btn-alerts").onclick = openAlerts;
 $("#btn-add").onclick = () => openEditor(null);
 $("#btn-preview").onclick = togglePreview;

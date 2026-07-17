@@ -40,13 +40,15 @@ define("slideshow", {
       }
       mounted.push({ pane, plugin, handle });
     }
+    const rotating = cfg.enabled !== false && mounted.length > 1;
     const handle = {
       stage, mounted, index: 0,
       durationMs: Math.max(2, cfg.durationSeconds || 30) * 1000,
       timer: null,
+      rotating,
     };
     show(handle, 0);
-    if (mounted.length > 1) {
+    if (rotating) {
       handle.timer = setInterval(() => show(handle, (handle.index + 1) % mounted.length), handle.durationMs);
     }
     return handle;
@@ -60,7 +62,7 @@ define("slideshow", {
   resume(handle) {
     const cur = handle.mounted[handle.index];
     cur?.plugin?.resume?.(cur.handle);
-    if (handle.mounted.length > 1 && !handle.timer) {
+    if (handle.rotating && handle.mounted.length > 1 && !handle.timer) {
       handle.timer = setInterval(() => show(handle, (handle.index + 1) % handle.mounted.length), handle.durationMs);
     }
   },

@@ -39,14 +39,18 @@ live-reloads over Server-Sent Events.
 - **Self-generating admin.** The admin imports the same widget registry and
   builds forms from each plugin's `schema`. Position/size are edited by **dragging
   and resizing** widgets on a visual grid canvas (per page). Widget **schedules**,
-  **slideshow slides**, **scenes**, and global **theme/title** are editable in the admin.
-  **Layout** also pins an optional **home location** (lat/lon) used by NWS alerts
-  and as the default for weather / air-quality widgets. **Alerts** configures
-  source toggles (OctoPrint / NWS / space weather), NWS minimum severity, Kp
-  threshold + space-alert lifetime, per-severity auto-dismiss TTLs, and a live
-  list of active banners (dismiss one or all). ✕ and TTL changes sync across
-  every display via the server. Weather (NWS) banners use severity TTLs (capped
-  by the official expiry); dismissing one suppresses re-push until NWS cancels it.
+  **variants** (for Scenes), **slideshow slides**, **scenes**, and global
+  **theme/title** are editable in the admin. **Page rotation** (separate from the
+  Slideshow widget) edits enable/default duration, explicit page order, and
+  per-page duration. Page tabs show a badge when a schedule or live condition is
+  on. **Displays** support rename plus scale/page filters. **Layout** also pins
+  an optional **home location** (lat/lon) used by NWS alerts and as the default
+  for weather / air-quality widgets. **Alerts** configures source toggles
+  (OctoPrint / NWS / space weather), NWS minimum severity, Kp threshold +
+  space-alert lifetime, per-severity auto-dismiss TTLs, and a live list of
+  active banners (dismiss one or all). ✕ and TTL changes sync across every
+  display via the server. Weather (NWS) banners use severity TTLs (capped by
+  the official expiry); dismissing one suppresses re-push until NWS cancels it.
 - **Two apps, one process.** Admin (`:8081`) and dashboard (`:8082`) share
   in-process singletons (config, cache, SSE hub, geo), so they must run together
   (`python -m server.run`).

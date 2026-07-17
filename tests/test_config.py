@@ -34,6 +34,32 @@ def test_migrate_flat_widgets_to_pages():
     assert out["pages"][0]["widgets"][0]["id"] == "c1"
 
 
+def test_migrate_strips_widget_availability():
+    raw = {
+        "version": 1,
+        "settings": {"title": "T"},
+        "pages": [
+            {
+                "id": "page-1",
+                "name": "Home",
+                "widgets": [
+                    {
+                        "id": "c1",
+                        "type": "clock",
+                        "title": "Clock",
+                        "grid": {"x": 0, "y": 0, "w": 3, "h": 2},
+                        "availability": {"enabled": True},
+                    },
+                ],
+            }
+        ],
+    }
+    out = migrations.migrate(raw)
+    assert "availability" not in out["pages"][0]["widgets"][0]
+    cfg = DashboardConfig.model_validate(out)
+    assert cfg.pages[0].widgets[0].id == "c1"
+
+
 def test_safe_backup_path_rejects_traversal():
     with pytest.raises(ValueError):
         config_store._safe_backup_path("../evil.json")

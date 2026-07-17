@@ -105,15 +105,11 @@ class PageCondition(BaseModel):
         return seen or ["printing"]
 
 
-class Availability(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    enabled: bool = True
-
-
 class Variant(BaseModel):
     """A named override set, so heavy embeds aren't pasted N times.
 
-    ``overrides`` is shallow-merged over ``settings`` when the variant is active.
+    ``overrides`` is shallow-merged over ``settings`` when a scene selects this
+    ``label`` (or, with no scene, the first variant is used as the default).
     """
     model_config = ConfigDict(extra="forbid")
     label: str = ""
@@ -140,7 +136,6 @@ class Widget(BaseModel):
     refreshSeconds: int | None = Field(default=None, ge=1)
     slideshow: Slideshow | None = None
     schedule: Schedule | None = None
-    availability: Availability | None = None
     variants: list[Variant] = Field(default_factory=list)
     embed: Embed | None = None
     # Type-specific options (url, units, symbols, channelId, ...). Validated by
