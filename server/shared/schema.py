@@ -39,32 +39,90 @@ class Slideshow(BaseModel):
     slides: list[Slide] = Field(default_factory=list)
 
 
-class Schedule(BaseModel):
-    """Time-window visibility. ``days``: 0=Mon .. 6=Sun (empty = every day)."""
+def _hhmm(v: str | None) -> str | None:
+    if v is None or v == "":
+        return None
+    import re
+
+    if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", v):
+        raise ValueError("time must be HH:MM (24h)")
+    return v
+
+
+def _days_range(days: list[int]) -> list[int]:
+    for d in days:
+        if d < 0 or d > 6:
+            raise ValueError("days must be integers 0–6 (Mon–Sun)")
+    return days
+
+
+def _ymd(v: str | None) -> str | None:
+    if v is None or v == "":
+        return None
+    import re
+
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+        raise ValueError("date must be YYYY-MM-DD")
+    return v
+
+
+class ScheduleWindow(BaseModel):
+    """One day/time window. Empty ``days`` = every day; missing times = all day."""
     model_config = ConfigDict(extra="forbid")
-    enabled: bool = False
     start: str | None = None  # "HH:MM"
-    end: str | None = None    # "HH:MM"
+    end: str | None = None
     days: list[int] = Field(default_factory=list)
 
     @field_validator("start", "end")
     @classmethod
     def _hhmm(cls, v: str | None) -> str | None:
-        if v is None or v == "":
-            return None
-        import re
-
-        if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", v):
-            raise ValueError("time must be HH:MM (24h)")
-        return v
+        return _hhmm(v)
 
     @field_validator("days")
     @classmethod
     def _days_range(cls, days: list[int]) -> list[int]:
-        for d in days:
-            if d < 0 or d > 6:
-                raise ValueError("days must be integers 0–6 (Mon–Sun)")
-        return days
+        return _days_range(days)
+
+
+class Schedule(BaseModel):
+    """Time-window visibility for pages, widgets, and scenes.
+
+    Legacy single window: ``start`` / ``end`` / ``days``. Prefer ``windows`` for
+    multiple OR'd ranges. Optional ``timeZone`` (IANA) and ``dateFrom``/``dateTo``
+    bound the whole schedule. ``days``: 0=Mon .. 6=Sun (empty = every day).
+    """
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = False
+    start: str | None = None  # legacy single window
+    end: str | None = None
+    days: list[int] = Field(default_factory=list)
+    windows: list[ScheduleWindow] = Field(default_factory=list)
+    timeZone: str | None = None  # IANA; None = device local
+    dateFrom: str | None = None  # YYYY-MM-DD inclusive
+    dateTo: str | None = None
+
+    @field_validator("start", "end")
+    @classmethod
+    def _hhmm(cls, v: str | None) -> str | None:
+        return _hhmm(v)
+
+    @field_validator("days")
+    @classmethod
+    def _days_range(cls, days: list[int]) -> list[int]:
+        return _days_range(days)
+
+    @field_validator("dateFrom", "dateTo")
+    @classmethod
+    def _ymd(cls, v: str | None) -> str | None:
+        return _ymd(v)
+
+    @field_validator("timeZone")
+    @classmethod
+    def _tz(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        v = v.strip()
+        return v or None
 
 
 class PageCondition(BaseModel):

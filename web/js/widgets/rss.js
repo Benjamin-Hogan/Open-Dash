@@ -15,6 +15,7 @@ define("rss", {
       { key: "showImages", label: "Show images", type: "boolean", default: true },
       { key: "showDescription", label: "Show descriptions", type: "boolean", default: true },
       { key: "showTitle", label: "Show feed name", type: "boolean", default: true },
+      { key: "cacheTtlSeconds", label: "Server cache TTL seconds (blank = default)", type: "number" },
     ],
   },
   async mount(root, widget) {
@@ -30,7 +31,9 @@ define("rss", {
     handle.s = s;
     if (!s.url) { handle.body.replaceChildren(el("div", { class: "widget-empty" }, "Set a feed URL")); return; }
     try {
-      const d = await fetchData("rss", { url: s.url, count: s.count || 10 });
+      const params = { url: s.url, count: s.count || 10 };
+      if (s.cacheTtlSeconds) params.cacheTtl = s.cacheTtlSeconds;
+      const d = await fetchData("rss", params);
       handle.feed = d;
       handle.items = d.items || [];
       handle.idx = 0;

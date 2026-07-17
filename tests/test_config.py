@@ -75,6 +75,27 @@ def test_schedule_hhmm_validation():
         Schedule(enabled=True, start="09:00", end="17:30", days=[7])
 
 
+def test_schedule_windows_timezone_and_dates():
+    from server.shared.schema import ScheduleWindow
+
+    s = Schedule(
+        enabled=True,
+        windows=[
+            ScheduleWindow(start="07:00", end="09:00", days=[0, 1, 2, 3, 4]),
+            ScheduleWindow(start="17:00", end="19:00", days=[0, 1, 2, 3, 4]),
+        ],
+        timeZone="America/Phoenix",
+        dateFrom="2026-07-01",
+        dateTo="2026-07-31",
+    )
+    assert len(s.windows) == 2
+    assert s.timeZone == "America/Phoenix"
+    with pytest.raises(Exception):
+        Schedule(enabled=True, dateFrom="07/01/2026")
+    with pytest.raises(Exception):
+        ScheduleWindow(start="25:00", end="09:00")
+
+
 def test_location_and_alert_settings_defaults():
     s = Settings()
     assert s.location.lat is None and s.location.lon is None

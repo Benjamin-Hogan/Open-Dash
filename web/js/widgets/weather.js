@@ -14,6 +14,7 @@ define("weather", {
       { key: "lon", label: "Longitude (blank = home/auto)", type: "number" },
       { key: "showForecast", label: "Show 5-day forecast", type: "boolean", default: true },
       { key: "animated", label: "Animate icons", type: "boolean", default: true },
+      { key: "cacheTtlSeconds", label: "Server cache TTL seconds (blank = default)", type: "number" },
     ],
   },
   async mount(root, widget) {
@@ -26,7 +27,9 @@ define("weather", {
   async refresh(handle, widget) {
     const s = (widget || handle.widget).settings || {};
     try {
-      const d = await fetchData("weather", clean({ units: s.units, lat: s.lat, lon: s.lon }));
+      const d = await fetchData("weather", clean({
+        units: s.units, lat: s.lat, lon: s.lon, cacheTtl: s.cacheTtlSeconds,
+      }));
       const deg = d.units === "metric" ? "°C" : "°F";
       const cur = d.current || {};
       const loc = d.location || {};

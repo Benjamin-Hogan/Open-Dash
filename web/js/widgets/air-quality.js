@@ -24,6 +24,7 @@ define("air-quality", {
       { key: "lat", label: "Latitude (blank = home/auto)", type: "number" },
       { key: "lon", label: "Longitude (blank = home/auto)", type: "number" },
       { key: "showNo2", label: "Show NO₂", type: "boolean", default: false },
+      { key: "cacheTtlSeconds", label: "Server cache TTL seconds (blank = default)", type: "number" },
     ],
   },
   async mount(root, widget) {
@@ -36,7 +37,9 @@ define("air-quality", {
   async refresh(handle) {
     const s = handle.widget.settings || {};
     try {
-      const d = await fetchData("air-quality", clean({ lat: s.lat, lon: s.lon }));
+      const d = await fetchData("air-quality", clean({
+        lat: s.lat, lon: s.lon, cacheTtl: s.cacheTtlSeconds,
+      }));
       const p = d.pollutants || {};
       const pollutants = [
         el("span", {}, `PM2.5 ${fmtNum(p.pm2_5, 0)}`),

@@ -1084,36 +1084,120 @@ function button(text, cls, fn) { const b = document.createElement("button"); b.t
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-function appendScheduleFields(editor, schedule, prefix) {
-  const s = schedule || {};
-  editor.appendChild(boolField("Enable schedule", s.enabled === true, `${prefix}-enabled`));
-  editor.appendChild(field("Start (HH:MM)", input("time", s.start || "", `${prefix}-start`)));
-  editor.appendChild(field("End (HH:MM)", input("time", s.end || "", `${prefix}-end`)));
+function scheduleWindowsOf(s) {
+  if (Array.isArray(s?.windows) && s.windows.length) return s.windows.map((w) => ({
+    start: w.start || null, end: w.end || null, days: [...(w.days || [])],
+  }));
+  if (s?.start || s?.end || (s?.days && s.days.length)) {
+    return [{ start: s.start || null, end: s.end || null, days: [...(s.days || [])] }];
+  }
+  return [{ start: null, end: null, days: [] }];
+}
+
+function dayPicker(days, name) {
   const dayWrap = document.createElement("div");
   dayWrap.className = "day-picker";
-  dayWrap.dataset.name = `${prefix}-days`;
+  dayWrap.dataset.name = name;
   DAY_LABELS.forEach((label, d) => {
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "day-chip" + ((s.days || []).includes(d) ? " on" : "");
+    b.className = "day-chip" + ((days || []).includes(d) ? " on" : "");
     b.textContent = label;
     b.dataset.day = d;
     b.onclick = () => b.classList.toggle("on");
     dayWrap.appendChild(b);
   });
-  editor.appendChild(field("Days (none selected = every day)", dayWrap));
+  return dayWrap;
+}
+
+function appendScheduleFields(editor, schedule, prefix) {
+  const s = schedule || {};
+  let windows = scheduleWindowsOf(s);
+
+  editor.appendChild(boolField("Enable schedule", s.enabled === true, `${prefix}-enabled`));
+  editor.appendChild(field("Timezone (IANA, blank = this device)", input("text", s.timeZone || "", `${prefix}-tz`, "America/Phoenix")));
+  editor.appendChild(field("Date from (YYYY-MM-DD, optional)", input("date", s.dateFrom || "", `${prefix}-from`)));
+  editor.appendChild(field("Date to (YYYY-MM-DD, optional)", input("date", s.dateTo || "", `${prefix}-to`)));
+  editor.appendChild(noteEl("Multiple windows are OR’d (any matching window shows the page/widget). A window may wrap past midnight."));
+
+  const host = document.createElement("div");
+  host.className = "schedule-windows";
+  host.dataset.name = `${prefix}-windows`;
+  editor.appendChild(host);
+
+  const redraw = () => {
+    host.replaceChildren();
+    windows.forEach((w, i) => {
+      const card = document.createElement("div");
+      card.className = "schedule-window-card";
+      card.dataset.windowIndex = i;
+      const head = document.createElement("div");
+      head.className = "schedule-window-head";
+      head.appendChild(Object.assign(document.createElement("strong"), { textContent: `Window ${i + 1}` }));
+      if (windows.length > 1) {
+        head.appendChild(button("Remove", "btn small danger", () => {
+          windows = gatherScheduleWindows(host, prefix);
+          windows.splice(i, 1);
+          if (!windows.length) windows = [{ start: null, end: null, days: [] }];
+          redraw();
+        }));
+      }
+      card.appendChild(head);
+      card.appendChild(field("Start (HH:MM)", input("time", w.start || "", `${prefix}-w-${i}-start`)));
+      card.appendChild(field("End (HH:MM)", input("time", w.end || "", `${prefix}-w-${i}-end`)));
+      card.appendChild(field("Days (none selected = every day)", dayPicker(w.days, `${prefix}-w-${i}-days`)));
+      host.appendChild(card);
+    });
+  };
+  redraw();
+  editor.appendChild(button("+ Add window", "btn small", () => {
+    windows = gatherScheduleWindows(host, prefix);
+    windows.push({ start: null, end: null, days: [] });
+    redraw();
+  }));
+}
+
+function gatherScheduleWindows(host, prefix) {
+  if (!host) return [];
+  const out = [];
+  host.querySelectorAll(".schedule-window-card").forEach((card, i) => {
+    const start = card.querySelector(`[data-name="${prefix}-w-${i}-start"]`)?.value || null;
+    const end = card.querySelector(`[data-name="${prefix}-w-${i}-end"]`)?.value || null;
+    const dayWrap = card.querySelector(`[data-name="${prefix}-w-${i}-days"]`);
+    const days = dayWrap
+      ? [...dayWrap.querySelectorAll(".day-chip.on")].map((b) => Number(b.dataset.day))
+      : [];
+    out.push({ start, end, days });
+  });
+  return out;
 }
 
 function gatherSchedule(editor, prefix) {
   const enabled = editor.querySelector(`[data-name="${prefix}-enabled"]`)?.checked === true;
-  const start = editor.querySelector(`[data-name="${prefix}-start"]`)?.value || null;
-  const end = editor.querySelector(`[data-name="${prefix}-end"]`)?.value || null;
-  const dayWrap = editor.querySelector(`[data-name="${prefix}-days"]`);
-  const days = dayWrap
-    ? [...dayWrap.querySelectorAll(".day-chip.on")].map((b) => Number(b.dataset.day))
-    : [];
-  if (!enabled && !start && !end && !days.length) return null;
-  return { enabled, start, end, days };
+  const timeZone = editor.querySelector(`[data-name="${prefix}-tz"]`)?.value?.trim() || null;
+  const dateFrom = editor.querySelector(`[data-name="${prefix}-from"]`)?.value || null;
+  const dateTo = editor.querySelector(`[data-name="${prefix}-to"]`)?.value || null;
+  const host = editor.querySelector(`[data-name="${prefix}-windows"]`);
+  const windows = gatherScheduleWindows(host, prefix);
+  const hasBounds = windows.some((w) => w.start || w.end || w.days.length)
+    || timeZone || dateFrom || dateTo;
+  if (!enabled && !hasBounds) return null;
+
+  // Keep legacy single-window shape when there's only one simple window.
+  if (windows.length <= 1 && !timeZone && !dateFrom && !dateTo) {
+    const w = windows[0] || { start: null, end: null, days: [] };
+    return { enabled, start: w.start, end: w.end, days: w.days, windows: [], timeZone: null, dateFrom: null, dateTo: null };
+  }
+  return {
+    enabled,
+    start: null,
+    end: null,
+    days: [],
+    windows,
+    timeZone,
+    dateFrom,
+    dateTo,
+  };
 }
 
 // ---- slideshow widget slides editor ----------------------------------------
