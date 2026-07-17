@@ -67,6 +67,44 @@ class Schedule(BaseModel):
         return days
 
 
+class PageCondition(BaseModel):
+    """State-based page visibility (AND'd with the page's time schedule).
+
+    Curated triggers only — evaluated client-side against provider/alert data.
+    ``soft-join`` adds the page to the normal slideshow while the condition is
+    true; ``force-override`` jumps to it (highest ``priority`` wins ties).
+    """
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = False
+    type: Literal["octoprint", "weather-alert", "youtube-live", "calendar-soon"] = "octoprint"
+    mode: Literal["soft-join", "force-override"] = "soft-join"
+    priority: int = Field(default=50, ge=0, le=100)
+    # Widget that supplies URL/API settings (octoprint / youtube-live / ical).
+    # Not used for weather-alert (reads active NWS alerts from /api/alerts).
+    sourceWidgetId: str | None = None
+    # OctoPrint: which live flags count as "met" (default: printing).
+    matchStates: list[Literal["printing", "paused", "error"]] = Field(
+        default_factory=lambda: ["printing"]
+    )
+    # Weather-alert: ignore alerts below this severity (None = any).
+    minSeverity: Literal["info", "warning", "danger"] | None = None
+    # Calendar-soon: event must start within this many minutes.
+    leadMinutes: int = Field(default=30, ge=1, le=10080)
+    # How often the kiosk re-checks this condition; None = runtime default.
+    pollSeconds: int | None = Field(default=None, ge=2, le=300)
+
+    @field_validator("matchStates")
+    @classmethod
+    def _dedupe_states(
+        cls, states: list[Literal["printing", "paused", "error"]]
+    ) -> list[Literal["printing", "paused", "error"]]:
+        seen: list[Literal["printing", "paused", "error"]] = []
+        for s in states:
+            if s not in seen:
+                seen.append(s)
+        return seen or ["printing"]
+
+
 class Availability(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: bool = True
@@ -144,6 +182,9 @@ class Page(BaseModel):
     # Time-window visibility for the whole page (same semantics as a widget's
     # schedule): outside the window the rotation skips it. None = always shown.
     schedule: Schedule | None = None
+    # Optional live-state condition (print in progress, weather alert, …).
+    # AND'd with ``schedule``; None / disabled = always eligible (subject to schedule).
+    condition: PageCondition | None = None
     widgets: list[Widget] = Field(default_factory=list)
 
     @field_validator("widgets")

@@ -24,6 +24,13 @@ live-reloads over Server-Sent Events.
   Slideshow mode rotates through them on a timer (global default + optional
   per-page override). Old single-`widgets` configs auto-migrate to one page
   (`server/shared/migrations.py`).
+- **Page schedules & live conditions.** Each page can combine a **time window**
+  with a curated **live condition** (OctoPrint printing/paused/error, active NWS
+  weather alert, YouTube channel live, or an iCal event starting soon). Time and
+  condition are **AND**'d. Modes: **soft-join** (page enters the normal slideshow
+  while true) or **force-override** (jump immediately, honor page duration as a
+  minimum hold, then stay until the condition clears). Highest **priority** wins
+  when multiple force-overrides match. Configured in admin under **Schedule**.
 - **Self-generating admin.** The admin imports the same widget registry and
   builds forms from each plugin's `schema`. Position/size are edited by **dragging
   and resizing** widgets on a visual grid canvas (per page). Widget **schedules**,
