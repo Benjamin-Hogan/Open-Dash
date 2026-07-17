@@ -17,11 +17,30 @@ export function el(tag, attrs = {}, children = []) {
   return node;
 }
 
+// Scene-driven variant label (set by app.js while a scene is active). Widgets
+// that define a matching variant.label use it; others fall back to prior rules.
+let sceneVariantLabel = null;
+
+export function setSceneVariantLabel(label) {
+  sceneVariantLabel = label && String(label).trim() ? String(label).trim() : null;
+}
+
+export function getSceneVariantLabel() {
+  return sceneVariantLabel;
+}
+
 // Apply variant overrides over a widget's settings (shallow merge), so heavy
 // embeds don't repeat full URLs N times in config.
 export function effectiveSettings(widget) {
   const base = { ...(widget.settings || {}) };
-  const active = (widget.variants || []).find((v) => v.active) || (widget.variants || [])[0];
+  const variants = widget.variants || [];
+  let active = null;
+  if (sceneVariantLabel) {
+    active = variants.find((v) => v.label === sceneVariantLabel) || null;
+  }
+  if (!active) {
+    active = variants.find((v) => v.active) || variants[0] || null;
+  }
   return active ? { ...base, ...(active.overrides || {}) } : base;
 }
 
