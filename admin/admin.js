@@ -1,9 +1,17 @@
 // Schema-driven admin with multi-page layouts, a visual drag/resize editor, and
-// slideshow-mode config. ONE write path: PUT /api/config gated on the loaded
-// version (409 → re-sync). Widget position/size are edited on the canvas; the
-// form handles type + settings only.
+// slideshow-mode config. Widget position/size are edited on the canvas; the form
+// handles type + settings only.
+//
+// Edits are STAGED: `state.config` is a long-lived mutable working copy, and
+// save(label) records it in the store as one undoable step. Nothing reaches the
+// server until Save (js/savebar.js), which merges rather than clobbers on 409.
 import * as registry from "/widgets/index.js";
 import { buildEmbedDoc } from "/widgets/embed.js";
+import * as store from "/js/core/store.js";
+import * as api from "/js/core/api.js";
+import * as savebar from "/js/savebar.js";
+import { clone } from "/js/core/clone.js";
+import { rotationPages, hasCustomOrder, syncRotationOrder } from "/js/model/order.js";
 
 const state = { config: null, activePage: 0, editingId: null };
 const $ = (s) => document.querySelector(s);
@@ -28,20 +36,31 @@ let dashPort = 8082;
 
 async function load() {
   try {
-    const [cfgRes, metaRes] = await Promise.all([
-      fetch("/api/config"),
-      fetch("/api/meta").catch(() => null),
+    const [cfg, meta] = await Promise.all([
+      api.loadConfig(),
+      api.loadMeta().catch(() => null),
     ]);
-    if (!cfgRes.ok) throw new Error(`config ${cfgRes.status}`);
-    state.config = await cfgRes.json();
-    if (metaRes?.ok) {
-      const meta = await metaRes.json();
-      if (meta.dashboardPort) dashPort = meta.dashboardPort;
-    }
-    if (!pages().length) pages().push({ id: "page-1", name: "Home", widgets: [] });
-    state.activePage = Math.min(state.activePage, pages().length - 1);
-    $("#version").textContent = "v" + state.config.version;
-    renderAll();
+    if (meta?.dashboardPort) dashPort = meta.dashboardPort;
+
+    store.reset(cfg);
+    onConfigReplaced(cfg);
+
+    savebar.init({
+      host: document.querySelector(".topbar .actions"),
+      onExternalConfig: (next) => onConfigReplaced(next),
+      onValidationErrors: (errs) => {
+        // Until the form engine anchors these to fields, at least name the path.
+        for (const e of errs.slice(0, 3)) toast(`${e.path || "config"}: ${e.message}`, "err");
+      },
+      toast,
+    });
+
+    // A tab that crashed or was closed mid-edit gets its work back.
+    savebar.offerDraftRecovery(cfg.version, (draft) => {
+      onConfigReplaced(draft);
+      save("restored unsaved changes");
+      toast("Unsaved changes restored — press Save to apply them", "ok");
+    });
   } catch (e) {
     toast("Could not load config: " + e.message, "err");
   }
@@ -140,51 +159,55 @@ function addPage() {
   const id = "page-" + Date.now().toString(36);
   pages().push({ id, name: "New page", widgets: [] });
   state.activePage = pages().length - 1;
-  save();
+  save("added a page");
 }
-function renamePage(i) {
-  const name = prompt("Page name:", pages()[i].name || "");
+async function renamePage(i) {
+  const name = await promptDialog({
+    title: "Rename page",
+    label: "Page name",
+    value: pages()[i].name || "",
+  });
   if (name == null) return;
   pages()[i].name = name.trim() || "Page";
-  save();
+  save(`renamed page to “${pages()[i].name}”`);
 }
 function duplicatePage(i) {
   const src = pages()[i];
-  const clone = structuredClone(src);
-  clone.id = "page-" + Date.now().toString(36);
-  clone.name = (src.name || "Page") + " copy";
+  const copy = structuredClone(src);
+  copy.id = "page-" + Date.now().toString(36);
+  copy.name = (src.name || "Page") + " copy";
   // regenerate widget ids so they stay tidy
-  for (const w of clone.widgets || []) w.id = `${w.type}-${Math.random().toString(36).slice(2, 8)}`;
-  pages().splice(i + 1, 0, clone);
+  for (const w of copy.widgets || []) w.id = `${w.type}-${Math.random().toString(36).slice(2, 8)}`;
+  pages().splice(i + 1, 0, copy);
   state.activePage = i + 1;
-  save();
+  save(`duplicated “${src.name || "page"}”`);
 }
 function movePage(i, d) {
   const j = i + d;
   if (j < 0 || j >= pages().length) return;
   const ps = pages();
-  const a = ps[i], b = ps[j];
-  [ps[i], ps[j]] = [b, a];
-  // Keep an explicit rotation.order in sync when both pages are listed.
-  const order = rotation().order;
-  if (Array.isArray(order) && order.length) {
-    const oi = order.indexOf(a.id), oj = order.indexOf(b.id);
-    if (oi >= 0 && oj >= 0) [order[oi], order[oj]] = [order[oj], order[oi]];
-  }
+  const moved = ps[i];
+  [ps[i], ps[j]] = [ps[j], ps[i]];
+  // The page bar is the only page order; rotation follows it.
+  syncRotationOrder(state.config);
   state.activePage = j;
-  save();
+  save(`moved “${moved.name || "page"}” ${d < 0 ? "left" : "right"}`);
 }
-function deletePage(i) {
+async function deletePage(i) {
   if (pages().length <= 1) { toast("Keep at least one page", "err"); return; }
-  if (!confirm(`Delete page “${pages()[i].name}” and its widgets?`)) return;
-  const removedId = pages()[i].id;
+  const name = pages()[i].name || "page";
+  const n = pages()[i].widgets?.length || 0;
+  const ok = await savebar.confirmDialog({
+    title: "Delete page?",
+    message: `“${name}” and its ${n} widget${n === 1 ? "" : "s"} will be removed. You can undo this.`,
+    confirmLabel: "Delete page",
+    danger: true,
+  });
+  if (!ok) return;
   pages().splice(i, 1);
-  const r = rotation();
-  if (Array.isArray(r.order) && r.order.length) {
-    r.order = r.order.filter((id) => id !== removedId);
-  }
+  syncRotationOrder(state.config);
   state.activePage = Math.max(0, Math.min(state.activePage, pages().length - 1));
-  save();
+  save(`deleted “${name}”`);
 }
 
 // ---- visual layout editor (canvas) ------------------------------------------
@@ -260,7 +283,7 @@ function tidyUp() {
     x += grid.w; rowH = Math.max(rowH, grid.h || 3);
   }
   renderCanvas();
-  save();
+  save("tidied up the layout");
 }
 
 function placeBox(box, w) {
@@ -339,7 +362,13 @@ function startDrag(e, w, box, cols, mode) {
     box.removeEventListener("pointermove", onMove);
     box.removeEventListener("pointerup", onUp);
     const changed = orig.x !== w.grid.x || orig.y !== w.grid.y || orig.w !== w.grid.w || orig.h !== w.grid.h;
-    if (changed) { renderCanvas(); save(); } // re-render to grow the canvas if needed
+    if (changed) {
+      renderCanvas(); // re-render to grow the canvas if needed
+      const resized = orig.w !== w.grid.w || orig.h !== w.grid.h;
+      // One undo step per drag, not one per pointermove: the whole gesture
+      // already mutated w.grid live, and this is the commit at the end of it.
+      save(`${resized ? "resized" : "moved"} ${w.title || w.type}`);
+    }
   };
   box.addEventListener("pointermove", onMove);
   box.addEventListener("pointerup", onUp);
@@ -385,49 +414,64 @@ function reorder(from, to) {
   const [moved] = ws.splice(from, 1);
   ws.splice(to, 0, moved);
   dragIndex = null;
-  save();
+  save(`reordered ${moved.title || moved.type}`);
 }
 
 function duplicateWidget(id) {
   const ws = currentWidgets();
   const w = ws.find((x) => x.id === id);
   if (!w) return;
-  const clone = structuredClone(w);
-  clone.id = `${w.type}-${Date.now().toString(36)}`;
-  clone.title = (w.title || "") + " copy";
-  clone.grid = { ...(w.grid || { x: 0, y: 0, w: 4, h: 3 }) };
-  clone.grid.y = (clone.grid.y || 0) + (clone.grid.h || 3); // drop it just below
-  ws.push(clone);
-  save();
+  const copy = structuredClone(w);
+  copy.id = `${w.type}-${Date.now().toString(36)}`;
+  copy.title = (w.title || "") + " copy";
+  copy.grid = { ...(w.grid || { x: 0, y: 0, w: 4, h: 3 }) };
+  copy.grid.y = (copy.grid.y || 0) + (copy.grid.h || 3); // drop it just below
+  ws.push(copy);
+  save(`duplicated ${w.title || w.type}`);
 }
 
-function copyWidgetTo(id) {
+async function copyWidgetTo(id) {
   const w = currentWidgets().find((x) => x.id === id);
   if (!w) return;
   const ps = pages();
-  const menu = ps.map((p, i) => `${i + 1}) ${p.name}`).join("\n");
-  const ans = prompt(`Copy “${w.title || w.id}” to which page?\n${menu}`, "");
-  if (ans == null) return;
-  const idx = Number(ans) - 1;
-  if (!(idx >= 0 && idx < ps.length)) { toast("Invalid page number", "err"); return; }
-  const clone = structuredClone(w);
-  clone.id = `${w.type}-${Date.now().toString(36)}`;
-  (ps[idx].widgets || (ps[idx].widgets = [])).push(clone);
-  save();
+  // Was a prompt() asking the user to type a page number from a text menu.
+  const idx = await pickDialog({
+    title: `Copy “${w.title || w.id}” to…`,
+    options: ps.map((p, i) => ({
+      value: i,
+      label: p.name || "Page",
+      hint: `${p.widgets?.length || 0} widget${(p.widgets?.length || 0) === 1 ? "" : "s"}`,
+      disabled: i === state.activePage,
+    })),
+  });
+  if (idx == null) return;
+  const copy = structuredClone(w);
+  copy.id = `${w.type}-${Date.now().toString(36)}`;
+  (ps[idx].widgets || (ps[idx].widgets = [])).push(copy);
+  save(`copied ${w.title || w.type} to “${ps[idx].name}”`);
   toast(`Copied to “${ps[idx].name}”`, "ok");
 }
 
 function toggle(id) {
   const w = currentWidgets().find((x) => x.id === id);
-  if (w) { w.enabled = w.enabled === false; save(); }
+  if (!w) return;
+  w.enabled = w.enabled === false;
+  save(`${w.enabled ? "enabled" : "disabled"} ${w.title || w.type}`);
 }
-function delWidget(id) {
+async function delWidget(id) {
   const ws = currentWidgets();
   const i = ws.findIndex((x) => x.id === id);
   if (i < 0) return;
-  if (!confirm(`Delete “${ws[i].title || ws[i].id}”?`)) return;
+  const label = ws[i].title || ws[i].id;
+  const ok = await savebar.confirmDialog({
+    title: "Delete widget?",
+    message: `“${label}” will be removed from this page. You can undo this.`,
+    confirmLabel: "Delete",
+    danger: true,
+  });
+  if (!ok) return;
   ws.splice(i, 1);
-  save();
+  save(`deleted ${label}`);
 }
 
 // ---- widget editor (type + settings; grid handled on canvas) ----------------
@@ -565,70 +609,45 @@ async function commit(editor, widget) {
   }
   const ws = currentWidgets();
   const idx = ws.findIndex((x) => x.id === state.editingId);
-  if (idx >= 0) ws[idx] = w; else ws.push(w);
+  const isNew = idx < 0;
+  if (!isNew) ws[idx] = w; else ws.push(w);
   editor.classList.add("hidden");
   state.editingId = null;
-  await save();
+  save(`${isNew ? "added" : "edited"} ${w.title || w.type}`);
 }
 
-// ---- single write path (queued so rapid canvas drags can't 409 mid-edit) ----
+// ---- staging (no network; the store owns history, savebar owns the wire) -----
+//
+// Callers mutate `state.config` in place and then call save("what they did").
+// The label is what the user sees in the changes list and the undo toast, so it
+// should read as an action ("moved Weather"), not as a field path.
 
-let saving = false;
-let saveAgain = false;
-
-async function save() {
-  if (saving) { saveAgain = true; return; }
-  saving = true;
-  try {
-    do {
-      saveAgain = false;
-      await saveOnce();
-    } while (saveAgain);
-  } finally {
-    saving = false;
-  }
+function save(label, opts) {
+  store.commitValue(label || "edited the dashboard", state.config, opts);
 }
 
-async function saveOnce() {
-  try {
-    const res = await fetch("/api/config", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(state.config),
-    });
-    if (res.status === 409) { toast("Config changed elsewhere — reloading latest", "err"); await load(); return; }
-    if (res.status === 422) {
-      const d = await res.json();
-      toast("Invalid: " + JSON.stringify(d.detail?.[0]?.msg || d.detail), "err");
-      return;
-    }
-    if (!res.ok) { toast("Save failed: " + res.status, "err"); return; }
-    state.config = await res.json();
-    state.activePage = Math.min(state.activePage, pages().length - 1);
-    $("#version").textContent = "v" + state.config.version;
-    renderAll();
-    toast("Saved · v" + state.config.version, "ok");
-  } catch (e) {
-    toast("Save error: " + e.message, "err");
-  }
+/** Replace the working copy's contents while keeping its object identity, so
+ *  closures that captured `state.config` keep pointing at the live config. */
+function adoptConfig(next) {
+  if (!state.config) { state.config = clone(next); return; }
+  for (const k of Object.keys(state.config)) delete state.config[k];
+  Object.assign(state.config, clone(next));
+}
+
+/** Called by the store after undo/redo/discard/save/external change. */
+function onConfigReplaced(next) {
+  adoptConfig(next);
+  if (!pages().length) pages().push({ id: "page-1", name: "Home", widgets: [] });
+  state.activePage = Math.min(state.activePage, pages().length - 1);
+  $("#version").textContent = "v" + state.config.version;
+  $("#editor").classList.add("hidden");
+  state.editingId = null;
+  renderAll();
 }
 
 // ---- page rotation (not the slideshow *widget*) -----------------------------
 
-function rotationPageOrder() {
-  const ps = pages();
-  const byId = new Map(ps.map((p) => [p.id, p]));
-  const r = rotation();
-  const order = [];
-  if (Array.isArray(r.order) && r.order.length) {
-    for (const id of r.order) {
-      const p = byId.get(id);
-      if (p) order.push(p);
-    }
-  }
-  for (const p of ps) if (!order.includes(p)) order.push(p);
-  return order;
-}
+function rotationPageOrder() { return rotationPages(state.config); }
 
 function openRotation() {
   const editor = $("#editor");
@@ -651,10 +670,18 @@ function openRotation() {
   )));
   editor.appendChild(noteEl("Random picks a different animation each page change. Off = instant swap."));
 
-  editor.appendChild(sectionTitle("Order & per-page duration"));
-  editor.appendChild(noteEl("Blank duration = use the default above. ↑↓ changes rotation order only (page-bar ←/→ still reorders the page list)."));
+  editor.appendChild(sectionTitle("Pages in rotation"));
+  editor.appendChild(noteEl(
+    "Rotation follows the page bar — drag the tabs up there to change the order. " +
+    "Blank duration = use the default above."));
+  if (hasCustomOrder(state.config)) {
+    editor.appendChild(noteEl(
+      "⚠ This config has a separate rotation order left over from an older version. " +
+      "Saving here drops it and follows the page bar instead."));
+  }
 
-  let draft = rotationPageOrder().map((p) => ({
+  // Order is derived, so this list is read-only apart from per-page duration.
+  const draft = rotationPageOrder().map((p) => ({
     id: p.id,
     name: p.name || "Page",
     durationSeconds: p.durationSeconds ?? "",
@@ -662,50 +689,24 @@ function openRotation() {
   const list = document.createElement("div");
   list.className = "rot-order-list";
   list.dataset.name = "rot-order";
+  draft.forEach((row, i) => {
+    const el = document.createElement("div");
+    el.className = "rot-order-row";
+    el.dataset.pageId = row.id;
+    const pos = document.createElement("span");
+    pos.className = "badge";
+    pos.textContent = String(i + 1);
+    const name = document.createElement("div");
+    name.className = "rot-order-name";
+    name.textContent = row.name;
+    const dur = input("number", row.durationSeconds, `rot-dur-${row.id}`);
+    dur.className = "rot-order-dur";
+    dur.placeholder = String(r.defaultDurationSeconds ?? 30);
+    dur.oninput = () => { row.durationSeconds = dur.value; };
+    el.append(pos, name, field("Seconds", dur));
+    list.appendChild(el);
+  });
   editor.appendChild(list);
-
-  const redraw = () => {
-    list.replaceChildren();
-    draft.forEach((row, i) => {
-      const el = document.createElement("div");
-      el.className = "rot-order-row";
-      el.dataset.pageId = row.id;
-      const name = document.createElement("div");
-      name.className = "rot-order-name";
-      name.textContent = row.name;
-      const dur = input("number", row.durationSeconds, `rot-dur-${row.id}`);
-      dur.className = "rot-order-dur";
-      dur.placeholder = "default";
-      dur.oninput = () => { row.durationSeconds = dur.value; };
-      const tools = document.createElement("div");
-      tools.style.display = "flex";
-      tools.style.gap = "4px";
-      tools.append(
-        button("↑", "btn small", () => {
-          if (i <= 0) return;
-          [draft[i - 1], draft[i]] = [draft[i], draft[i - 1]];
-          redraw();
-        }),
-        button("↓", "btn small", () => {
-          if (i >= draft.length - 1) return;
-          [draft[i + 1], draft[i]] = [draft[i], draft[i + 1]];
-          redraw();
-        }),
-      );
-      el.append(name, field("Seconds", dur), tools);
-      list.appendChild(el);
-    });
-  };
-  redraw();
-
-  editor.appendChild(button("Use page list order", "btn small", () => {
-    draft = pages().map((p) => ({
-      id: p.id,
-      name: p.name || "Page",
-      durationSeconds: draft.find((d) => d.id === p.id)?.durationSeconds ?? (p.durationSeconds ?? ""),
-    }));
-    redraw();
-  }));
 
   const actions = document.createElement("div"); actions.className = "editor-actions";
   actions.append(
@@ -719,9 +720,7 @@ function openRotation() {
         const s = state.config.settings || (state.config.settings = {});
         s.pageTransition = trans;
       }
-      const natural = pages().map((p) => p.id);
-      const newOrder = draft.map((row) => row.id);
-      r.order = newOrder.every((id, i) => id === natural[i]) ? [] : newOrder;
+      syncRotationOrder(state.config);
       const byId = new Map(pages().map((p) => [p.id, p]));
       for (const row of draft) {
         const p = byId.get(row.id);
@@ -730,7 +729,7 @@ function openRotation() {
         p.durationSeconds = raw === "" ? null : Math.max(2, Number(raw) || 2);
       }
       editor.classList.add("hidden");
-      save();
+      save("changed page rotation");
     }),
   );
   editor.appendChild(actions);
@@ -822,8 +821,14 @@ function openAlerts() {
           activeHost.appendChild(row);
         }
         activeHost.appendChild(button("Dismiss all", "btn small danger", async () => {
-          if (!confirm("Dismiss every active alert on all displays?")) return;
-          await fetch("/api/alerts/clear-all", { method: "POST" });
+          const ok = await savebar.confirmDialog({
+            title: "Dismiss all alerts?",
+            message: "Every active alert is cleared from all displays immediately. This can't be undone.",
+            confirmLabel: "Dismiss all",
+            danger: true,
+          });
+          if (!ok) return;
+          await api.clearAlerts();
           refreshActive();
         }));
       }
@@ -852,7 +857,7 @@ function openAlerts() {
       a.warningTtlSeconds = readInt("al-warning");
       a.dangerTtlSeconds = readInt("al-danger");
       editor.classList.add("hidden");
-      save();
+      save("changed alert rules");
     }),
   );
   editor.appendChild(actions);
@@ -889,10 +894,10 @@ function openScenes() {
   toolbar.style.margin = "8px 0";
   toolbar.append(
     button("+ New scene", "btn primary small", () => openSceneEditor(null)),
-    button("Clear / follow schedules", "btn small", async () => {
+    button("Clear / follow schedules", "btn small", () => {
       state.config.activeSceneId = null;
       state.config.sceneManualHold = false;
-      await save();
+      save("cleared the active scene");
       openScenes();
     }),
   );
@@ -935,22 +940,28 @@ function sceneRow(sc) {
   const controls = document.createElement("div");
   controls.className = "device-controls";
   controls.append(
-    button("Activate", "btn small primary", async () => {
+    button("Activate", "btn small primary", () => {
       state.config.activeSceneId = sc.id;
       state.config.sceneManualHold = true;
-      await save();
+      save(`activated scene “${sc.name}”`);
       openScenes();
     }),
     button("Edit", "btn small", () => openSceneEditor(sc.id)),
     button("Delete", "btn small danger", async () => {
-      if (!confirm(`Delete scene “${sc.name}”?`)) return;
+      const ok = await savebar.confirmDialog({
+        title: "Delete scene?",
+        message: `“${sc.name}” will be removed. You can undo this.`,
+        confirmLabel: "Delete scene",
+        danger: true,
+      });
+      if (!ok) return;
       const idx = scenes().findIndex((s) => s.id === sc.id);
       if (idx >= 0) scenes().splice(idx, 1);
       if (state.config.activeSceneId === sc.id) {
         state.config.activeSceneId = null;
         state.config.sceneManualHold = false;
       }
-      await save();
+      save(`deleted scene “${sc.name}”`);
       openScenes();
     }),
   );
@@ -1058,13 +1069,76 @@ function openSceneEditor(sceneId) {
       }
       draft.schedule = gatherSchedule(editor, "sc");
       const idx = scenes().findIndex((s) => s.id === draft.id);
-      if (idx >= 0) scenes()[idx] = draft;
+      const isNew = idx < 0;
+      if (!isNew) scenes()[idx] = draft;
       else scenes().push(draft);
-      await save();
+      save(`${isNew ? "added" : "edited"} scene “${draft.name}”`);
       openScenes();
     }),
   );
   editor.appendChild(actions);
+}
+
+// ---- dialogs (replacing prompt()/confirm()) ---------------------------------
+
+/** Single-line text prompt. Resolves to the string, or null if cancelled. */
+function promptDialog({ title, label, value = "", placeholder = "" }) {
+  return new Promise((res) => {
+    const inp = input("text", value, "dlg-text", placeholder);
+    const body = field(label, inp);
+    let settled = false;
+    const done = (v) => { if (!settled) { settled = true; res(v); } };
+    const close = savebar.openModal({
+      title,
+      body,
+      actions: [
+        { label: "Cancel", cls: "btn", onClick: (c) => { c(); done(null); } },
+        { label: "Save", cls: "btn primary", onClick: (c) => { c(); done(inp.value); } },
+      ],
+    });
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); close(); done(inp.value); }
+    });
+    // The modal focuses its last action by default; a text prompt wants the field.
+    requestAnimationFrame(() => { inp.focus(); inp.select(); });
+  });
+}
+
+/** Choose one of a list. Resolves to the chosen `value`, or null if cancelled. */
+function pickDialog({ title, options }) {
+  return new Promise((res) => {
+    let settled = false;
+    const done = (v) => { if (!settled) { settled = true; res(v); } };
+    const list = document.createElement("div");
+    list.className = "list";
+    const close = savebar.openModal({
+      title,
+      body: list,
+      actions: [{ label: "Cancel", cls: "btn", onClick: (c) => { c(); done(null); } }],
+    });
+    for (const o of options) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "list-row pick-row";
+      row.disabled = !!o.disabled;
+      const main = document.createElement("div");
+      main.className = "list-row-main";
+      const t = document.createElement("div");
+      t.className = "list-row-title";
+      t.textContent = o.label;
+      main.appendChild(t);
+      if (o.hint || o.disabled) {
+        const m = document.createElement("div");
+        m.className = "list-row-meta";
+        m.textContent = o.disabled ? "current page" : o.hint;
+        main.appendChild(m);
+      }
+      row.appendChild(main);
+      row.onclick = () => { close(); done(o.value); };
+      list.appendChild(row);
+    }
+    requestAnimationFrame(() => list.querySelector("button:not([disabled])")?.focus());
+  });
 }
 
 // ---- form element helpers ---------------------------------------------------
@@ -1834,7 +1908,7 @@ function openPageSchedule(i) {
       page.schedule = gatherSchedule(editor, "ps");
       page.condition = gatherCondition(editor);
       editor.classList.add("hidden");
-      save();
+      save(`changed the schedule for “${page.name || "page"}”`);
     }),
   );
   editor.appendChild(actions);
@@ -1962,7 +2036,7 @@ function saveLayout(oldCols, oldRow) {
   }
   s.columns = newCols; s.rowHeightPx = newRow; s.gapPx = newGap;
   editor.classList.add("hidden");
-  save();
+  save("changed layout & appearance");
 }
 
 // ---- displays (per-device scaling) ------------------------------------------
@@ -2068,7 +2142,13 @@ function deviceRow(d) {
     button("Reset", "btn small", () => { cur.uiScale = 1; cur.fontScale = 1; row.querySelectorAll(".device-val").forEach((n) => n.textContent = "100%"); push(); }),
     button("Remove", "btn small danger", async () => {
       const label = d.name || d.id.slice(0, 8);
-      if (!confirm(`Remove “${label}” from the display list? It will reappear if that screen loads the dashboard again.`)) return;
+      const ok = await savebar.confirmDialog({
+        title: "Remove display?",
+        message: `“${label}” drops off the list, along with its size overlay. It reappears if that screen loads the dashboard again.`,
+        confirmLabel: "Remove",
+        danger: true,
+      });
+      if (!ok) return;
       try {
         const res = await fetch(`/api/devices/${encodeURIComponent(d.id)}`, { method: "DELETE" });
         if (!res.ok && res.status !== 404) { toast("Remove failed: " + res.status, "err"); return; }
@@ -2124,18 +2204,27 @@ function scaleStepper(label, get, set, step) {
 
 async function restoreBackup(b) {
   const when = new Date(b.savedAt).toLocaleString();
-  if (!confirm(`Restore the backup from ${when} (v${b.version})? This becomes the current config.`)) return;
+  // Restore writes on the server immediately, so unsaved local edits would be
+  // stranded on top of a config they were never derived from. Say so first.
+  const dirty = store.isDirty();
+  const ok = await savebar.confirmDialog({
+    title: "Restore this backup?",
+    message: dirty
+      ? `The backup from ${when} (v${b.version}) becomes the current config, and your unsaved changes will be discarded. ` +
+        "The version you have now is itself kept in history."
+      : `The backup from ${when} (v${b.version}) becomes the current config. ` +
+        "The version you have now is itself kept in history, so this is reversible.",
+    confirmLabel: dirty ? "Discard my changes and restore" : "Restore",
+    danger: dirty,
+  });
+  if (!ok) return;
   try {
-    const res = await fetch("/api/backups/restore", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: b.name }),
-    });
-    if (!res.ok) { toast("Restore failed: " + res.status, "err"); return; }
-    state.config = await res.json();
-    $("#editor").classList.add("hidden");
-    await load();
-    toast(`Restored v${b.version} · now v${state.config.version}`, "ok");
-  } catch (e) { toast("Restore error: " + e.message, "err"); }
+    const restored = await api.restoreBackup(b.name);
+    savebar.clearDraft();
+    store.reset(restored);
+    onConfigReplaced(restored);
+    toast(`Restored v${b.version} · now v${restored.version}`, "ok");
+  } catch (e) { toast("Restore failed: " + e.message, "err"); }
 }
 
 // ---- toast + wiring ---------------------------------------------------------
@@ -2249,11 +2338,14 @@ $("#btn-refresh").onclick = async () => {
 };
 $("#btn-update").onclick = async () => {
   const btn = $("#btn-update");
-  if (!confirm(
-    "Update the dashboard?\n\n" +
-    "This pulls the latest commit on the current branch and restarts the " +
-    "dashboard if anything moved. Displays will blink."
-  )) return;
+  const ok = await savebar.confirmDialog({
+    title: "Update the dashboard?",
+    message: "This pulls the latest commit on the current branch and restarts the " +
+      "dashboard if anything moved. Displays will blink.",
+    confirmLabel: "Pull and restart",
+    danger: true,
+  });
+  if (!ok) return;
   btn.disabled = true;
   try {
     const r = await fetch("/api/system/update", { method: "POST" });

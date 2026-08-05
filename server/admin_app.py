@@ -173,6 +173,9 @@ async def system_update_now(background: BackgroundTasks):
 
 # Serve the widget plugin modules same-origin so the admin can import the SAME
 # registry the dashboard uses (schema-driven forms, no duplicated schema).
+#
+# Same-origin matters twice over: ES module identity is per-URL, so importing
+# the registry through a second path would instantiate a second, empty one.
 app.mount("/widgets", NoCacheStaticFiles(directory=str(WIDGETS_DIR)), name="widgets")
 # Admin UI at root.
 app.mount("/", NoCacheStaticFiles(directory=str(WEB_DIR.parent / "admin"), html=True), name="admin")

@@ -499,6 +499,49 @@ fieldset.field-group > legend {
 .toast .toast-x:hover { color: var(--text-1); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } }
 
+/* ---- save bar ------------------------------------------------------------ */
+/* Undo / redo / change count / discard / Save. The change count is a button
+ * because it opens the list of what you actually did. */
+
+.savebar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding-right: var(--sp-2);
+  margin-right: var(--sp-1);
+  border-right: 1px solid var(--border-subtle);
+}
+.savebar .badge { cursor: pointer; }
+.savebar .badge:disabled { cursor: default; opacity: .7; }
+.savebar .badge.accent { border-color: transparent; }
+/* Only pull for attention once there is something to lose. */
+.savebar.dirty .btn.primary { box-shadow: 0 0 0 3px var(--accent-soft); }
+
+.change-list {
+  margin: 0;
+  padding-left: var(--sp-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  font-size: var(--fs-md);
+}
+.change-list li::marker { color: var(--text-3); font-variant-numeric: tabular-nums; }
+
+.conflict-row { align-items: flex-start; }
+.conflict-actions { display: flex; gap: var(--sp-1); flex: 0 0 auto; }
+
+/* Rows in a pick dialog are buttons, so reset the button chrome. */
+.pick-row {
+  width: 100%;
+  text-align: left;
+  background: var(--surface-2);
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.pick-row:hover:not(:disabled) { border-color: var(--accent); background: var(--surface-hover); }
+.pick-row:disabled { opacity: .5; cursor: not-allowed; }
+
 /* ---- banner (persistent, non-blocking notices) --------------------------- */
 
 .banner {
