@@ -499,6 +499,89 @@ fieldset.field-group > legend {
 .toast .toast-x:hover { color: var(--text-1); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } }
 
+/* ---- widget picker & command palette ------------------------------------- */
+
+.picker { display: flex; flex-direction: column; gap: var(--sp-3); min-height: 0; }
+.picker-search { width: 100%; }
+.picker-results, .palette-results {
+  max-height: min(56vh, 520px);
+  overflow-y: auto;
+  padding-right: var(--sp-1);
+}
+.picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+.picker-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: var(--sp-3);
+  text-align: left;
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.picker-card:hover, .picker-card.cursor {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.picker-card-head { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+.picker-card-label { font-size: var(--fs-md); font-weight: var(--fw-bold); }
+.picker-card-desc { font-size: var(--fs-sm); color: var(--text-2); line-height: var(--lh-body); }
+.picker-badge { font-size: 10px; padding: 1px 6px; }
+
+.palette-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  font: inherit;
+  font-size: var(--fs-md);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.palette-row:hover, .palette-row.cursor { background: var(--accent-soft); border-color: var(--accent); }
+.palette-hint { font-size: var(--fs-sm); color: var(--text-3); }
+
+kbd {
+  padding: 1px 5px;
+  margin-left: var(--sp-1);
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  font-family: inherit;
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+/* Widget type, shown rather than re-picked from a raw list. */
+.type-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+}
+.type-text { min-width: 0; }
+.type-name { font-size: var(--fs-md); font-weight: var(--fw-bold); }
+.type-desc { font-size: var(--fs-sm); color: var(--text-2); }
+
 /* ---- save bar ------------------------------------------------------------ */
 /* Undo / redo / change count / discard / Save. The change count is a button
  * because it opens the list of what you actually did. */

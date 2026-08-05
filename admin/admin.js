@@ -13,6 +13,7 @@ import * as savebar from "/js/savebar.js";
 import { clone } from "/js/core/clone.js";
 import { rotationPages, hasCustomOrder, syncRotationOrder } from "/js/model/order.js";
 import * as liveHost from "/js/view/live-host.js";
+import { catalog, grouped, search, defaultSettings } from "/js/model/catalog.js";
 
 const state = { config: null, activePage: 0, editingId: null, selection: new Set() };
 const $ = (s) => document.querySelector(s);
@@ -42,6 +43,7 @@ async function load() {
       api.loadMeta().catch(() => null),
     ]);
     if (meta?.dashboardPort) dashPort = meta.dashboardPort;
+    refreshMissingKeys(); // fire and forget: only drives a badge in the picker
 
     store.reset(cfg);
     onConfigReplaced(cfg);
@@ -743,16 +745,30 @@ function nextFreeRow() {
   return currentWidgets().reduce((m, w) => Math.max(m, (w.grid?.y || 0) + (w.grid?.h || 3)), 0);
 }
 
-function openEditor(id) {
+async function openEditor(id) {
   const editor = $("#editor");
   const existing = currentWidgets().find((w) => w.id === id);
-  const widget = existing
-    ? structuredClone(existing)
-    : { id: "", type: registry.types()[0], title: "", enabled: true, grid: { x: 0, y: nextFreeRow(), w: 4, h: 3 }, settings: {} };
+  let widget;
+  if (existing) {
+    widget = structuredClone(existing);
+  } else {
+    const type = await pickWidgetType();
+    if (!type) return;
+    widget = {
+      id: "", type, title: registry.get(type)?.meta?.label || "",
+      enabled: true, grid: { x: 0, y: nextFreeRow(), w: 4, h: 3 },
+      // Defaults are materialised up front. The form used to *display* each
+      // field's default but only write what was in the DOM, so a widget added
+      // and saved untouched came out with an empty settings bag.
+      settings: defaultSettings(type),
+    };
+    if (type === "heads-up") widget.pinned = true;
+  }
   if (widget.type === "slideshow") {
     widget.slideshow = widget.slideshow || { enabled: true, durationSeconds: 30, slides: [] };
   }
   state.editingId = existing ? id : null;
+  state.selection.clear();
   renderForm(editor, widget);
 }
 
@@ -760,15 +776,31 @@ function renderForm(editor, widget) {
   const label = registry.get(widget.type)?.meta?.label || widget.type;
   openPanel(state.editingId ? `${widget.title || label}` : "Add widget");
 
-  editor.appendChild(field("Type", select(registry.types(), widget.type, (v) => {
+  // Type is shown, not re-picked from a raw list: changing it throws away the
+  // settings, so it goes through the same picker as adding.
+  const typeRow = document.createElement("div");
+  typeRow.className = "type-row";
+  const typeName = document.createElement("div");
+  typeName.className = "type-name";
+  typeName.textContent = label;
+  const typeDesc = document.createElement("div");
+  typeDesc.className = "type-desc";
+  typeDesc.textContent = registry.get(widget.type)?.meta?.description || widget.type;
+  const typeText = document.createElement("div");
+  typeText.className = "type-text";
+  typeText.append(typeName, typeDesc);
+  typeRow.append(typeText, button("Change…", "btn small ghost", async () => {
+    const v = await pickWidgetType({ title: "Change widget type" });
+    if (!v || v === widget.type) return;
     const next = gather(editor, widget);
     next.type = v;
-    next.settings = {};
-    if (v === "heads-up") next.pinned = true;
+    next.settings = defaultSettings(v);
+    next.pinned = v === "heads-up" ? true : next.pinned;
     if (v !== "slideshow") next.slideshow = null;
     else next.slideshow = next.slideshow || { enabled: true, durationSeconds: 30, slides: [] };
     renderForm(editor, next);
-  })));
+  }));
+  editor.appendChild(field("Type", typeRow));
   editor.appendChild(field("Title", input("text", widget.title, "title")));
   editor.appendChild(boolField("Enabled", widget.enabled !== false, "enabled"));
   editor.appendChild(boolField("Pin to all pages (overlay)", widget.pinned === true, "pinned"));
@@ -1513,6 +1545,250 @@ function activeVariantLabel(w) {
   return active?.label || "variant 1";
 }
 
+// ---- widget picker ----------------------------------------------------------
+//
+// Replaces a flat <select> of 19 raw type keys. Every plugin already carried a
+// label, a description and a category; none of it reached the UI, so choosing a
+// widget meant recognising strings like "heads-up" and "space-imagery".
+
+let missingKeys = new Set();   // global API keys that aren't configured
+
+async function refreshMissingKeys() {
+  try {
+    const res = await api.loadSecrets();
+    const set = new Set();
+    for (const [name, meta] of Object.entries(res.keys || res || {})) {
+      const isSet = typeof meta === "object" ? (meta.set ?? meta.configured) : !!meta;
+      if (!isSet) set.add(name);
+    }
+    missingKeys = set;
+  } catch { /* the picker still works without the badge */ }
+}
+
+/** Resolves to a chosen type, or null. `exclude` drops types (slides can't nest). */
+function pickWidgetType({ title = "Add widget", exclude = [] } = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+
+    const all = catalog().filter((i) => !exclude.includes(i.type));
+    const body = document.createElement("div");
+    body.className = "picker";
+
+    const searchWrap = document.createElement("label");
+    searchWrap.className = "search picker-search";
+    const searchInput = document.createElement("input");
+    searchInput.type = "search";
+    searchInput.placeholder = "Search widgets…";
+    searchInput.setAttribute("aria-label", "Search widgets");
+    searchWrap.appendChild(searchInput);
+    body.appendChild(searchWrap);
+
+    const results = document.createElement("div");
+    results.className = "picker-results";
+    body.appendChild(results);
+
+    let flat = [];
+    let cursor = 0;
+
+    const card = (item) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "picker-card";
+      b.dataset.type = item.type;
+
+      const head = document.createElement("div");
+      head.className = "picker-card-head";
+      const name = document.createElement("span");
+      name.className = "picker-card-label";
+      name.textContent = item.label;
+      head.appendChild(name);
+      // Surface the needs-a-key state here, at the moment of choosing, rather
+      // than after the widget is on the page rendering an empty state.
+      if (item.needsGlobalKey && missingKeys.has(item.needsGlobalKey)) {
+        const badge = document.createElement("span");
+        badge.className = "badge warn-pill picker-badge";
+        badge.textContent = "Needs " + item.needsGlobalKey;
+        head.appendChild(badge);
+      } else if (item.needsWidgetSecret) {
+        const badge = document.createElement("span");
+        badge.className = "badge picker-badge";
+        badge.textContent = "Needs an API key";
+        head.appendChild(badge);
+      }
+      b.appendChild(head);
+
+      const desc = document.createElement("div");
+      desc.className = "picker-card-desc";
+      desc.textContent = item.description || item.type;
+      b.appendChild(desc);
+
+      b.onclick = () => { close(); done(item.type); };
+      return b;
+    };
+
+    const draw = () => {
+      results.replaceChildren();
+      const q = searchInput.value;
+      const matched = search(q, all);
+      flat = matched;
+      cursor = 0;
+      if (!matched.length) {
+        results.appendChild(emptyState(`Nothing matches “${q}”`, "Try a shorter word, or the widget's type name."));
+        return;
+      }
+      if (q.trim()) {
+        const grid = document.createElement("div");
+        grid.className = "picker-grid";
+        for (const it of matched) grid.appendChild(card(it));
+        results.appendChild(grid);
+      } else {
+        for (const g of grouped(matched)) {
+          results.appendChild(sectionTitle(g.label));
+          const grid = document.createElement("div");
+          grid.className = "picker-grid";
+          for (const it of g.items) grid.appendChild(card(it));
+          results.appendChild(grid);
+        }
+      }
+      highlight();
+    };
+
+    const highlight = () => {
+      const cards = [...results.querySelectorAll(".picker-card")];
+      cards.forEach((c, i) => c.classList.toggle("cursor", i === cursor));
+      cards[cursor]?.scrollIntoView({ block: "nearest" });
+    };
+
+    searchInput.addEventListener("input", draw);
+    searchInput.addEventListener("keydown", (e) => {
+      const cards = [...results.querySelectorAll(".picker-card")];
+      if (e.key === "ArrowDown") { e.preventDefault(); cursor = Math.min(cursor + 1, cards.length - 1); highlight(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); cursor = Math.max(cursor - 1, 0); highlight(); }
+      else if (e.key === "Enter") {
+        e.preventDefault();
+        const t = cards[cursor]?.dataset.type;
+        if (t) { close(); done(t); }
+      }
+    });
+
+    const close = savebar.openModal({
+      title,
+      body,
+      wide: true,
+      actions: [{ label: "Cancel", cls: "btn", onClick: (c) => { c(); done(null); } }],
+    });
+    draw();
+    requestAnimationFrame(() => searchInput.focus());
+  });
+}
+
+// ---- command palette --------------------------------------------------------
+// Every action, page, widget and section behind one fuzzy search. This is what
+// finally makes a buried setting findable by name.
+
+function openPalette() {
+  let settled = false;
+  const done = () => { settled = true; };
+
+  const commands = [
+    ...RAIL.filter((r) => !r.sep).map((r) => ({
+      label: r.label, group: "Go to", run: () => { activeSection = r.id; renderRail(); r.open(); },
+    })),
+    { label: "Add widget", group: "Action", run: () => openEditor(null) },
+    { label: "Tidy up layout", group: "Action", run: tidyUp },
+    { label: "Toggle live canvas", group: "Action", run: () => $("#btn-live").click() },
+    { label: "Toggle page preview", group: "Action", run: togglePreview },
+    { label: "Save changes", group: "Action", run: () => savebar.saveNow() },
+    { label: "Add page", group: "Action", run: addPage },
+    ...pages().map((p, i) => ({
+      label: p.name || "Page", group: "Page",
+      run: () => { state.activePage = i; renderAll(); openPageSettings(i); },
+    })),
+    ...currentWidgets().map((w) => ({
+      label: w.title || w.id, group: "Widget on this page",
+      hint: registry.get(w.type)?.meta?.label || w.type,
+      run: () => selectOnly(w.id),
+    })),
+  ];
+
+  const body = document.createElement("div");
+  body.className = "picker";
+  const searchWrap = document.createElement("label");
+  searchWrap.className = "search picker-search";
+  const input = document.createElement("input");
+  input.type = "search";
+  input.placeholder = "Search actions, pages, widgets…";
+  input.setAttribute("aria-label", "Search commands");
+  searchWrap.appendChild(input);
+  body.appendChild(searchWrap);
+  const results = document.createElement("div");
+  results.className = "palette-results";
+  body.appendChild(results);
+
+  let flat = [], cursor = 0;
+
+  const draw = () => {
+    const q = input.value.trim().toLowerCase();
+    flat = commands.filter((c) =>
+      !q || c.label.toLowerCase().includes(q) || c.group.toLowerCase().includes(q)
+        || (c.hint || "").toLowerCase().includes(q));
+    cursor = 0;
+    results.replaceChildren();
+    if (!flat.length) {
+      results.appendChild(emptyState(`Nothing matches “${input.value}”`, null));
+      return;
+    }
+    let lastGroup = null;
+    for (const [i, c] of flat.entries()) {
+      if (c.group !== lastGroup) {
+        results.appendChild(sectionTitle(c.group));
+        lastGroup = c.group;
+      }
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "palette-row";
+      row.dataset.index = i;
+      const l = document.createElement("span");
+      l.textContent = c.label;
+      row.appendChild(l);
+      if (c.hint) {
+        const h = document.createElement("span");
+        h.className = "palette-hint";
+        h.textContent = c.hint;
+        row.appendChild(h);
+      }
+      row.onclick = () => { close(); done(); c.run(); };
+      results.appendChild(row);
+    }
+    highlight();
+  };
+  const highlight = () => {
+    const rows = [...results.querySelectorAll(".palette-row")];
+    rows.forEach((r, i) => r.classList.toggle("cursor", i === cursor));
+    rows[cursor]?.scrollIntoView({ block: "nearest" });
+  };
+
+  input.addEventListener("input", draw);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); cursor = Math.min(cursor + 1, flat.length - 1); highlight(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); cursor = Math.max(cursor - 1, 0); highlight(); }
+    else if (e.key === "Enter") {
+      e.preventDefault();
+      const c = flat[cursor];
+      if (c) { close(); done(); c.run(); }
+    }
+  });
+
+  const close = savebar.openModal({
+    title: "Command palette",
+    body,
+    actions: [{ label: "Close", cls: "btn", onClick: (c) => { c(); done(); } }],
+  });
+  draw();
+  requestAnimationFrame(() => input.focus());
+}
+
 // ---- dialogs (replacing prompt()/confirm()) ---------------------------------
 
 /** Single-line text prompt. Resolves to the string, or null if cancelled. */
@@ -1908,10 +2184,13 @@ function appendSlideshowFields(editor, widget) {
   redraw();
   editor._redrawSlides = redraw;
 
-  editor.appendChild(button("+ Add slide", "btn", () => {
+  editor.appendChild(button("+ Add slide", "btn", async () => {
+    // Same picker as adding a widget, minus slideshow (a slideshow can't
+    // contain a slideshow).
+    const type = await pickWidgetType({ title: "Add slide", exclude: ["slideshow"] });
+    if (!type) return;
     const cur = gatherSlideshow(editor, widget);
-    const types = slideTypeOptions();
-    cur.slides.push({ id: slideId(), type: types[0], title: "", settings: {} });
+    cur.slides.push({ id: slideId(), type, title: "", settings: defaultSettings(type) });
     widget.slideshow = cur;
     appendSlideshowFieldsRebuild(editor, widget);
   }));
@@ -2794,6 +3073,7 @@ function toast(msg, kind) {
 $("#btn-add").onclick = () => openEditor(null);
 $("#btn-preview").onclick = togglePreview;
 $("#btn-tidy").onclick = tidyUp;
+$("#btn-palette").onclick = openPalette;
 
 // Filter the widget strip. Purely a view filter — it never touches the config.
 $("#widget-filter").addEventListener("input", () => renderList());
@@ -2819,6 +3099,15 @@ $("#btn-live").onclick = () => {
 // one undo step per burst thanks to the store's coalesce keys.
 
 document.addEventListener("keydown", (e) => {
+  // The palette is reachable from anywhere, including mid-typing — that's the
+  // point of it. Everything below it is canvas editing and must not fire while
+  // the user is in a field.
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    if (!document.querySelector(".modal-backdrop")) openPalette();
+    return;
+  }
+
   const typing = /^(input|textarea|select)$/i.test(document.activeElement?.tagName || "")
     || document.activeElement?.isContentEditable;
   if (typing || document.querySelector(".modal-backdrop")) return;
