@@ -29,7 +29,19 @@ export function renderForm(host, defs, draft, opts = {}) {
   const { onChange = () => {}, custom = {} } = opts;
   const controls = new Map(); // path -> { wrap, input, setError }
 
-  function change(path) {
+  // Any field can gate others via `when`, so a change to a gating control has
+  // to redraw the form. Only booleans and selects gate in practice, and neither
+  // holds a text cursor, so a redraw is safe — focus is restored afterwards so
+  // keyboard users don't get dumped back to the top of the form.
+  const hasConditionals = () => defs.some((f) => typeof f.when === "function");
+
+  function change(path, { gating = false } = {}) {
+    if (gating && hasConditionals()) {
+      const active = document.activeElement;
+      const id = active?.id;
+      draw();
+      if (id) host.querySelector(`#${CSS.escape(id)}`)?.focus();
+    }
     onChange(path, draft);
   }
 
@@ -80,7 +92,7 @@ export function renderForm(host, defs, draft, opts = {}) {
         input.type = "checkbox";
         input.id = id;
         input.checked = value === true || value === "true";
-        input.onchange = () => { setPath(draft, f.key, input.checked); change(f.key); };
+        input.onchange = () => { setPath(draft, f.key, input.checked); change(f.key, { gating: true }); };
         wrap.append(input, el("span", "switch-track"), el("span", "switch-label", f.label));
         return wrap;
       }
@@ -104,7 +116,7 @@ export function renderForm(host, defs, draft, opts = {}) {
           input.appendChild(opt);
         }
         input.value = value ?? f.default ?? "";
-        input.onchange = () => { setPath(draft, f.key, input.value); change(f.key); };
+        input.onchange = () => { setPath(draft, f.key, input.value); change(f.key, { gating: true }); };
         return input;
       }
 
@@ -125,6 +137,9 @@ export function renderForm(host, defs, draft, opts = {}) {
         };
         return input;
       }
+
+      case "days":
+        return daysControl(f);
 
       case "grid":
         return gridControl(f, id);
@@ -149,6 +164,47 @@ export function renderForm(host, defs, draft, opts = {}) {
         return input;
       }
     }
+  }
+
+  /** Day-of-week chips holding an array of 0–6 (Mon–Sun).
+   *
+   *  The old chips were buttons toggling a CSS class, read back by querying for
+   *  `.day-chip.on` — so the selection lived in the class list and screen
+   *  readers were told nothing. Here the array in the draft is the state and
+   *  aria-pressed reflects it. */
+  function daysControl(f) {
+    const labels = f.dayLabels || ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    const wrap = el("div", "day-picker");
+    wrap.setAttribute("role", "group");
+    if (f.label) wrap.setAttribute("aria-label", f.label);
+
+    const current = () => {
+      const v = getPath(draft, f.key);
+      return Array.isArray(v) ? v : [];
+    };
+    labels.forEach((label, day) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "day-chip";
+      b.textContent = label;
+      const paint = () => {
+        const on = current().includes(day);
+        b.classList.toggle("on", on);
+        b.setAttribute("aria-pressed", String(on));
+      };
+      b.onclick = () => {
+        const days = [...current()];
+        const i = days.indexOf(day);
+        if (i >= 0) days.splice(i, 1); else days.push(day);
+        days.sort((x, y) => x - y);
+        setPath(draft, f.key, days);
+        paint();
+        change(f.key);
+      };
+      paint();
+      wrap.appendChild(b);
+    });
+    return wrap;
   }
 
   /** Numeric x/y/w/h. The canvas is still the main way to place a widget, but

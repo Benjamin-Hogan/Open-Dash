@@ -499,6 +499,8 @@ fieldset.field-group > legend {
 .toast .toast-x:hover { color: var(--text-1); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } }
 
+.list-search { width: 100%; margin-bottom: var(--sp-2); }
+
 /* ---- form engine --------------------------------------------------------- */
 
 .field .req { color: var(--danger); }

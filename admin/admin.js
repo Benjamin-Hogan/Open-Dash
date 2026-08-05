@@ -17,6 +17,12 @@ import { catalog, grouped, search, defaultSettings } from "/js/model/catalog.js"
 import { renderForm as renderFormEngine } from "/js/form/render.js";
 import { fromPluginSchema } from "/js/form/schema.js";
 import { fromServer as errorsFromServer } from "/js/form/validate.js";
+import {
+  toDraft as scheduleToDraft,
+  fromDraft as scheduleFromDraftValue,
+  describe as describeSchedule,
+} from "/js/model/schedule.js";
+import { getPath } from "/js/core/clone.js";
 
 const state = {
   config: null,
@@ -787,6 +793,9 @@ async function openEditor(id) {
   if (widget.type === "slideshow") {
     widget.slideshow = widget.slideshow || { enabled: true, durationSeconds: 30, slides: [] };
   }
+  // The schedule is edited in its normalised form and folded back on save, so
+  // the form never has to know about the legacy flat shape.
+  widget._schedule = scheduleToDraft(widget.schedule);
   state.editingId = existing ? id : null;
   state.selection.clear();
   state.draftWidget = widget;
@@ -825,18 +834,8 @@ function widgetFieldDefs(widget, editor) {
       key: "refreshSeconds", label: "Refresh seconds", type: "number", min: 1,
       placeholder: "none", help: "Blank = never auto-refresh.",
     },
-    {
-      key: "schedule", type: "custom", label: "Schedule",
-      // Schedules keep their existing editor: it is correct, well-tested and
-      // large. It plugs in as one custom field rather than being rewritten.
-      render: () => {
-        const host = document.createElement("div");
-        host.appendChild(sectionTitle("Schedule"));
-        host.appendChild(noteEl("Hide this widget outside a time window (same rules as page schedules)."));
-        appendScheduleFields(host, widget.schedule || {}, "ws");
-        return host;
-      },
-    },
+    { key: "_schedHead", type: "note", label: "Hide this widget outside a time window (same rules as page schedules)." },
+    ...scheduleFieldDefs("_schedule"),
     {
       key: "variants", type: "custom", label: "Variants",
       render: () => variantsEditor(widget, editor),
@@ -968,7 +967,8 @@ async function commit(editor, widget) {
   widgetForm?.setErrors([]);
 
   const w = widget;
-  w.schedule = gatherSchedule(editor, "ws");
+  w.schedule = scheduleFromDraft(w, "_schedule");
+  delete w._schedule;   // editor-only shape; never reaches the config
   if (w.type !== "slideshow") w.slideshow = null;
   if (!w.id) w.id = `${w.type}-${Date.now().toString(36)}`;
   if (w.pinned) {
@@ -1259,11 +1259,23 @@ function openScenes() {
   const list = document.createElement("div");
   list.className = "device-list";
   if (!scenes().length) {
-    editor.appendChild(noteEl("No scenes yet — create Morning, Print watch, Night ambient, etc."));
+    editor.appendChild(emptyState(
+      "No scenes yet",
+      "A scene flips pages, theme, widget variants and rotation in one go — Morning, Print watch, Night ambient.",
+      button("+ New scene", "btn primary small", () => openSceneEditor(null)),
+    ));
   }
-  for (const sc of scenes()) {
-    list.appendChild(sceneRow(sc));
-  }
+  const draw = (q = "") => {
+    list.replaceChildren();
+    const shown = scenes().filter((sc) => matches(q, sc.name, sc.variantLabel, sc.id));
+    if (!shown.length && scenes().length) {
+      list.appendChild(emptyState(`No scenes match “${q}”`, "Search by name or variant label."));
+      return;
+    }
+    for (const sc of shown) list.appendChild(sceneRow(sc));
+  };
+  if (scenes().length > 4) editor.appendChild(filterBox("Filter scenes…", draw));
+  draw();
   editor.appendChild(list);
 
   const actions = document.createElement("div"); actions.className = "editor-actions";
@@ -1394,7 +1406,10 @@ function openSceneEditor(sceneId) {
   editor.appendChild(field("Default seconds/page override (blank = no change)", input("number", draft.rotation?.defaultDurationSeconds ?? "", "sc-rot-secs")));
 
   editor.appendChild(sectionTitle("Schedule (auto-activate)"));
-  appendScheduleFields(editor, draft.schedule || {}, "sc");
+  const schedDraft = { _schedule: scheduleToDraft(draft.schedule) };
+  const schedHost = document.createElement("div");
+  editor.appendChild(schedHost);
+  renderFormEngine(schedHost, scheduleFieldDefs("_schedule"), schedDraft);
 
   const actions = document.createElement("div"); actions.className = "editor-actions";
   actions.append(
@@ -1417,7 +1432,7 @@ function openSceneEditor(sceneId) {
           defaultDurationSeconds: rotSecs,
         };
       }
-      draft.schedule = gatherSchedule(editor, "sc");
+      draft.schedule = scheduleFromDraft(schedDraft, "_schedule");
       const idx = scenes().findIndex((s) => s.id === draft.id);
       const isNew = idx < 0;
       if (!isNew) scenes()[idx] = draft;
@@ -1999,6 +2014,27 @@ function emptyState(title, body, action) {
   return d;
 }
 function noteEl(t) { const d = document.createElement("div"); d.className = "note"; d.textContent = t; return d; }
+
+/**
+ * A filter box over a list that's rendered by `draw(query)`.
+ * Backups run to 50 entries and displays/scenes grow with the house, so all
+ * three needed the same affordance the widget strip already had.
+ */
+function filterBox(placeholder, draw) {
+  const wrap = document.createElement("label");
+  wrap.className = "search list-search";
+  const inp = document.createElement("input");
+  inp.type = "search";
+  inp.placeholder = placeholder;
+  inp.setAttribute("aria-label", placeholder);
+  inp.addEventListener("input", () => draw(inp.value.trim().toLowerCase()));
+  wrap.appendChild(inp);
+  return wrap;
+}
+
+/** Case-insensitive "does any of these strings contain the query". */
+const matches = (q, ...fields) =>
+  !q || fields.some((s) => String(s ?? "").toLowerCase().includes(q));
 function input(type, value, name, placeholder) {
   const i = document.createElement("input"); i.type = type; i.value = value ?? ""; i.dataset.name = name;
   if (placeholder) i.placeholder = placeholder; return i;
@@ -2031,123 +2067,49 @@ function boolField(label, checked, name) {
 function button(text, cls, fn) { const b = document.createElement("button"); b.type = "button"; b.className = cls; b.textContent = text; b.onclick = fn; return b; }
 
 // ---- shared schedule fields (page + widget) ---------------------------------
+//
+// Schedules are edited through the same engine as everything else now. The
+// legacy-vs-windows normalisation moved to model/schedule.js, where it is
+// testable; this is only the field list.
 
-const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-function scheduleWindowsOf(s) {
-  if (Array.isArray(s?.windows) && s.windows.length) return s.windows.map((w) => ({
-    start: w.start || null, end: w.end || null, days: [...(w.days || [])],
-  }));
-  if (s?.start || s?.end || (s?.days && s.days.length)) {
-    return [{ start: s.start || null, end: s.end || null, days: [...(s.days || [])] }];
-  }
-  return [{ start: null, end: null, days: [] }];
+/**
+ * FieldDefs for a schedule held at `base` in the draft (e.g. "schedule" or
+ * "condition"). The draft holds the *editable* shape from schedule.toDraft;
+ * scheduleFromDraft turns it back on save.
+ */
+function scheduleFieldDefs(base) {
+  const p = (k) => `${base}.${k}`;
+  const on = (d) => getPath(d, p("enabled")) === true;
+  return [
+    { key: p("enabled"), label: "Enable schedule", type: "boolean" },
+    {
+      key: p("timeZone"), label: "Timezone", type: "text", when: on,
+      placeholder: "America/Phoenix", help: "IANA name. Blank = whatever the display's clock says.",
+    },
+    { key: p("dateFrom"), label: "Active from", type: "date", when: on },
+    { key: p("dateTo"), label: "Active until", type: "date", when: on },
+    {
+      key: p("windows"),
+      label: "Time windows",
+      type: "list",
+      when: on,
+      itemLabel: "Window",
+      addLabel: "+ Add window",
+      emptyText: "No windows — the schedule is active all day.",
+      newItem: () => ({ start: null, end: null, days: [] }),
+      help: "Windows are OR'd: any match shows it. A window may wrap past midnight, e.g. 21:00 → 06:00.",
+      itemFields: [
+        { key: "start", label: "Start", type: "time" },
+        { key: "end", label: "End", type: "time" },
+        { key: "days", label: "Days", type: "days", help: "None selected = every day." },
+      ],
+    },
+  ];
 }
 
-function dayPicker(days, name) {
-  const dayWrap = document.createElement("div");
-  dayWrap.className = "day-picker";
-  dayWrap.dataset.name = name;
-  DAY_LABELS.forEach((label, d) => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "day-chip" + ((days || []).includes(d) ? " on" : "");
-    b.textContent = label;
-    b.dataset.day = d;
-    b.onclick = () => b.classList.toggle("on");
-    dayWrap.appendChild(b);
-  });
-  return dayWrap;
-}
-
-function appendScheduleFields(editor, schedule, prefix) {
-  const s = schedule || {};
-  let windows = scheduleWindowsOf(s);
-
-  editor.appendChild(boolField("Enable schedule", s.enabled === true, `${prefix}-enabled`));
-  editor.appendChild(field("Timezone (IANA, blank = this device)", input("text", s.timeZone || "", `${prefix}-tz`, "America/Phoenix")));
-  editor.appendChild(field("Date from (YYYY-MM-DD, optional)", input("date", s.dateFrom || "", `${prefix}-from`)));
-  editor.appendChild(field("Date to (YYYY-MM-DD, optional)", input("date", s.dateTo || "", `${prefix}-to`)));
-  editor.appendChild(noteEl("Multiple windows are OR’d (any matching window shows the page/widget). A window may wrap past midnight."));
-
-  const host = document.createElement("div");
-  host.className = "schedule-windows";
-  host.dataset.name = `${prefix}-windows`;
-  editor.appendChild(host);
-
-  const redraw = () => {
-    host.replaceChildren();
-    windows.forEach((w, i) => {
-      const card = document.createElement("div");
-      card.className = "schedule-window-card";
-      card.dataset.windowIndex = i;
-      const head = document.createElement("div");
-      head.className = "schedule-window-head";
-      head.appendChild(Object.assign(document.createElement("strong"), { textContent: `Window ${i + 1}` }));
-      if (windows.length > 1) {
-        head.appendChild(button("Remove", "btn small danger", () => {
-          windows = gatherScheduleWindows(host, prefix);
-          windows.splice(i, 1);
-          if (!windows.length) windows = [{ start: null, end: null, days: [] }];
-          redraw();
-        }));
-      }
-      card.appendChild(head);
-      card.appendChild(field("Start (HH:MM)", input("time", w.start || "", `${prefix}-w-${i}-start`)));
-      card.appendChild(field("End (HH:MM)", input("time", w.end || "", `${prefix}-w-${i}-end`)));
-      card.appendChild(field("Days (none selected = every day)", dayPicker(w.days, `${prefix}-w-${i}-days`)));
-      host.appendChild(card);
-    });
-  };
-  redraw();
-  editor.appendChild(button("+ Add window", "btn small", () => {
-    windows = gatherScheduleWindows(host, prefix);
-    windows.push({ start: null, end: null, days: [] });
-    redraw();
-  }));
-}
-
-function gatherScheduleWindows(host, prefix) {
-  if (!host) return [];
-  const out = [];
-  host.querySelectorAll(".schedule-window-card").forEach((card, i) => {
-    const start = card.querySelector(`[data-name="${prefix}-w-${i}-start"]`)?.value || null;
-    const end = card.querySelector(`[data-name="${prefix}-w-${i}-end"]`)?.value || null;
-    const dayWrap = card.querySelector(`[data-name="${prefix}-w-${i}-days"]`);
-    const days = dayWrap
-      ? [...dayWrap.querySelectorAll(".day-chip.on")].map((b) => Number(b.dataset.day))
-      : [];
-    out.push({ start, end, days });
-  });
-  return out;
-}
-
-function gatherSchedule(editor, prefix) {
-  const enabled = editor.querySelector(`[data-name="${prefix}-enabled"]`)?.checked === true;
-  const timeZone = editor.querySelector(`[data-name="${prefix}-tz"]`)?.value?.trim() || null;
-  const dateFrom = editor.querySelector(`[data-name="${prefix}-from"]`)?.value || null;
-  const dateTo = editor.querySelector(`[data-name="${prefix}-to"]`)?.value || null;
-  const host = editor.querySelector(`[data-name="${prefix}-windows"]`);
-  const windows = gatherScheduleWindows(host, prefix);
-  const hasBounds = windows.some((w) => w.start || w.end || w.days.length)
-    || timeZone || dateFrom || dateTo;
-  if (!enabled && !hasBounds) return null;
-
-  // Keep legacy single-window shape when there's only one simple window.
-  if (windows.length <= 1 && !timeZone && !dateFrom && !dateTo) {
-    const w = windows[0] || { start: null, end: null, days: [] };
-    return { enabled, start: w.start, end: w.end, days: w.days, windows: [], timeZone: null, dateFrom: null, dateTo: null };
-  }
-  return {
-    enabled,
-    start: null,
-    end: null,
-    days: [],
-    windows,
-    timeZone,
-    dateFrom,
-    dateTo,
-  };
+/** Read the editable draft back into the stored Schedule shape (or null). */
+function scheduleFromDraft(draft, base) {
+  return scheduleFromDraftValue(getPath(draft, base));
 }
 
 // ---- slideshow widget slides editor ----------------------------------------
@@ -2458,23 +2420,37 @@ async function openBackups() {
   try { backups = (await (await fetch("/api/backups")).json()).backups || []; }
   catch { toast("Could not load backups", "err"); return; }
 
-  if (!backups.length) { editor.appendChild(noteEl("No backups yet.")); }
-  const list = document.createElement("div"); list.className = "backup-list";
-  for (const b of backups) {
-    const row = document.createElement("div"); row.className = "backup-row";
-    const when = new Date(b.savedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
-    const isCurrent = b.version === state.config.version;
-    row.innerHTML = `<div class="backup-info"><div class="backup-when"></div><div class="backup-meta"></div></div>`;
-    row.querySelector(".backup-when").textContent = when;
-    row.querySelector(".backup-meta").textContent = `v${b.version} · ${(b.size / 1024).toFixed(1)} KB` + (isCurrent ? " · current" : "");
-    if (isCurrent) row.classList.add("current");
-    const btn = document.createElement("button");
-    btn.className = "btn small primary"; btn.textContent = "Restore";
-    btn.disabled = isCurrent;
-    btn.onclick = () => restoreBackup(b);
-    row.appendChild(btn);
-    list.appendChild(row);
+  if (!backups.length) {
+    editor.appendChild(emptyState("No backups yet",
+      "Every save writes one automatically, so the first will appear as soon as you save a change."));
   }
+  const list = document.createElement("div"); list.className = "backup-list";
+  const draw = (q = "") => {
+    list.replaceChildren();
+    const shown = backups.filter((b) => matches(q,
+      new Date(b.savedAt).toLocaleString(), `v${b.version}`, b.name));
+    if (!shown.length && backups.length) {
+      list.appendChild(emptyState(`No backups match “${q}”`, "Search by date or version number."));
+      return;
+    }
+    for (const b of shown) {
+      const row = document.createElement("div"); row.className = "backup-row";
+      const when = new Date(b.savedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+      const isCurrent = b.version === state.config.version;
+      row.innerHTML = `<div class="backup-info"><div class="backup-when"></div><div class="backup-meta"></div></div>`;
+      row.querySelector(".backup-when").textContent = when;
+      row.querySelector(".backup-meta").textContent = `v${b.version} · ${(b.size / 1024).toFixed(1)} KB` + (isCurrent ? " · current" : "");
+      if (isCurrent) row.classList.add("current");
+      const btn = document.createElement("button");
+      btn.className = "btn small primary"; btn.textContent = "Restore";
+      btn.disabled = isCurrent;
+      btn.onclick = () => restoreBackup(b);
+      row.appendChild(btn);
+      list.appendChild(row);
+    }
+  };
+  if (backups.length > 5) editor.appendChild(filterBox("Filter by date or version…", draw));
+  draw();
   editor.appendChild(list);
   const actions = document.createElement("div"); actions.className = "editor-actions";
   actions.append(button("Close", "btn", () => showDefault()));
@@ -2681,16 +2657,32 @@ function openPageSettings(index) {
   state.editingId = null;
   const editor = openPanel(page.name || "Page", { section: "pages" });
 
-  editor.appendChild(field("Page name", input("text", page.name || "", "pg-name")));
-  const dur = input("number", page.durationSeconds ?? "", "pg-duration");
-  dur.placeholder = String(rotation().defaultDurationSeconds ?? 30);
-  editor.appendChild(field("Seconds in rotation", dur));
-  editor.appendChild(noteEl("Blank = use the rotation default."));
+  // A draft, so Revert works and a half-typed page name never reaches the store.
+  const draft = {
+    name: page.name || "",
+    durationSeconds: page.durationSeconds ?? null,
+    _schedule: scheduleToDraft(page.schedule),
+  };
 
-  editor.appendChild(sectionTitle("Time window"));
-  editor.appendChild(noteEl("Show this page only during a time window. Outside it, rotation skips the page (and a display assigned only this page falls back to the others). The window may wrap past midnight, e.g. 21:00 → 06:00."));
-  appendScheduleFields(editor, page.schedule || {}, "ps");
+  const defs = [
+    { key: "name", label: "Page name", type: "text", required: true },
+    {
+      key: "durationSeconds", label: "Seconds in rotation", type: "number", min: 2,
+      placeholder: String(rotation().defaultDurationSeconds ?? 30),
+      help: "Blank = use the rotation default.",
+    },
+    {
+      key: "_schedHead", type: "note",
+      label: "Show this page only during a time window. Outside it, rotation skips the page, and a display assigned only this page falls back to the others.",
+    },
+    ...scheduleFieldDefs("_schedule"),
+  ];
 
+  const host = document.createElement("div");
+  editor.appendChild(host);
+  const form = renderFormEngine(host, defs, draft);
+
+  // Conditions keep their own editor for now — see appendConditionFields.
   editor.appendChild(sectionTitle("Live condition"));
   appendConditionFields(editor, page.condition || {});
 
@@ -2698,11 +2690,16 @@ function openPageSettings(index) {
   actions.append(
     button("Revert", "btn", () => openPageSettings(i)),
     button("Apply", "btn primary", () => {
-      const name = editor.querySelector('[data-name="pg-name"]').value.trim();
-      page.name = name || "Page";
-      const raw = String(editor.querySelector('[data-name="pg-duration"]').value ?? "").trim();
-      page.durationSeconds = raw === "" ? null : Math.max(2, Number(raw) || 2);
-      page.schedule = gatherSchedule(editor, "ps");
+      const errors = form.validate();
+      if (errors.length) {
+        form.setErrors(errors);
+        form.focusField(errors[0].path);
+        toast(errors[0].message, "err");
+        return;
+      }
+      page.name = draft.name.trim() || "Page";
+      page.durationSeconds = draft.durationSeconds == null ? null : Math.max(2, draft.durationSeconds);
+      page.schedule = scheduleFromDraft(draft, "_schedule");
       page.condition = gatherCondition(editor);
       save(`changed page “${page.name}”`);
       openPageSettings(i);
@@ -2913,9 +2910,22 @@ async function openDisplays() {
   }
   if (gen !== displaysGen) return; // newer openDisplays won the race
 
-  if (!devices.length) editor.appendChild(noteEl("No displays have connected yet."));
+  if (!devices.length) {
+    editor.appendChild(emptyState("No displays yet",
+      "A screen appears here once it has loaded the dashboard at least once."));
+  }
   const list = document.createElement("div"); list.className = "device-list";
-  for (const d of devices) list.appendChild(deviceRow(d));
+  const draw = (q = "") => {
+    list.replaceChildren();
+    const shown = devices.filter((d) => matches(q, d.name, d.id, d.viewport));
+    if (!shown.length && devices.length) {
+      list.appendChild(emptyState(`No displays match “${q}”`, "Search by name, id or viewport."));
+      return;
+    }
+    for (const d of shown) list.appendChild(deviceRow(d));
+  };
+  if (devices.length > 4) editor.appendChild(filterBox("Filter displays…", draw));
+  draw();
   editor.appendChild(list);
 
   const actions = document.createElement("div"); actions.className = "editor-actions";
