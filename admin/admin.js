@@ -127,7 +127,14 @@ function renderPageBar() {
     if (p.schedule?.enabled) tips.push("Scheduled");
     if (p.condition?.enabled) tips.push("Conditional");
     if (tips.length) tab.title = tips.join(" · ");
-    tab.onclick = () => { state.activePage = i; renderAll(); };
+    // Clicking the tab you're already on opens that page's settings — the same
+    // gesture as clicking a widget to inspect it.
+    tab.onclick = () => {
+      const wasActive = i === state.activePage;
+      state.activePage = i;
+      renderAll();
+      if (wasActive || state.editingId == null) openPageSettings(i);
+    };
     bar.appendChild(tab);
   });
   const add = document.createElement("button");
@@ -136,21 +143,25 @@ function renderPageBar() {
   add.onclick = addPage;
   bar.appendChild(add);
 
-  // actions for the active page (duration lives under Page rotation)
+  // Actions for the active page. Rename and Schedule used to live here as a
+  // prompt() and a separate panel; both are now in the Page settings inspector.
   const acts = document.createElement("div");
   acts.className = "page-actions";
-  const mk = (label, cls, fn) => { const b = document.createElement("button"); b.className = "btn small " + (cls || ""); b.textContent = label; b.onclick = fn; return b; };
+  const mk = (label, cls, fn, title) => {
+    const b = document.createElement("button");
+    b.className = "btn small " + (cls || "");
+    b.textContent = label;
+    if (title) b.title = title;
+    b.onclick = fn;
+    return b;
+  };
   acts.append(
-    mk("Rename", "", () => renamePage(state.activePage)),
-    mk(
-      "Schedule",
-      pageIsGated(pages()[state.activePage]) ? "scheduled" : "",
-      () => openPageSchedule(state.activePage),
-    ),
-    mk("Duplicate", "", () => duplicatePage(state.activePage)),
-    mk("←", "", () => movePage(state.activePage, -1)),
-    mk("→", "", () => movePage(state.activePage, 1)),
-    mk("Delete page", "danger", () => deletePage(state.activePage)),
+    mk("Settings", pageIsGated(pages()[state.activePage]) ? "scheduled" : "ghost",
+       () => openPageSettings(state.activePage), "Name, duration, schedule and conditions"),
+    mk("Duplicate", "ghost", () => duplicatePage(state.activePage)),
+    mk("←", "ghost icon", () => movePage(state.activePage, -1), "Move page left"),
+    mk("→", "ghost icon", () => movePage(state.activePage, 1), "Move page right"),
+    mk("Delete", "ghost danger", () => deletePage(state.activePage), "Delete this page"),
   );
   bar.appendChild(acts);
 }
@@ -294,7 +305,17 @@ function placeBox(box, w) {
 function makeBox(w, cols) {
   const plugin = registry.get(w.type);
   const box = document.createElement("div");
-  box.className = "canvas-box" + (w.enabled === false ? " disabled" : "");
+  box.className = "canvas-box"
+    + (w.enabled === false ? " disabled" : "")
+    + (state.editingId === w.id ? " selected" : "");
+  box.tabIndex = 0;
+  box.setAttribute("aria-label", `${w.title || w.type}, ${w.grid?.w ?? 0} by ${w.grid?.h ?? 0}`);
+  // Clicking a box selects it — the inspector follows the selection rather than
+  // requiring a trip to the ✎ button.
+  box.addEventListener("click", (e) => {
+    if (e.target.closest(".box-btn, .resize-handle")) return;
+    if (state.editingId !== w.id) openEditor(w.id);
+  });
   placeBox(box, w);
 
   const label = document.createElement("div");
@@ -382,11 +403,29 @@ function renderList() {
   const list = $("#widget-list");
   list.replaceChildren();
   const widgets = currentWidgets();
-  if (!widgets.length) return;
+  if (!widgets.length) {
+    list.appendChild(emptyState(
+      "No widgets on this page",
+      "Add a clock, the weather, a live radar embed — anything the dashboard can render.",
+      button("+ Add widget", "btn primary small", () => openEditor(null)),
+    ));
+    return;
+  }
+
+  const q = ($("#widget-filter")?.value || "").trim().toLowerCase();
+  const match = (w) => !q || [w.title, w.type, registry.get(w.type)?.meta?.label, w.id]
+    .some((s) => String(s || "").toLowerCase().includes(q));
+  const shown = widgets.filter(match);
+  if (!shown.length) {
+    list.appendChild(emptyState("Nothing matches “" + q + "”", "Clear the filter to see all widgets on this page."));
+    return;
+  }
+
   widgets.forEach((w, i) => {
+    if (!match(w)) return;
     const plugin = registry.get(w.type);
     const row = document.createElement("div");
-    row.className = "wrow" + (w.enabled === false ? " disabled" : "");
+    row.className = "wrow" + (w.enabled === false ? " disabled" : "") + (state.editingId === w.id ? " selected" : "");
     row.draggable = true;
     row.innerHTML = `<span class="drag-grip" title="Drag to reorder">⠿</span><div class="winfo"><div class="wtitle"></div><div class="wtype"></div></div>`;
     row.querySelector(".wtitle").textContent = w.title || "(untitled)";
@@ -482,7 +521,6 @@ function nextFreeRow() {
 
 function openEditor(id) {
   const editor = $("#editor");
-  editor.classList.remove("hidden");
   const existing = currentWidgets().find((w) => w.id === id);
   const widget = existing
     ? structuredClone(existing)
@@ -495,11 +533,8 @@ function openEditor(id) {
 }
 
 function renderForm(editor, widget) {
-  editor.replaceChildren();
-  const h = document.createElement("h2");
-  h.textContent = state.editingId ? "Edit widget" : "Add widget";
-  h.style.margin = "0 0 12px";
-  editor.appendChild(h);
+  const label = registry.get(widget.type)?.meta?.label || widget.type;
+  openPanel(state.editingId ? `${widget.title || label}` : "Add widget");
 
   editor.appendChild(field("Type", select(registry.types(), widget.type, (v) => {
     const next = gather(editor, widget);
@@ -541,7 +576,7 @@ function renderForm(editor, widget) {
   const actions = document.createElement("div");
   actions.className = "editor-actions";
   actions.append(
-    button("Cancel", "btn", () => { editor.classList.add("hidden"); state.editingId = null; }),
+    button("Cancel", "btn", () => { state.editingId = null; showDefault(); }),
     button("Save", "btn primary", () => commit(editor, widget)),
   );
   editor.appendChild(actions);
@@ -611,7 +646,7 @@ async function commit(editor, widget) {
   const idx = ws.findIndex((x) => x.id === state.editingId);
   const isNew = idx < 0;
   if (!isNew) ws[idx] = w; else ws.push(w);
-  editor.classList.add("hidden");
+  showDefault();
   state.editingId = null;
   save(`${isNew ? "added" : "edited"} ${w.title || w.type}`);
 }
@@ -640,9 +675,9 @@ function onConfigReplaced(next) {
   if (!pages().length) pages().push({ id: "page-1", name: "Home", widgets: [] });
   state.activePage = Math.min(state.activePage, pages().length - 1);
   $("#version").textContent = "v" + state.config.version;
-  $("#editor").classList.add("hidden");
   state.editingId = null;
   renderAll();
+  showDefault();
 }
 
 // ---- page rotation (not the slideshow *widget*) -----------------------------
@@ -650,13 +685,9 @@ function onConfigReplaced(next) {
 function rotationPageOrder() { return rotationPages(state.config); }
 
 function openRotation() {
-  const editor = $("#editor");
-  editor.classList.remove("hidden");
-  editor.replaceChildren();
   state.editingId = null;
-  const h = document.createElement("h2"); h.textContent = "Page rotation"; h.style.margin = "0 0 6px";
-  editor.appendChild(h);
-  editor.appendChild(noteEl("Cycle through pages on a timer. This is separate from the Slideshow widget (which rotates slides inside one tile). Reorder below; leave order as the page-bar sequence by clicking “Use page list order”."));
+  const editor = openPanel("Page rotation", { section: "rotation" });
+  editor.appendChild(noteEl("Cycle through pages on a timer. This is separate from the Slideshow widget, which rotates slides inside one tile."));
   const r = rotation();
   editor.appendChild(boolField("Enable page rotation", r.enabled === true, "rot-enabled"));
   editor.appendChild(field("Default seconds per page", input("number", r.defaultDurationSeconds ?? 30, "rot-default")));
@@ -710,7 +741,7 @@ function openRotation() {
 
   const actions = document.createElement("div"); actions.className = "editor-actions";
   actions.append(
-    button("Cancel", "btn", () => editor.classList.add("hidden")),
+    button("Cancel", "btn", () => showDefault()),
     button("Save", "btn primary", () => {
       r.enabled = editor.querySelector('[data-name="rot-enabled"]').checked;
       const d = Number(editor.querySelector('[data-name="rot-default"]').value);
@@ -728,7 +759,7 @@ function openRotation() {
         const raw = String(row.durationSeconds ?? "").trim();
         p.durationSeconds = raw === "" ? null : Math.max(2, Number(raw) || 2);
       }
-      editor.classList.add("hidden");
+      showDefault();
       save("changed page rotation");
     }),
   );
@@ -747,14 +778,9 @@ function alertsSettings() {
 }
 
 function openAlerts() {
-  const editor = $("#editor");
-  editor.classList.remove("hidden");
-  editor.replaceChildren();
   state.editingId = null;
   const a = alertsSettings();
-
-  const h = document.createElement("h2"); h.textContent = "Alerts"; h.style.margin = "0 0 6px";
-  editor.appendChild(h);
+  const editor = openPanel("Alerts", { section: "alerts" });
   editor.appendChild(noteEl("Sources push banners to every display. Auto-dismiss times apply to severity (including NWS, capped by the official expiry). ✕ clears every display and stays dismissed until NWS cancels that alert."));
 
   editor.appendChild(sectionTitle("Sources"));
@@ -840,7 +866,7 @@ function openAlerts() {
 
   const actions = document.createElement("div"); actions.className = "editor-actions";
   actions.append(
-    button("Cancel", "btn", () => editor.classList.add("hidden")),
+    button("Cancel", "btn", () => showDefault()),
     button("Save", "btn primary", () => {
       const readInt = (name) => Math.max(0, Math.round(Number(editor.querySelector(`[data-name="${name}"]`).value) || 0));
       const readNum = (name, fallback) => {
@@ -856,7 +882,7 @@ function openAlerts() {
       a.infoTtlSeconds = readInt("al-info");
       a.warningTtlSeconds = readInt("al-warning");
       a.dangerTtlSeconds = readInt("al-danger");
-      editor.classList.add("hidden");
+      showDefault();
       save("changed alert rules");
     }),
   );
@@ -866,13 +892,8 @@ function openAlerts() {
 // ---- scenes (named context presets) -----------------------------------------
 
 function openScenes() {
-  const editor = $("#editor");
-  editor.classList.remove("hidden");
-  editor.replaceChildren();
   state.editingId = null;
-
-  const h = document.createElement("h2"); h.textContent = "Scenes"; h.style.margin = "0 0 6px";
-  editor.appendChild(h);
+  const editor = openPanel("Scenes", { section: "scenes" });
   editor.appendChild(noteEl("Scenes flip pages, theme, widget variants, and rotation in one shot. Activate holds until you Clear; otherwise schedules auto-switch (first matching scene in list order wins)."));
 
   const hold = !!state.config.sceneManualHold;
@@ -914,7 +935,7 @@ function openScenes() {
   editor.appendChild(list);
 
   const actions = document.createElement("div"); actions.className = "editor-actions";
-  actions.append(button("Close", "btn", () => editor.classList.add("hidden")));
+  actions.append(button("Close", "btn", () => showDefault()));
   editor.appendChild(actions);
 }
 
@@ -970,12 +991,9 @@ function sceneRow(sc) {
 }
 
 function openSceneEditor(sceneId) {
-  const editor = $("#editor");
-  editor.classList.remove("hidden");
-  editor.replaceChildren();
   state.editingId = null;
-
   const existing = sceneId ? scenes().find((s) => s.id === sceneId) : null;
+  const editor = openPanel(existing ? `Scene — ${existing.name}` : "New scene", { section: "scenes" });
   const draft = existing
     ? JSON.parse(JSON.stringify(existing))
     : {
@@ -1079,6 +1097,76 @@ function openSceneEditor(sceneId) {
   editor.appendChild(actions);
 }
 
+// ---- inspector + rail -------------------------------------------------------
+//
+// The inspector is always on screen and always shows *something*; there is no
+// panel to open or close, so nothing can silently destroy an unsaved form the
+// way the old single #editor slot did. Each surface declares whether it stages
+// into the config or applies immediately — the old Alerts panel mixed both with
+// no way to tell which was which.
+
+const RAIL = [
+  { id: "pages",      icon: "▤", label: "Pages",       open: () => openPageSettings() },
+  { id: "rotation",   icon: "⏱", label: "Rotation",    open: openRotation },
+  { id: "scenes",     icon: "◲", label: "Scenes",      open: openScenes },
+  { sep: true },
+  { id: "appearance", icon: "◈", label: "Appearance",  open: openLayout },
+  { id: "alerts",     icon: "⚑", label: "Alerts",      open: openAlerts },
+  { id: "displays",   icon: "⬒", label: "Displays",    open: openDisplays },
+  { sep: true },
+  { id: "keys",       icon: "🔑", label: "API keys",   open: openKeys },
+  { id: "backups",    icon: "⌛", label: "Backups",     open: openBackups },
+  { id: "system",     icon: "⚙", label: "System",      open: openSystem },
+];
+
+let activeSection = "pages";
+
+function renderRail() {
+  const rail = $("#rail");
+  rail.replaceChildren();
+  for (const item of RAIL) {
+    if (item.sep) {
+      const s = document.createElement("div");
+      s.className = "rail-sep";
+      rail.appendChild(s);
+      continue;
+    }
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "rail-btn";
+    b.dataset.label = item.label;
+    b.dataset.section = item.id;
+    b.textContent = item.icon;
+    b.setAttribute("aria-label", item.label);
+    b.setAttribute("aria-current", String(activeSection === item.id));
+    b.onclick = () => { activeSection = item.id; renderRail(); item.open(); };
+    rail.appendChild(b);
+  }
+}
+
+/** Clear the inspector and title it. Returns the body to append into. */
+function openPanel(title, { scope = "staged", section = null } = {}) {
+  if (section) { activeSection = section; renderRail(); }
+  // The canvas and the strip both show what's selected, and the selection is
+  // whatever the inspector is displaying — so they refresh together with it.
+  renderCanvas();
+  renderList();
+  const editor = $("#editor");
+  editor.replaceChildren();
+  editor.scrollTop = 0;
+  $("#inspector-title").textContent = title;
+  const pill = $("#inspector-scope");
+  pill.textContent = scope === "immediate" ? "Applies immediately" : "Staged";
+  pill.className = "badge scope-pill " + (scope === "immediate" ? "immediate warn" : "staged");
+  return editor;
+}
+
+/** What the inspector falls back to: the selected widget, else the page. */
+function showDefault() {
+  state.editingId = null;
+  openPageSettings();
+}
+
 // ---- dialogs (replacing prompt()/confirm()) ---------------------------------
 
 /** Single-line text prompt. Resolves to the string, or null if cancelled. */
@@ -1157,6 +1245,15 @@ function field(label, control) {
   d.appendChild(control); return d;
 }
 function sectionTitle(t) { const d = document.createElement("div"); d.className = "section-title"; d.textContent = t; return d; }
+/** A designed nothing-here state. An empty list used to render as blank space. */
+function emptyState(title, body, action) {
+  const d = document.createElement("div"); d.className = "empty";
+  const t = document.createElement("div"); t.className = "empty-title"; t.textContent = title;
+  d.appendChild(t);
+  if (body) { const b = document.createElement("div"); b.className = "empty-body"; b.textContent = body; d.appendChild(b); }
+  if (action) d.appendChild(action);
+  return d;
+}
 function noteEl(t) { const d = document.createElement("div"); d.className = "note"; d.textContent = t; return d; }
 function input(type, value, name, placeholder) {
   const i = document.createElement("input"); i.type = type; i.value = value ?? ""; i.dataset.name = name;
@@ -1617,12 +1714,8 @@ function stockPicker(widget) {
 // ---- API keys ---------------------------------------------------------------
 
 async function openKeys() {
-  const editor = $("#editor");
-  editor.classList.remove("hidden");
-  editor.replaceChildren();
   state.editingId = null;
-  const h = document.createElement("h2"); h.textContent = "API keys"; h.style.margin = "0 0 4px";
-  editor.appendChild(h);
+  const editor = openPanel("API keys", { scope: "immediate", section: "keys" });
   editor.appendChild(noteEl("Stored on the server (data/secrets.json), never sent back to the browser. Widgets work without keys but show a “needs key” state."));
 
   let status = {};
@@ -1643,7 +1736,7 @@ async function openKeys() {
 
   const actions = document.createElement("div"); actions.className = "editor-actions";
   actions.append(
-    button("Cancel", "btn", () => editor.classList.add("hidden")),
+    button("Cancel", "btn", () => showDefault()),
     button("Save keys", "btn primary", async () => {
       const values = {};
       for (const [key, inp] of Object.entries(inputs)) if (!inp.disabled && inp.value) values[key] = inp.value;
@@ -1656,7 +1749,7 @@ async function openKeys() {
         });
         if (!res.ok) { toast("Save failed: " + res.status, "err"); return; }
         toast("Keys saved · dashboards refreshing", "ok");
-        editor.classList.add("hidden");
+        showDefault();
       } catch (e) { toast("Save failed: " + e.message, "err"); }
     }),
   );
@@ -1666,12 +1759,8 @@ async function openKeys() {
 // ---- backups / restore ------------------------------------------------------
 
 async function openBackups() {
-  const editor = $("#editor");
-  editor.classList.remove("hidden");
-  editor.replaceChildren();
   state.editingId = null;
-  const h = document.createElement("h2"); h.textContent = "Backups"; h.style.margin = "0 0 4px";
-  editor.appendChild(h);
+  const editor = openPanel("Backups", { scope: "immediate", section: "backups" });
   editor.appendChild(noteEl("Every save writes a timestamped backup (newest first). Restoring makes that version current — your present config stays in history, so a restore is itself undoable."));
 
   let backups = [];
@@ -1697,7 +1786,7 @@ async function openBackups() {
   }
   editor.appendChild(list);
   const actions = document.createElement("div"); actions.className = "editor-actions";
-  actions.append(button("Close", "btn", () => editor.classList.add("hidden")));
+  actions.append(button("Close", "btn", () => showDefault()));
   editor.appendChild(actions);
 }
 
@@ -1887,15 +1976,28 @@ function gatherCondition(editor) {
 function openPageSchedule(i) {
   const page = pages()[i];
   if (!page) return;
-  const editor = $("#editor");
-  editor.classList.remove("hidden");
-  editor.replaceChildren();
-  state.editingId = null;
+  openPageSettings(i);
+}
 
-  const h = document.createElement("h2"); h.textContent = `Schedule & conditions — ${page.name}`; h.style.margin = "0 0 6px";
-  editor.appendChild(h);
+/**
+ * The inspector's default surface: everything about the current page in one
+ * place. Replaces the rename prompt() and the separate schedule panel.
+ */
+function openPageSettings(index) {
+  const i = index ?? state.activePage;
+  const page = pages()[i];
+  if (!page) return;
+  state.editingId = null;
+  const editor = openPanel(page.name || "Page", { section: "pages" });
+
+  editor.appendChild(field("Page name", input("text", page.name || "", "pg-name")));
+  const dur = input("number", page.durationSeconds ?? "", "pg-duration");
+  dur.placeholder = String(rotation().defaultDurationSeconds ?? 30);
+  editor.appendChild(field("Seconds in rotation", dur));
+  editor.appendChild(noteEl("Blank = use the rotation default."));
+
   editor.appendChild(sectionTitle("Time window"));
-  editor.appendChild(noteEl("Show this page only during a time window. Outside it, the slideshow skips the page (and a display assigned only this page falls back to the others). The window may wrap past midnight, e.g. 21:00 → 06:00."));
+  editor.appendChild(noteEl("Show this page only during a time window. Outside it, rotation skips the page (and a display assigned only this page falls back to the others). The window may wrap past midnight, e.g. 21:00 → 06:00."));
   appendScheduleFields(editor, page.schedule || {}, "ps");
 
   editor.appendChild(sectionTitle("Live condition"));
@@ -1903,15 +2005,66 @@ function openPageSchedule(i) {
 
   const actions = document.createElement("div"); actions.className = "editor-actions";
   actions.append(
-    button("Cancel", "btn", () => editor.classList.add("hidden")),
-    button("Save", "btn primary", () => {
+    button("Revert", "btn", () => openPageSettings(i)),
+    button("Apply", "btn primary", () => {
+      const name = editor.querySelector('[data-name="pg-name"]').value.trim();
+      page.name = name || "Page";
+      const raw = String(editor.querySelector('[data-name="pg-duration"]').value ?? "").trim();
+      page.durationSeconds = raw === "" ? null : Math.max(2, Number(raw) || 2);
       page.schedule = gatherSchedule(editor, "ps");
       page.condition = gatherCondition(editor);
-      editor.classList.add("hidden");
-      save(`changed the schedule for “${page.name || "page"}”`);
+      save(`changed page “${page.name}”`);
+      openPageSettings(i);
     }),
   );
   editor.appendChild(actions);
+}
+
+// ---- system (immediate-effect operations) -----------------------------------
+
+function openSystem() {
+  state.editingId = null;
+  const editor = openPanel("System", { scope: "immediate", section: "system" });
+  editor.appendChild(noteEl("These act on the running dashboard right away — they are not staged and Undo does not reach them."));
+
+  const act = (label, cls, note, fn) => {
+    editor.appendChild(sectionTitle(label));
+    editor.appendChild(noteEl(note));
+    const b = button(label, "btn " + cls, fn);
+    b.dataset.action = label;
+    editor.appendChild(b);
+  };
+
+  act("Test alert", "small", "Pushes a sample alert banner to every display, to check they're listening.", async () => {
+    try { await api.testAlert(); toast("Test alert sent to all displays", "ok"); }
+    catch (e) { toast("Test alert failed: " + e.message, "err"); }
+  });
+
+  act("Force refresh", "small", "Tells every display to re-fetch and re-render now.", async () => {
+    try { await api.forceRefresh(); toast("Dashboards refreshing", "ok"); }
+    catch (e) { toast("Refresh failed: " + e.message, "err"); }
+  });
+
+  act("Clear cache", "small", "Drops every cached provider response, so the next render fetches fresh data.", async () => {
+    try { const d = await api.clearCache(); toast(`Cache cleared (${d.cleared})`, "ok"); }
+    catch (e) { toast("Clear cache failed: " + e.message, "err"); }
+  });
+
+  act("Update", "small danger", "Pulls the latest commit on the current branch and restarts if anything moved.", async () => {
+    const ok = await savebar.confirmDialog({
+      title: "Update the dashboard?",
+      message: "This pulls the latest commit on the current branch and restarts the dashboard if anything moved. Displays will blink.",
+      confirmLabel: "Pull and restart",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      const d = await api.systemUpdate();
+      toast(d.restarting
+        ? `Updated ${d.branch} ${d.previousSha} → ${d.sha}; restarting`
+        : `Already up to date (${d.branch} ${d.sha})`, "ok");
+    } catch (e) { toast("Update failed: " + e.message, "err"); }
+  });
 }
 
 // ---- layout & grid (resize granularity) -------------------------------------
@@ -1922,10 +2075,8 @@ function openPageSchedule(i) {
 // keeps the current look while making the steps finer.
 
 function openLayout() {
-  const editor = $("#editor");
-  editor.classList.remove("hidden");
-  editor.replaceChildren();
   state.editingId = null;
+  const editor = openPanel("Appearance & grid", { section: "appearance" });
   const s = state.config.settings || (state.config.settings = {});
   const theme = s.theme || (s.theme = { mode: "dark", accent: "#4aa3ff" });
   const oldCols = s.columns || 12, oldRow = s.rowHeightPx || 90, oldGap = s.gapPx ?? 12;
@@ -1979,7 +2130,7 @@ function openLayout() {
 
   const actions = document.createElement("div"); actions.className = "editor-actions";
   actions.append(
-    button("Cancel", "btn", () => editor.classList.add("hidden")),
+    button("Cancel", "btn", () => showDefault()),
     button("Save", "btn primary", () => saveLayout(oldCols, oldRow)),
   );
   editor.appendChild(actions);
@@ -2035,7 +2186,7 @@ function saveLayout(oldCols, oldRow) {
     }
   }
   s.columns = newCols; s.rowHeightPx = newRow; s.gapPx = newGap;
-  editor.classList.add("hidden");
+  showDefault();
   save("changed layout & appearance");
 }
 
@@ -2054,12 +2205,8 @@ let displaysGen = 0;
 
 async function openDisplays() {
   const gen = ++displaysGen;
-  const editor = $("#editor");
-  editor.classList.remove("hidden");
-  editor.replaceChildren();
   state.editingId = null;
-  const h = document.createElement("h2"); h.textContent = "Displays"; h.style.margin = "0 0 6px";
-  editor.appendChild(h);
+  const editor = openPanel("Displays", { scope: "immediate", section: "displays" });
   editor.appendChild(noteEl("Every screen loads the same layout, but each keeps its own size overlay so small displays can shrink text and rows to fit. Changes apply live. A display appears here after it has loaded the dashboard once. Remove stale duplicates that no longer connect."));
   editor.appendChild(button("Refresh", "btn small", openDisplays));
 
@@ -2081,7 +2228,7 @@ async function openDisplays() {
   editor.appendChild(list);
 
   const actions = document.createElement("div"); actions.className = "editor-actions";
-  actions.append(button("Close", "btn", () => editor.classList.add("hidden")));
+  actions.append(button("Close", "btn", () => showDefault()));
   editor.appendChild(actions);
 }
 
@@ -2296,71 +2443,21 @@ function toast(msg, kind) {
 }
 
 // inject a "Tidy up" button next to "+ Add widget"
-(function addTidyButton() {
-  const host = document.querySelector(".panel-head-actions");
-  if (!host) return;
-  const b = document.createElement("button");
-  b.className = "btn small";
-  b.textContent = "Tidy up";
-  b.title = "Auto-arrange widgets with no gaps or overlaps";
-  b.onclick = tidyUp;
-  host.insertBefore(b, $("#btn-add"));
-})();
-
-$("#btn-layout").onclick = openLayout;
-$("#btn-scenes").onclick = openScenes;
-$("#btn-keys").onclick = openKeys;
-$("#btn-displays").onclick = openDisplays;
-$("#btn-backups").onclick = openBackups;
-$("#btn-rotation").onclick = openRotation;
-$("#btn-alerts").onclick = openAlerts;
+// Canvas header. Everything that used to be a topbar button now lives on the
+// rail (built by renderRail) or in the System panel.
 $("#btn-add").onclick = () => openEditor(null);
 $("#btn-preview").onclick = togglePreview;
-$("#btn-test-alert").onclick = async () => {
-  try {
-    const r = await fetch("/api/alerts/test", { method: "POST" });
-    toast(r.ok ? "Test alert sent to all displays" : "Test alert failed", r.ok ? "ok" : "err");
-  } catch (e) { toast("Test alert failed: " + e.message, "err"); }
-};
-$("#btn-clear").onclick = async () => {
-  try {
-    const r = await fetch("/api/cache/clear", { method: "POST" });
-    if (!r.ok) { toast("Clear cache failed: " + r.status, "err"); return; }
-    const d = await r.json();
-    toast(`Cache cleared (${d.cleared})`, "ok");
-  } catch (e) { toast("Clear cache failed: " + e.message, "err"); }
-};
-$("#btn-refresh").onclick = async () => {
-  try {
-    const r = await fetch("/api/refresh", { method: "POST" });
-    toast(r.ok ? "Dashboards refreshing" : "Refresh failed: " + r.status, r.ok ? "ok" : "err");
-  } catch (e) { toast("Refresh failed: " + e.message, "err"); }
-};
-$("#btn-update").onclick = async () => {
-  const btn = $("#btn-update");
-  const ok = await savebar.confirmDialog({
-    title: "Update the dashboard?",
-    message: "This pulls the latest commit on the current branch and restarts the " +
-      "dashboard if anything moved. Displays will blink.",
-    confirmLabel: "Pull and restart",
-    danger: true,
-  });
-  if (!ok) return;
-  btn.disabled = true;
-  try {
-    const r = await fetch("/api/system/update", { method: "POST" });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      toast("Update failed: " + (d.detail || r.status), "err");
-      return;
-    }
-    if (d.restarting) {
-      toast(`Updated ${d.branch} ${d.previousSha} → ${d.sha}; restarting`, "ok");
-    } else {
-      toast(`Already up to date (${d.branch} ${d.sha})`, "ok");
-    }
-  } catch (e) { toast("Update failed: " + e.message, "err"); }
-  finally { btn.disabled = false; }
-};
+$("#btn-tidy").onclick = tidyUp;
 
+// Filter the widget strip. Purely a view filter — it never touches the config.
+$("#widget-filter").addEventListener("input", () => renderList());
+
+// Clicking empty canvas deselects and returns the inspector to the page.
+$("#canvas").addEventListener("pointerdown", (e) => {
+  if (e.target !== e.currentTarget) return;
+  if (state.editingId == null) return;
+  showDefault();
+});
+
+renderRail();
 load();

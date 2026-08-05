@@ -1,69 +1,5 @@
-/* Screen-specific layout: shell chrome, page bar, layout canvas, and the
- * individual editor surfaces. Components live in components.css. */
-
-/* ---- shell chrome -------------------------------------------------------- */
-
-.lan-banner {
-  margin: 0;
-  padding: var(--sp-2) var(--sp-5);
-  text-align: center;
-  font-size: var(--fs-xs);
-  line-height: var(--lh-body);
-  background: var(--warn-soft);
-  color: var(--warn);
-  border-bottom: 1px solid color-mix(in srgb, var(--warn) 30%, transparent);
-}
-
-.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-4);
-  padding: var(--sp-3) var(--sp-5);
-  border-bottom: 1px solid var(--border-subtle);
-  background: var(--surface-1);
-}
-.topbar h1 {
-  font-size: var(--fs-lg);
-  font-weight: var(--fw-bold);
-  white-space: nowrap;
-}
-.actions { display: flex; gap: var(--sp-1); align-items: center; flex-wrap: wrap; }
-.actions-sep {
-  width: 1px;
-  height: 20px;
-  margin: 0 var(--sp-2);
-  background: var(--border-subtle);
-}
-
-/* ---- main two-column layout ---------------------------------------------- */
-
-.layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(360px, 1fr);
-  gap: var(--sp-4);
-  padding: 0 var(--sp-5) var(--sp-5);
-  align-items: start;
-}
-@media (max-width: 1080px) { .layout { grid-template-columns: minmax(0, 1fr); } }
-
-.panel {
-  background: var(--surface-1);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--r-lg);
-  padding: var(--sp-4);
-}
-.panel-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-3);
-  margin-bottom: var(--sp-3);
-}
-.panel-head h2 { font-size: var(--fs-md); }
-.panel-head-actions { display: flex; gap: var(--sp-2); align-items: center; }
-
-.editor { max-height: calc(100vh - var(--sp-7)); overflow: auto; }
+/* Screen-specific surfaces: page bar, layout canvas, and the individual editor
+ * panels. Shell structure lives in shell.css; components in components.css. */
 
 /* ---- page bar ------------------------------------------------------------ */
 
@@ -72,7 +8,8 @@
   flex-wrap: wrap;
   gap: var(--sp-1);
   align-items: center;
-  padding: var(--sp-3) var(--sp-5) 0;
+  padding: var(--sp-2) var(--sp-4) 0;
+  border-bottom: 1px solid var(--border-subtle);
 }
 .page-tab {
   display: inline-flex;
@@ -154,6 +91,11 @@
   box-shadow: var(--e-3);
 }
 .canvas-box.disabled { opacity: .45; border-style: dashed; }
+/* Selection is what the inspector is currently showing. */
+.canvas-box.selected {
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 2px var(--accent);
+}
 .canvas-box.overlap {
   border-color: var(--danger);
   box-shadow: inset 0 0 0 1px var(--danger);
@@ -216,6 +158,7 @@
 .wrow .wtitle { font-weight: var(--fw-medium); }
 .wrow .wtype { font-size: var(--fs-sm); color: var(--text-2); }
 .wrow.disabled { opacity: .5; }
+.wrow.selected { border-color: var(--accent); background: var(--accent-soft); }
 .wrow.row-dragging { opacity: .4; }
 .wrow.row-over { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 

@@ -18,11 +18,27 @@
     }
   }
 
-  function apply(mode) {
-    document.documentElement.dataset.theme = VALID.includes(mode) ? mode : "auto";
+  // Switching theme only changes custom properties. Chromium does not reliably
+  // re-resolve a *transitioned* property when the var it derives from changes,
+  // so an element with `transition: color` can keep painting the old accent
+  // until something forces a fresh style resolution. Suppressing transitions
+  // across the swap sidesteps it — and an instant theme flip is what you want
+  // anyway; nobody wants to watch the UI cross-fade.
+  function apply(mode, { animate = false } = {}) {
+    const root = document.documentElement;
+    if (!animate) {
+      root.classList.add("theme-switching");
+      // Force a reflow so the suppression is in effect for the swap itself.
+      void root.offsetWidth;
+    }
+    root.dataset.theme = VALID.includes(mode) ? mode : "auto";
+    if (!animate) {
+      void root.offsetWidth;
+      requestAnimationFrame(() => root.classList.remove("theme-switching"));
+    }
   }
 
-  apply(read());
+  apply(read(), { animate: true }); // nothing has rendered yet at first paint
 
   // Exposed for the Appearance panel; kept on window because this file is a
   // classic script (it must run before the module graph loads).

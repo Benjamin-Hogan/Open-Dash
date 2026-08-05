@@ -52,6 +52,14 @@ button, input, select, textarea {
   border-radius: var(--r-sm);
 }
 
+/* Set by js/theme.js for one frame around a theme swap. See the note there:
+ * a transitioned property whose value comes from a custom property can keep
+ * painting the old value when only the variable changes. */
+.theme-switching, .theme-switching * {
+  transition: none !important;
+  animation: none !important;
+}
+
 /* Numbers in tables, meters and steppers must not jitter as they change. */
 .tnum,
 .badge,

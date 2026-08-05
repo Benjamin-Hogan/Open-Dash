@@ -8,51 +8,66 @@
   <link rel="stylesheet" href="/css/tokens.css" />
   <link rel="stylesheet" href="/css/base.css" />
   <link rel="stylesheet" href="/css/components.css" />
+  <link rel="stylesheet" href="/css/shell.css" />
   <link rel="stylesheet" href="/css/panels.css" />
   <!-- Blocking on purpose: sets [data-theme] before first paint. -->
   <script src="/js/theme.js"></script>
 </head>
 <body>
-  <div class="lan-banner" role="status">
-    Admin is open on the LAN with no login — trusted home network only. Do not expose this port beyond your network.
-  </div>
   <header class="topbar">
-    <h1>Pi Dashboard <span class="muted">admin</span></h1>
+    <div class="brand">
+      <h1>Pi Dashboard <span class="muted">admin</span></h1>
+      <span id="version" class="badge tnum">v?</span>
+      <span class="badge warn-pill" id="lan-pill" tabindex="0"
+            title="Admin is open on the LAN with no login — trusted home network only. Do not expose this port beyond your network.">LAN · no login</span>
+    </div>
     <div class="actions">
-      <span id="version" class="badge">v?</span>
-      <button id="btn-layout" class="btn">Layout</button>
-      <button id="btn-scenes" class="btn">Scenes</button>
-      <button id="btn-keys" class="btn">API keys</button>
-      <button id="btn-displays" class="btn">Displays</button>
-      <button id="btn-backups" class="btn">Backups</button>
-      <button id="btn-rotation" class="btn">Page rotation</button>
-      <button id="btn-alerts" class="btn">Alerts</button>
-      <span class="actions-sep" aria-hidden="true"></span>
-      <button id="btn-test-alert" class="btn">Test alert</button>
-      <button id="btn-refresh" class="btn">Force refresh</button>
-      <button id="btn-clear" class="btn">Clear cache</button>
-      <button id="btn-update" class="btn">Update</button>
+      <!-- js/savebar.js prepends Undo / Redo / edits / Discard / Save here -->
     </div>
   </header>
 
-  <nav id="page-bar" class="page-bar"></nav>
+  <div class="app">
+    <nav class="rail" id="rail" aria-label="Sections"></nav>
 
-  <main class="layout">
-    <section class="panel">
-      <div class="panel-head">
-        <h2>Layout</h2>
-        <div class="panel-head-actions">
-          <span class="muted small" id="canvas-hint">Drag to move · drag corner to resize</span>
-          <button id="btn-preview" class="btn small">Preview</button>
-          <button id="btn-add" class="btn primary small">+ Add widget</button>
+    <main class="workspace">
+      <nav id="page-bar" class="page-bar" aria-label="Pages"></nav>
+
+      <section class="canvas-area">
+        <div class="canvas-head">
+          <h2>Layout</h2>
+          <div class="canvas-head-actions">
+            <span class="muted small" id="canvas-hint">Drag to move · drag corner to resize</span>
+            <button id="btn-tidy" class="btn small ghost" title="Auto-arrange widgets with no gaps or overlaps">Tidy up</button>
+            <button id="btn-preview" class="btn small ghost">Preview</button>
+            <button id="btn-add" class="btn primary small">+ Add widget</button>
+          </div>
         </div>
+        <div class="canvas-scroll">
+          <div id="canvas" class="layout-canvas"></div>
+          <div id="preview-wrap" class="preview-wrap hidden"><iframe id="preview-frame" title="Live page preview"></iframe></div>
+        </div>
+      </section>
+
+      <section class="widget-strip">
+        <div class="strip-head">
+          <h2>Widgets on this page</h2>
+          <label class="search strip-search">
+            <span class="visually-hidden">Filter widgets</span>
+            <input type="search" id="widget-filter" placeholder="Filter…" />
+          </label>
+        </div>
+        <div id="widget-list" class="widget-list"></div>
+      </section>
+    </main>
+
+    <aside class="inspector" id="inspector" aria-label="Inspector">
+      <div class="inspector-head">
+        <div class="inspector-title" id="inspector-title">Page</div>
+        <span class="badge scope-pill staged" id="inspector-scope">Staged</span>
       </div>
-      <div id="canvas" class="layout-canvas"></div>
-      <div id="preview-wrap" class="preview-wrap hidden"><iframe id="preview-frame" title="Live page preview"></iframe></div>
-      <div id="widget-list" class="widget-list"></div>
-    </section>
-    <section id="editor" class="panel editor hidden"></section>
-  </main>
+      <div id="editor" class="inspector-body"></div>
+    </aside>
+  </div>
 
   <div id="toast-stack" class="toast-stack" role="status" aria-live="polite"></div>
   <script type="module" src="/admin.js"></script>

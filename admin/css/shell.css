@@ -1,0 +1,197 @@
+/* The app shell: topbar, icon rail, workspace, inspector.
+ *
+ * Full viewport with no page scroll — each region scrolls on its own. The old
+ * admin let the whole document scroll, so editing a widget near the bottom of a
+ * long form pushed the canvas you were editing off screen.
+ */
+
+html, body { height: 100%; }
+body { overflow: hidden; }
+
+/* ---- topbar -------------------------------------------------------------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  height: 52px;
+  padding: 0 var(--sp-4);
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.brand { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; }
+.topbar h1 {
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-bold);
+  white-space: nowrap;
+}
+.actions { display: flex; align-items: center; gap: var(--sp-1); }
+
+/* The LAN warning was a full-width banner permanently eating a row of screen.
+ * It's a standing fact, not news, so it's a pill with the detail on hover. */
+.warn-pill {
+  background: var(--warn-soft);
+  border-color: transparent;
+  color: var(--warn);
+  cursor: help;
+}
+
+/* ---- app grid ------------------------------------------------------------ */
+
+.app {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) var(--inspector-w, 380px);
+  height: calc(100% - 52px);
+  min-height: 0;
+}
+
+/* ---- rail ---------------------------------------------------------------- */
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: var(--sp-2) 0;
+  background: var(--surface-1);
+  border-right: 1px solid var(--border-subtle);
+  overflow-y: auto;
+}
+.rail-btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.rail-btn:hover { background: var(--surface-hover); color: var(--text-1); }
+.rail-btn[aria-current="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+/* Marks a section holding unsaved changes. */
+.rail-btn[data-dirty="true"]::after {
+  content: "";
+  position: absolute;
+  top: 5px; right: 5px;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.rail-sep { width: 22px; height: 1px; margin: var(--sp-1) 0; background: var(--border-subtle); }
+
+/* Native title= tooltips are slow and ugly; this one is instant and themed. */
+.rail-btn::before {
+  content: attr(data-label);
+  position: absolute;
+  left: calc(100% + 8px);
+  padding: 4px var(--sp-2);
+  background: var(--surface-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-sm);
+  box-shadow: var(--e-2);
+  font-size: var(--fs-sm);
+  color: var(--text-1);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-4px);
+  transition: opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+  z-index: var(--z-popover);
+}
+.rail-btn:hover::before, .rail-btn:focus-visible::before { opacity: 1; transform: none; }
+
+/* ---- workspace ----------------------------------------------------------- */
+
+.workspace {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-app);
+}
+
+.canvas-area {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0 var(--sp-4) var(--sp-3);
+}
+.canvas-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-2) 0;
+}
+.canvas-head h2 { font-size: var(--fs-md); }
+.canvas-head-actions { display: flex; align-items: center; gap: var(--sp-2); }
+.canvas-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
+
+/* ---- widget strip -------------------------------------------------------- */
+
+.widget-strip {
+  max-height: 34vh;
+  overflow: auto;
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--surface-1);
+  border-top: 1px solid var(--border-subtle);
+}
+.strip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-2);
+}
+.strip-head h2 { font-size: var(--fs-sm); color: var(--text-2); text-transform: uppercase; letter-spacing: .05em; }
+.strip-search { width: 220px; height: var(--control-h-sm); }
+
+/* ---- inspector ----------------------------------------------------------- */
+/* Always present and contextual. The old admin had one #editor slot that every
+ * panel replaceChildren()'d into, so opening Alerts silently destroyed an
+ * unsaved widget form. Here there is nothing to open or close. */
+
+.inspector {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface-1);
+  border-left: 1px solid var(--border-subtle);
+}
+.inspector-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.inspector-title {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-bold);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.inspector-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-4);
+}
+.inspector-body > h2 { display: none; } /* the head owns the title now */
+
+/* Narrower screens: the inspector is still desktop-first, just less greedy. */
+@media (max-width: 1400px) { .app { --inspector-w: 340px; } }
+@media (max-width: 1180px) { .app { --inspector-w: 300px; } }
