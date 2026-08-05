@@ -499,6 +499,78 @@ fieldset.field-group > legend {
 .toast .toast-x:hover { color: var(--text-1); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } }
 
+/* ---- form engine --------------------------------------------------------- */
+
+.field .req { color: var(--danger); }
+.field-error {
+  margin-top: 3px;
+  font-size: var(--fs-sm);
+  color: var(--danger);
+}
+.field.invalid input,
+.field.invalid select,
+.field.invalid textarea {
+  border-color: var(--danger);
+}
+.field.invalid input:focus-visible,
+.field.invalid textarea:focus-visible { box-shadow: 0 0 0 2px var(--bg-app), 0 0 0 4px var(--danger); }
+
+/* A `group` on a plugin field becomes a collapsible fieldset. iframe's three
+ * security fields have carried this metadata all along with nothing reading it. */
+.field-group {
+  margin-bottom: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+}
+.field-group > summary {
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
+  color: var(--text-2);
+  list-style: none;
+}
+.field-group > summary::before { content: "▸ "; color: var(--text-3); }
+.field-group[open] > summary::before { content: "▾ "; }
+.field-group[open] > summary { margin-bottom: var(--sp-2); }
+
+/* Numeric position & size — there was previously no way to type an exact
+ * value at all; the canvas was the only way to place a widget. */
+.grid-fields { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-2); }
+.grid-cell { display: flex; flex-direction: column; gap: 2px; }
+.grid-cell label { font-size: var(--fs-xs); color: var(--text-3); text-align: center; }
+.grid-cell input { text-align: center; font-variant-numeric: tabular-nums; }
+
+.list-editor { display: flex; flex-direction: column; gap: var(--sp-2); }
+.list-card {
+  padding: var(--sp-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+}
+.list-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+}
+.list-card-head strong { font-size: var(--fs-sm); }
+.list-card-tools { display: flex; gap: 2px; }
+
+/* Variant overrides: one typed row per overridden key, not a JSON blob. */
+.override-row {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr auto;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-1);
+}
+.override-key { font-size: var(--fs-sm); color: var(--text-2); }
+.override-value { width: 100%; }
+.override-add { margin-top: var(--sp-1); }
+
 /* ---- widget picker & command palette ------------------------------------- */
 
 .picker { display: flex; flex-direction: column; gap: var(--sp-3); min-height: 0; }

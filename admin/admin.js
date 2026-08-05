@@ -14,8 +14,19 @@ import { clone } from "/js/core/clone.js";
 import { rotationPages, hasCustomOrder, syncRotationOrder } from "/js/model/order.js";
 import * as liveHost from "/js/view/live-host.js";
 import { catalog, grouped, search, defaultSettings } from "/js/model/catalog.js";
+import { renderForm as renderFormEngine } from "/js/form/render.js";
+import { fromPluginSchema } from "/js/form/schema.js";
+import { fromServer as errorsFromServer } from "/js/form/validate.js";
 
-const state = { config: null, activePage: 0, editingId: null, selection: new Set() };
+const state = {
+  config: null,
+  activePage: 0,
+  editingId: null,
+  selection: new Set(),
+  // The widget form edits a clone so Cancel discards cleanly; the canvas reads
+  // it through canvasWidgets() so you see the edit as you make it.
+  draftWidget: null,
+};
 const $ = (s) => document.querySelector(s);
 
 const EDITOR_ROW = 26; // px per grid row in the visual editor
@@ -26,6 +37,18 @@ function currentPage() { return pages()[state.activePage] || null; }
 function currentWidgets() {
   const p = currentPage();
   return p ? (p.widgets || (p.widgets = [])) : [];
+}
+/**
+ * What the canvas draws: the page's widgets, with the one being edited swapped
+ * for the in-progress draft. The widget form edits a clone so Cancel can
+ * discard, but the whole point of a live canvas is seeing the edit as you make
+ * it — so the canvas reads the draft while the form is open.
+ */
+function canvasWidgets() {
+  const ws = currentWidgets();
+  const draft = state.draftWidget;
+  if (!draft || !state.editingId) return ws;
+  return ws.map((w) => (w.id === state.editingId ? draft : w));
 }
 function rotation() {
   return state.config.rotation || (state.config.rotation = { enabled: false, defaultDurationSeconds: 30, order: [] });
@@ -51,10 +74,7 @@ async function load() {
     savebar.init({
       host: document.querySelector(".topbar .actions"),
       onExternalConfig: (next) => onConfigReplaced(next),
-      onValidationErrors: (errs) => {
-        // Until the form engine anchors these to fields, at least name the path.
-        for (const e of errs.slice(0, 3)) toast(`${e.path || "config"}: ${e.message}`, "err");
-      },
+      onValidationErrors: (errs) => anchorServerErrors(errs),
       toast,
     });
 
@@ -231,7 +251,7 @@ function renderCanvas() {
   liveHost.unmountAll();
   canvas.replaceChildren();
   const cols = state.config.settings?.columns || 12;
-  const widgets = currentWidgets();
+  const widgets = canvasWidgets();
   const maxRow = widgets.reduce((m, w) => Math.max(m, (w.grid?.y || 0) + (w.grid?.h || 3)), 0);
   const rows = Math.max(maxRow + 1, 8);
   canvas.style.setProperty("--cols", cols);
@@ -769,65 +789,161 @@ async function openEditor(id) {
   }
   state.editingId = existing ? id : null;
   state.selection.clear();
+  state.draftWidget = widget;
   renderForm(editor, widget);
+}
+
+// The widget form is now built from FieldDefs and rendered by the form engine.
+// Controls write straight into `widget`, so there is no gather step: what you
+// see is the object that gets saved.
+
+let widgetForm = null;   // the live FormHandle, for error anchoring
+
+/** Everything the engine needs to render one widget. */
+function widgetFieldDefs(widget, editor) {
+  const plugin = registry.get(widget.type);
+  const cols = state.config.settings?.columns || 12;
+
+  const settingsFields = fromPluginSchema(
+    (plugin?.schema?.fields || []).filter((f) => f.key !== "_slidesNote"),
+  );
+
+  const defs = [
+    { key: "type", type: "custom", label: "Type", render: () => typeRow(widget, editor) },
+    { key: "title", label: "Title", type: "text", required: true },
+    { key: "enabled", label: "Enabled", type: "boolean" },
+    {
+      key: "pinned", label: "Pin to all pages (overlay)", type: "boolean",
+      help: "Pinned widgets stay visible during page rotation. Only one is recommended.",
+    },
+    {
+      key: "grid", label: "Position & size", type: "grid",
+      help: `Columns 0–${cols - 1}. You can also drag on the canvas.`,
+    },
+    ...settingsFields,
+    {
+      key: "refreshSeconds", label: "Refresh seconds", type: "number", min: 1,
+      placeholder: "none", help: "Blank = never auto-refresh.",
+    },
+    {
+      key: "schedule", type: "custom", label: "Schedule",
+      // Schedules keep their existing editor: it is correct, well-tested and
+      // large. It plugs in as one custom field rather than being rewritten.
+      render: () => {
+        const host = document.createElement("div");
+        host.appendChild(sectionTitle("Schedule"));
+        host.appendChild(noteEl("Hide this widget outside a time window (same rules as page schedules)."));
+        appendScheduleFields(host, widget.schedule || {}, "ws");
+        return host;
+      },
+    },
+    {
+      key: "variants", type: "custom", label: "Variants",
+      render: () => variantsEditor(widget, editor),
+    },
+  ];
+
+  if (widget.type === "slideshow") {
+    defs.push(
+      { key: "slideshow.enabled", label: "Enable slideshow", type: "boolean" },
+      { key: "slideshow.durationSeconds", label: "Seconds per slide", type: "number", min: 2 },
+      {
+        key: "slideshow.slides",
+        label: "Slides",
+        type: "list",
+        itemLabel: "Slide",
+        addLabel: "+ Add slide",
+        emptyText: "No slides yet — add one to start the rotation.",
+        itemTitle: (s, i) => `${i + 1}. ${s.title || registry.get(s.type)?.meta?.label || s.type}`,
+        newItem: async () => {
+          const type = await pickWidgetType({ title: "Add slide", exclude: ["slideshow"] });
+          if (!type) return null;
+          return { id: slideId(), type, title: "", settings: defaultSettings(type) };
+        },
+        // Per-slide fields depend on that slide's own type.
+        itemFields: (slide) => [
+          { key: "type", type: "custom", label: "Type", render: () => slideTypeRow(slide, editor, widget) },
+          { key: "title", label: "Title", type: "text" },
+          ...fromPluginSchema(
+            (registry.get(slide.type)?.schema?.fields || []).filter((f) => f.type !== "note"),
+          ),
+        ],
+      },
+    );
+  }
+  return defs;
+}
+
+function typeRow(widget, editor) {
+  const label = registry.get(widget.type)?.meta?.label || widget.type;
+  const row = document.createElement("div");
+  row.className = "type-row";
+  const text = document.createElement("div");
+  text.className = "type-text";
+  const name = document.createElement("div");
+  name.className = "type-name";
+  name.textContent = label;
+  const desc = document.createElement("div");
+  desc.className = "type-desc";
+  desc.textContent = registry.get(widget.type)?.meta?.description || widget.type;
+  text.append(name, desc);
+  row.append(text, button("Change…", "btn small ghost", async () => {
+    const v = await pickWidgetType({ title: "Change widget type" });
+    if (!v || v === widget.type) return;
+    widget.type = v;
+    widget.settings = defaultSettings(v);
+    if (v === "heads-up") widget.pinned = true;
+    widget.slideshow = v === "slideshow"
+      ? (widget.slideshow || { enabled: true, durationSeconds: 30, slides: [] })
+      : null;
+    renderForm(editor, widget);
+  }));
+  return row;
+}
+
+function slideTypeRow(slide, editor, widget) {
+  const row = document.createElement("div");
+  row.className = "type-row";
+  const text = document.createElement("div");
+  text.className = "type-text";
+  text.appendChild(Object.assign(document.createElement("div"), {
+    className: "type-name",
+    textContent: registry.get(slide.type)?.meta?.label || slide.type,
+  }));
+  row.append(text, button("Change…", "btn small ghost", async () => {
+    const v = await pickWidgetType({ title: "Change slide type", exclude: ["slideshow"] });
+    if (!v || v === slide.type) return;
+    slide.type = v;
+    slide.settings = defaultSettings(v);
+    renderForm(editor, widget);
+  }));
+  return row;
 }
 
 function renderForm(editor, widget) {
   const label = registry.get(widget.type)?.meta?.label || widget.type;
-  openPanel(state.editingId ? `${widget.title || label}` : "Add widget");
+  openPanel(state.editingId ? (widget.title || label) : "Add widget");
 
-  // Type is shown, not re-picked from a raw list: changing it throws away the
-  // settings, so it goes through the same picker as adding.
-  const typeRow = document.createElement("div");
-  typeRow.className = "type-row";
-  const typeName = document.createElement("div");
-  typeName.className = "type-name";
-  typeName.textContent = label;
-  const typeDesc = document.createElement("div");
-  typeDesc.className = "type-desc";
-  typeDesc.textContent = registry.get(widget.type)?.meta?.description || widget.type;
-  const typeText = document.createElement("div");
-  typeText.className = "type-text";
-  typeText.append(typeName, typeDesc);
-  typeRow.append(typeText, button("Change…", "btn small ghost", async () => {
-    const v = await pickWidgetType({ title: "Change widget type" });
-    if (!v || v === widget.type) return;
-    const next = gather(editor, widget);
-    next.type = v;
-    next.settings = defaultSettings(v);
-    next.pinned = v === "heads-up" ? true : next.pinned;
-    if (v !== "slideshow") next.slideshow = null;
-    else next.slideshow = next.slideshow || { enabled: true, durationSeconds: 30, slides: [] };
-    renderForm(editor, next);
-  }));
-  editor.appendChild(field("Type", typeRow));
-  editor.appendChild(field("Title", input("text", widget.title, "title")));
-  editor.appendChild(boolField("Enabled", widget.enabled !== false, "enabled"));
-  editor.appendChild(boolField("Pin to all pages (overlay)", widget.pinned === true, "pinned"));
-  if (widget.pinned) {
-    editor.appendChild(noteEl("Pinned widgets stay visible during page rotation. Only one pinned widget is recommended."));
-  }
+  const host = document.createElement("div");
+  editor.appendChild(host);
 
-  const plugin = registry.get(widget.type);
-  const fields = (plugin?.schema?.fields || []).filter((f) => f.key !== "_slidesNote");
-  if (fields.length) editor.appendChild(sectionTitle("Settings"));
-  for (const f of fields) editor.appendChild(renderField(f, widget));
-
-  editor.appendChild(field("Refresh seconds (blank = none)", input("number", widget.refreshSeconds ?? "", "refreshSeconds")));
-  editor.appendChild(noteEl("Position & size are set by dragging on the layout canvas."));
-
-  editor.appendChild(sectionTitle("Schedule"));
-  editor.appendChild(noteEl("Hide this widget outside a time window (same rules as page schedules)."));
-  appendScheduleFields(editor, widget.schedule || {}, "ws");
-
-  editor.appendChild(sectionTitle("Variants"));
-  editor.appendChild(noteEl("Named setting overrides for Scenes (match by label). First variant is the default when no scene is active. Overrides are a JSON object of settings keys."));
-  appendVariantsFields(editor, widget);
-
-  if (widget.type === "slideshow") {
-    editor.appendChild(sectionTitle("Slides"));
-    appendSlideshowFields(editor, widget);
-  }
+  const defs = widgetFieldDefs(widget, editor);
+  widgetForm = renderFormEngine(host, defs, widget, {
+    custom: {
+      "stock-picker": ({ get, set }) => stockPicker(get, set),
+      "url-presets": ({ field: f, get, set }) => urlPresets(f, get() ?? "", set),
+      "embed-presets": ({ field: f, get, set }) => embedPresets(f, get() ?? "", set),
+    },
+    onChange: (path) => {
+      // The canvas reads the draft, so this is a real live preview: type a URL
+      // or change a column and the box on the left updates as you go.
+      if (path === "title" || path === "enabled" || path === "pinned" || path.startsWith("grid")) {
+        renderCanvas();
+      } else if (path.startsWith("settings") || path.startsWith("slideshow")) {
+        liveHost.refresh(widget);
+      }
+    },
+  });
 
   const actions = document.createElement("div");
   actions.className = "editor-actions";
@@ -839,60 +955,21 @@ function renderForm(editor, widget) {
   editor._widget = widget;
 }
 
-function renderField(f, widget) {
-  const val = widget.settings?.[f.key] ?? f.default ?? "";
-  if (f.type === "note") return field("", noteEl(f.label));
-  if (f.type === "boolean") return boolField(f.label, val === true || val === "true", "set-" + f.key);
-  if (f.type === "textarea") return field(f.label, textarea(val, "set-" + f.key));
-  if (f.type === "select") return field(f.label, select(f.options || [], val, null, "set-" + f.key));
-  if (f.type === "number") return field(f.label, input("number", val, "set-" + f.key, f.placeholder));
-  if (f.type === "password") {
-    const inp = document.createElement("input");
-    inp.type = "password";
-    inp.dataset.name = "set-" + f.key;
-    inp.placeholder = val ? "•••••• (leave blank to keep)" : (f.placeholder || "Paste key…");
-    return field(f.label, inp);
-  }
-  if (f.type === "stock-picker") return field(f.label, stockPicker(widget));
-  if (f.type === "url-presets") return field(f.label, urlPresets(f, val));
-  if (f.type === "embed-presets") return field(f.label, embedPresets(f, val));
-  return field(f.label, input("text", val, "set-" + f.key, f.placeholder));
-}
-
-function gather(editor, base) {
-  const w = base || editor._widget;
-  const get = (name) => editor.querySelector(`[data-name="${name}"]`);
-  const title = get("title"); if (title) w.title = title.value;
-  const en = get("enabled"); if (en) w.enabled = en.checked;
-  const pin = get("pinned"); if (pin) w.pinned = pin.checked;
-  const rs = get("refreshSeconds"); w.refreshSeconds = rs && rs.value !== "" ? Number(rs.value) : null;
-  // grid is preserved as-is (edited on the canvas, not here)
-  w.settings = w.settings || {};
-  const plugin = registry.get(w.type);
-  for (const f of plugin?.schema?.fields || []) {
-    if (f.type === "note" || f.type === "stock-picker") continue;
-    const node = get("set-" + f.key);
-    if (!node) continue;
-    if (f.type === "boolean") w.settings[f.key] = node.checked;
-    else if (f.type === "password") { if (node.value) w.settings[f.key] = node.value; }
-    else if (f.type === "number") w.settings[f.key] = node.value === "" ? null : Number(node.value);
-    else w.settings[f.key] = node.value;
-  }
-  w.schedule = gatherSchedule(editor, "ws");
-  w.variants = gatherVariants(editor);
-  if (w.type === "slideshow") w.slideshow = gatherSlideshow(editor, w);
-  else w.slideshow = null;
-  return w;
-}
-
 async function commit(editor, widget) {
-  try {
-    gatherVariants(editor, { strict: true });
-  } catch (e) {
-    toast(e.message || String(e), "err");
+  // Required fields and numeric bounds are checked before anything is staged,
+  // and the first offender is scrolled to and focused.
+  const errors = widgetForm?.validate() || [];
+  if (errors.length) {
+    widgetForm.setErrors(errors);
+    widgetForm.focusField(errors[0].path);
+    toast(errors[0].message, "err");
     return;
   }
-  const w = gather(editor, widget);
+  widgetForm?.setErrors([]);
+
+  const w = widget;
+  w.schedule = gatherSchedule(editor, "ws");
+  if (w.type !== "slideshow") w.slideshow = null;
   if (!w.id) w.id = `${w.type}-${Date.now().toString(36)}`;
   if (w.pinned) {
     const others = pages().flatMap((p) => p.widgets || []).filter((x) => x.pinned && x.id !== w.id);
@@ -903,7 +980,6 @@ async function commit(editor, widget) {
   const isNew = idx < 0;
   if (!isNew) ws[idx] = w; else ws.push(w);
   showDefault();
-  state.editingId = null;
   save(`${isNew ? "added" : "edited"} ${w.title || w.type}`);
 }
 
@@ -1417,9 +1493,55 @@ function openPanel(title, { scope = "staged", section = null } = {}) {
   return editor;
 }
 
+/**
+ * Point a server-side 422 at the control that caused it.
+ *
+ * Pydantic's `loc` is a path into the whole config —
+ * ["body","pages",0,"widgets",1,"grid","w"] — so it identifies the exact widget.
+ * Open that widget, scope the path to the form, and focus the field. The old
+ * admin toasted `JSON.stringify(detail[0].msg)` and left you to guess.
+ */
+function anchorServerErrors(errs) {
+  if (!errs?.length) return;
+  const first = errs[0];
+  const parts = (first.serverPath || first.path).split(".").filter((p) => p !== "body");
+
+  if (parts[0] === "pages" && parts[2] === "widgets") {
+    const pageIdx = Number(parts[1]);
+    const wIdx = Number(parts[3]);
+    const page = pages()[pageIdx];
+    const widget = page?.widgets?.[wIdx];
+    if (widget) {
+      state.activePage = pageIdx;
+      renderAll();
+      openEditor(widget.id);
+      const scope = `pages.${pageIdx}.widgets.${wIdx}`;
+      const scoped = errorsFromServer(
+        errs.map((e) => ({ loc: (e.serverPath || e.path).split("."), msg: e.message })),
+        scope,
+      ).filter((e) => !e.path.startsWith("pages."));
+      // The form is built synchronously by openEditor for an existing widget.
+      queueMicrotask(() => {
+        widgetForm?.setErrors(scoped);
+        if (scoped.length) widgetForm?.focusField(scoped[0].path);
+      });
+      toast(`${widget.title || widget.type}: ${first.message}`, "err");
+      return;
+    }
+  }
+
+  if (parts[0] === "settings") {
+    openLayout();
+    toast(`${parts.slice(1).join(".")}: ${first.message}`, "err");
+    return;
+  }
+  toast(`${first.path || "config"}: ${first.message}`, "err");
+}
+
 /** What the inspector falls back to: the selected widget, else the page. */
 function showDefault() {
   state.editingId = null;
+  state.draftWidget = null;
   state.selection.clear();
   openPageSettings();
 }
@@ -2030,215 +2152,152 @@ function gatherSchedule(editor, prefix) {
 
 // ---- slideshow widget slides editor ----------------------------------------
 
-function slideTypeOptions() {
-  return registry.types().filter((t) => t !== "slideshow");
-}
-
-function appendVariantsFields(editor, widget) {
+/**
+ * Variants, as typed overrides rather than a JSON textarea.
+ *
+ * Overrides used to be a 3-row textarea of raw JSON: keys weren't checked
+ * against the plugin's schema, autocomplete was impossible, and an unparseable
+ * object was silently discarded on the autosave paths. Now each override is a
+ * key chosen from the plugin's own fields, with that field's own control.
+ */
+function variantsEditor(widget, editor) {
   if (!Array.isArray(widget.variants)) widget.variants = [];
+  const plugin = registry.get(widget.type);
+  const schemaFields = (plugin?.schema?.fields || []).filter((f) => f.type !== "note");
+
+  const wrap = document.createElement("div");
+  wrap.appendChild(sectionTitle("Variants"));
+  wrap.appendChild(noteEl(
+    "Named setting overrides that Scenes select by label. With no scene active the first variant is what renders — the badge on the canvas box shows which."));
+
   const host = document.createElement("div");
   host.className = "variant-list";
-  host.dataset.name = "variants";
-  editor.appendChild(host);
+  wrap.appendChild(host);
 
   const redraw = () => {
     host.replaceChildren();
+    if (!widget.variants.length) host.appendChild(noteEl("No variants — the widget always uses its own settings."));
+
     widget.variants.forEach((v, i) => {
+      if (!v.overrides || typeof v.overrides !== "object") v.overrides = {};
       const card = document.createElement("div");
       card.className = "variant-card";
-      card.dataset.variantIndex = i;
+
       const head = document.createElement("div");
       head.className = "variant-card-head";
       head.appendChild(Object.assign(document.createElement("strong"), {
-        textContent: i === 0 ? `Variant ${i + 1} (default)` : `Variant ${i + 1}`,
+        textContent: i === 0 ? `Variant ${i + 1} — active by default` : `Variant ${i + 1}`,
       }));
-      head.appendChild(button("Remove", "btn small danger", () => {
-        widget.variants = gatherVariants(editor);
+      head.appendChild(button("Remove", "btn small ghost danger", () => {
         widget.variants.splice(i, 1);
         redraw();
+        renderCanvas();
       }));
       card.appendChild(head);
-      card.appendChild(field("Label", input("text", v.label || "", `var-${i}-label`, "night")));
-      const ta = textarea(
-        typeof v.overrides === "object" && v.overrides
-          ? JSON.stringify(v.overrides, null, 2)
-          : "{}",
-        `var-${i}-overrides`,
-      );
-      ta.rows = 3;
-      card.appendChild(field("Overrides (JSON object)", ta));
+
+      const labelInput = input("text", v.label || "", null, "night");
+      labelInput.oninput = () => { v.label = labelInput.value; renderCanvas(); };
+      card.appendChild(field("Label", labelInput));
+
+      // One row per overridden key, typed by the plugin's own field schema.
+      const keys = Object.keys(v.overrides);
+      for (const key of keys) {
+        const def = schemaFields.find((f) => f.key === key);
+        const row = document.createElement("div");
+        row.className = "override-row";
+
+        const name = document.createElement("div");
+        name.className = "override-key";
+        name.textContent = def?.label || key;
+        row.appendChild(name);
+
+        let control;
+        if (def?.type === "boolean") {
+          control = document.createElement("input");
+          control.type = "checkbox";
+          control.checked = v.overrides[key] === true;
+          control.onchange = () => { v.overrides[key] = control.checked; };
+        } else if (def?.type === "select") {
+          control = document.createElement("select");
+          for (const o of def.options || []) {
+            const opt = document.createElement("option");
+            opt.value = typeof o === "object" ? o.value : o;
+            opt.textContent = typeof o === "object" ? o.label : o;
+            control.appendChild(opt);
+          }
+          control.value = v.overrides[key] ?? "";
+          control.onchange = () => { v.overrides[key] = control.value; };
+        } else if (def?.type === "number") {
+          control = document.createElement("input");
+          control.type = "number";
+          control.value = v.overrides[key] ?? "";
+          control.oninput = () => { v.overrides[key] = control.value === "" ? null : Number(control.value); };
+        } else {
+          control = document.createElement("input");
+          control.type = "text";
+          // A key with no matching field (a hand-edited config) still shows as
+          // text rather than disappearing.
+          control.value = typeof v.overrides[key] === "object"
+            ? JSON.stringify(v.overrides[key]) : (v.overrides[key] ?? "");
+          control.oninput = () => { v.overrides[key] = control.value; };
+        }
+        control.classList.add("override-value");
+        row.appendChild(control);
+
+        row.appendChild(button("×", "btn small ghost", () => {
+          delete v.overrides[key];
+          redraw();
+        }));
+        card.appendChild(row);
+      }
+
+      // Add-an-override picker, limited to keys this widget type actually has.
+      const unused = schemaFields.filter((f) => !(f.key in v.overrides));
+      if (unused.length) {
+        const add = document.createElement("select");
+        add.className = "override-add";
+        const blank = document.createElement("option");
+        blank.value = "";
+        blank.textContent = "+ Override a setting…";
+        add.appendChild(blank);
+        for (const f of unused) {
+          const opt = document.createElement("option");
+          opt.value = f.key;
+          opt.textContent = f.label || f.key;
+          add.appendChild(opt);
+        }
+        add.onchange = () => {
+          if (!add.value) return;
+          const def = schemaFields.find((f) => f.key === add.value);
+          v.overrides[add.value] = widget.settings?.[add.value] ?? def?.default ?? "";
+          redraw();
+        };
+        card.appendChild(add);
+      }
       host.appendChild(card);
     });
   };
   redraw();
-  editor.appendChild(button("+ Add variant", "btn small", () => {
-    widget.variants = gatherVariants(editor);
+
+  wrap.appendChild(button("+ Add variant", "btn small", () => {
     widget.variants.push({ label: "", overrides: {} });
     redraw();
+    renderCanvas();
   }));
-}
-
-function gatherVariants(editor, { strict = false } = {}) {
-  const host = editor.querySelector('[data-name="variants"]');
-  if (!host) return [];
-  const out = [];
-  host.querySelectorAll(".variant-card").forEach((card, i) => {
-    const label = (card.querySelector(`[data-name="var-${i}-label"]`)?.value || "").trim();
-    const raw = card.querySelector(`[data-name="var-${i}-overrides"]`)?.value || "{}";
-    let overrides = {};
-    try {
-      const parsed = JSON.parse(raw || "{}");
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) overrides = parsed;
-      else throw new Error("not an object");
-    } catch (err) {
-      if (strict) throw new Error(`Variant ${i + 1}: overrides must be a JSON object`);
-      overrides = {};
-    }
-    if (!label && !Object.keys(overrides).length) return;
-    out.push({ label: label || `variant-${i + 1}`, overrides });
-  });
-  return out;
+  return wrap;
 }
 
 // Slides carry a stable id so the server can match per-slide secrets across a
 // reorder (see redact.preserve_secrets). Mint one for any slide missing it.
 const slideId = () => `slide-${Math.random().toString(36).slice(2, 10)}`;
 
-function appendSlideshowFields(editor, widget) {
-  const cfg = widget.slideshow || { enabled: true, durationSeconds: 30, slides: [] };
-  widget.slideshow = cfg;
-  if (!Array.isArray(cfg.slides)) cfg.slides = [];
-  for (const s of cfg.slides) if (!s.id) s.id = slideId();
-
-  editor.appendChild(boolField("Enable slideshow", cfg.enabled !== false, "ss-enabled"));
-  editor.appendChild(field("Seconds per slide", input("number", cfg.durationSeconds ?? 30, "ss-duration")));
-  const host = document.createElement("div");
-  host.dataset.name = "ss-slides";
-  editor.appendChild(host);
-
-  const redraw = () => {
-    host.replaceChildren();
-    cfg.slides.forEach((slide, i) => {
-      const card = document.createElement("div");
-      card.className = "slide-card";
-      card.dataset.slideIndex = i;
-      card.dataset.slideId = slide.id || "";
-      const head = document.createElement("div");
-      head.className = "slide-card-head";
-      head.appendChild(Object.assign(document.createElement("strong"), { textContent: `Slide ${i + 1}` }));
-      const tools = document.createElement("div");
-      tools.style.display = "flex";
-      tools.style.gap = "4px";
-      tools.append(
-        button("↑", "btn small", () => {
-          if (i <= 0) return;
-          const cur = gatherSlideshow(editor, widget);
-          const arr = cur.slides;
-          [arr[i - 1], arr[i]] = [arr[i], arr[i - 1]];
-          widget.slideshow = cur;
-          appendSlideshowFieldsRebuild(editor, widget);
-        }),
-        button("↓", "btn small", () => {
-          const cur = gatherSlideshow(editor, widget);
-          const arr = cur.slides;
-          if (i >= arr.length - 1) return;
-          [arr[i + 1], arr[i]] = [arr[i], arr[i + 1]];
-          widget.slideshow = cur;
-          appendSlideshowFieldsRebuild(editor, widget);
-        }),
-        button("Remove", "btn small danger", () => {
-          const cur = gatherSlideshow(editor, widget);
-          cur.slides.splice(i, 1);
-          widget.slideshow = cur;
-          appendSlideshowFieldsRebuild(editor, widget);
-        }),
-      );
-      head.appendChild(tools);
-      card.appendChild(head);
-
-      const types = slideTypeOptions();
-      const typeSel = select(types, slide.type || types[0], (v) => {
-        const cur = gatherSlideshow(editor, widget);
-        cur.slides[i] = { id: cur.slides[i]?.id || slideId(), type: v, title: cur.slides[i]?.title || "", settings: {} };
-        widget.slideshow = cur;
-        appendSlideshowFieldsRebuild(editor, widget);
-      }, `ss-${i}-type`);
-      card.appendChild(field("Type", typeSel));
-      card.appendChild(field("Title", input("text", slide.title || "", `ss-${i}-title`)));
-
-      const plugin = registry.get(slide.type || types[0]);
-      const fields = (plugin?.schema?.fields || []).filter((f) => f.type !== "note");
-      const fakeWidget = { settings: slide.settings || {} };
-      for (const f of fields) {
-        const node = renderField(f, fakeWidget);
-        // Remap settings field names into per-slide namespace
-        node.querySelectorAll("[data-name]").forEach((el) => {
-          const n = el.dataset.name;
-          if (n.startsWith("set-")) el.dataset.name = `ss-${i}-${n}`;
-        });
-        card.appendChild(node);
-      }
-      host.appendChild(card);
-    });
-  };
-  redraw();
-  editor._redrawSlides = redraw;
-
-  editor.appendChild(button("+ Add slide", "btn", async () => {
-    // Same picker as adding a widget, minus slideshow (a slideshow can't
-    // contain a slideshow).
-    const type = await pickWidgetType({ title: "Add slide", exclude: ["slideshow"] });
-    if (!type) return;
-    const cur = gatherSlideshow(editor, widget);
-    cur.slides.push({ id: slideId(), type, title: "", settings: defaultSettings(type) });
-    widget.slideshow = cur;
-    appendSlideshowFieldsRebuild(editor, widget);
-  }));
-}
-
-function appendSlideshowFieldsRebuild(editor, widget) {
-  // Re-render the whole form so slide field names stay consistent with gather.
-  // Preserve the in-memory slides list (reorder/remove already applied) — a
-  // fresh gatherSlideshow would read the pre-mutation DOM order.
-  const slides = widget.slideshow;
-  const w = gather(editor, widget);
-  w.slideshow = slides;
-  renderForm(editor, w);
-}
-
-function gatherSlideshow(editor, widget) {
-  const enabled = editor.querySelector('[data-name="ss-enabled"]')?.checked !== false;
-  const duration = Math.max(2, Math.round(Number(editor.querySelector('[data-name="ss-duration"]')?.value) || 30));
-  const host = editor.querySelector('[data-name="ss-slides"]');
-  const slides = [];
-  if (host) {
-    host.querySelectorAll(".slide-card").forEach((card, i) => {
-      const type = card.querySelector(`[data-name="ss-${i}-type"]`)?.value || "text";
-      const title = card.querySelector(`[data-name="ss-${i}-title"]`)?.value || "";
-      const settings = {};
-      const plugin = registry.get(type);
-      for (const f of plugin?.schema?.fields || []) {
-        if (f.type === "note" || f.type === "stock-picker") continue;
-        const node = card.querySelector(`[data-name="ss-${i}-set-${f.key}"]`);
-        if (!node) continue;
-        if (f.type === "boolean") settings[f.key] = node.checked;
-        else if (f.type === "password") { if (node.value) settings[f.key] = node.value; }
-        else if (f.type === "number") settings[f.key] = node.value === "" ? null : Number(node.value);
-        else settings[f.key] = node.value;
-      }
-      // Blank password fields are left blank on purpose: the server matches on
-      // slide id and carries the previous value over (redact.preserve_secrets).
-      slides.push({ id: card.dataset.slideId || slideId(), type, title, settings });
-    });
-  }
-  return { enabled, durationSeconds: duration, slides };
-}
 
 // ---- url field with quick-fill presets (for embeddable live sites) ----------
 
-function urlPresets(f, val) {
+function urlPresets(f, val, set) {
   const wrap = document.createElement("div");
-  const inp = input("text", val, "set-" + f.key, f.placeholder);
+  const inp = input("text", val, null, f.placeholder);
+  inp.oninput = () => set(inp.value);
   const sel = document.createElement("select");
   sel.style.marginTop = "6px";
   const ph = document.createElement("option"); ph.value = ""; ph.textContent = "Quick-fill a known embeddable site…";
@@ -2246,16 +2305,16 @@ function urlPresets(f, val) {
   for (const p of f.presets || []) {
     const o = document.createElement("option"); o.value = p.url; o.textContent = p.label; sel.appendChild(o);
   }
-  sel.onchange = () => { if (sel.value) { inp.value = sel.value; sel.value = ""; } };
+  sel.onchange = () => { if (sel.value) { inp.value = sel.value; set(sel.value); sel.value = ""; } };
   wrap.append(inp, sel);
   return wrap;
 }
 
 // ---- embed snippet field: preset picker + textarea + live preview -----------
 
-function embedPresets(f, val) {
+function embedPresets(f, val, set) {
   const wrap = document.createElement("div");
-  const ta = textarea(val, "set-" + f.key);       // gather() reads set-<key>
+  const ta = textarea(val, null);
   ta.className = "mono embed-code";
   ta.placeholder = "Paste a TradingView (or any <div>+<script>) snippet…";
 
@@ -2278,10 +2337,10 @@ function embedPresets(f, val) {
   const renderPreview = () => { clearTimeout(t); t = setTimeout(() => { preview.srcdoc = buildEmbedDoc(ta.value); }, 400); };
   sel.onchange = () => {
     const p = (f.presets || [])[Number(sel.value)];
-    if (p) { ta.value = p.code; renderPreview(); }
+    if (p) { ta.value = p.code; set(p.code); renderPreview(); }
     sel.value = "";
   };
-  ta.addEventListener("input", renderPreview);
+  ta.addEventListener("input", () => { set(ta.value); renderPreview(); });
   renderPreview();
 
   wrap.append(ta, sel, previewLabel, preview);
@@ -2290,15 +2349,23 @@ function embedPresets(f, val) {
 
 // ---- stock picker (the async-search field type) -----------------------------
 
-function stockPicker(widget) {
+/**
+ * @param get  () => string[]   current symbols, from wherever the draft holds them
+ * @param set  (string[]) => void
+ *
+ * Reads and writes through the draft rather than reaching into
+ * `widget.settings`. That's what makes it work for a stocks *slide*: the old
+ * version mutated a throwaway object, and gatherSlideshow skipped stock-picker
+ * entirely, so a slide's symbols were never written back at all.
+ */
+function stockPicker(get, set) {
   const wrap = document.createElement("div");
-  widget.settings = widget.settings || {};
-  let symbols = Array.isArray(widget.settings.symbols) ? [...widget.settings.symbols] : [];
+  let symbols = Array.isArray(get()) ? [...get()] : [];
   const chips = document.createElement("div"); chips.className = "chips";
-  const search = input("text", "", "stock-search", "Search ticker or company…");
+  const search = input("text", "", null, "Search ticker or company…");
   const results = document.createElement("div"); results.className = "search-results";
 
-  function sync() { widget.settings.symbols = symbols; }
+  function sync() { set([...symbols]); }
   function drawChips() {
     chips.replaceChildren();
     symbols.forEach((sym, i) => {
@@ -2315,8 +2382,7 @@ function stockPicker(widget) {
     if (!q) { results.replaceChildren(); return; }
     timer = setTimeout(async () => {
       try {
-        const res = await fetch("/api/data/stocks/search?q=" + encodeURIComponent(q));
-        const d = await res.json();
+        const d = await api.searchStocks(q);
         results.replaceChildren();
         if (d.needsKey) { results.innerHTML = `<div>Set ${d.env} to search</div>`; return; }
         for (const r of d.results || []) {
