@@ -18,5 +18,7 @@ import "./air-quality.js";
 import "./rss.js";
 import "./ical.js";
 import "./octoprint.js";
+import "./heads-up.js";
+import "./photos.js";
 
 export * from "./registry.js";

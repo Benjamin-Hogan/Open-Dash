@@ -12,6 +12,7 @@ import {
 
 const grid = document.getElementById("grid");
 const dots = document.getElementById("pagedots");
+const pinnedHost = document.getElementById("pinned-host");
 let active = []; // current page: [{ widget, card, plugin, handle, refreshTimer, scheduleTimer }]
 // Keep mounted pages across rotation so video/YouTube don't remount from t=0.
 // Soft-suspend pauses media; hard release (slideshow/schedule) still blanks src.
@@ -40,12 +41,134 @@ let conditionEvalGen = 0;
 // the condition clears early; then resume normal rotation.
 let overrideHold = null; // { pageId, until }
 
+// Page transition catalog (Settings.pageTransition: off | random | id)
+const TRANSITION_CATALOG = [
+  "fade", "slide-left", "slide-right", "slide-up", "slide-down",
+  "zoom-in", "zoom-out", "wipe-left", "wipe-right", "blur-fade", "scale-rotate",
+];
+let lastTransition = null;
+const TRANSITION_MS = 420;
+
+// Pinned widget (heads-up strip) — mounted once, survives page rotation.
+let pinnedEntry = null; // { widget, plugin, handle, refreshTimer, host }
+
 // Preview mode (admin's live mini-preview iframe): ?page=<id> locks to one page,
 // no rotation, no device identity (so previews don't register as displays).
 const urlParams = new URLSearchParams(location.search);
 const previewPageId = urlParams.get("page");
 const isPreview = previewPageId != null || urlParams.get("preview") === "1";
 if (isPreview) document.body.classList.add("preview");
+
+function prefersReducedMotion() {
+  return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+}
+
+function resolveTransitionStyle() {
+  const mode = config?.settings?.pageTransition ?? "random";
+  if (prefersReducedMotion() || mode === "off") return null;
+  if (mode === "random") {
+    const pool = TRANSITION_CATALOG.filter((t) => t !== lastTransition);
+    const pick = pool[Math.floor(Math.random() * pool.length)] || TRANSITION_CATALOG[0];
+    lastTransition = pick;
+    return pick;
+  }
+  return TRANSITION_CATALOG.includes(mode) ? mode : "fade";
+}
+
+function findPinnedWidget(cfg) {
+  for (const page of cfg?.pages || []) {
+    for (const w of page.widgets || []) {
+      if (w.pinned && w.enabled !== false) return w;
+    }
+  }
+  return null;
+}
+
+function applyPinnedInset(widget) {
+  if (!pinnedHost || pinnedHost.classList.contains("hidden")) {
+    document.documentElement.style.removeProperty("--pinned-inset");
+    document.body.classList.remove("pinned-top", "pinned-bottom");
+    return;
+  }
+  const pos = widget?.settings?.position === "top" ? "top" : "bottom";
+  document.body.classList.toggle("pinned-top", pos === "top");
+  document.body.classList.toggle("pinned-bottom", pos === "bottom");
+  document.documentElement.style.setProperty("--pinned-inset", "52px");
+}
+
+function destroyPinned() {
+  if (!pinnedEntry) return;
+  clearInterval(pinnedEntry.refreshTimer);
+  pinnedEntry.plugin?.destroy?.(pinnedEntry.handle);
+  pinnedEntry.host?.remove();
+  pinnedEntry = null;
+  if (pinnedHost) {
+    pinnedHost.replaceChildren();
+    pinnedHost.classList.add("hidden");
+  }
+  applyPinnedInset(null);
+}
+
+async function mountPinned(widget) {
+  destroyPinned();
+  if (!widget || !pinnedHost) return;
+  const plugin = registry.get(widget.type);
+  if (!plugin) return;
+  pinnedHost.classList.remove("hidden");
+  applyPinnedInset(widget);
+  const card = el("div", { class: "pinned-card card", "data-id": widget.id });
+  const body = el("div", { class: "card-body pinned-body" });
+  card.appendChild(body);
+  pinnedHost.appendChild(card);
+  const entry = { widget, plugin, handle: null, refreshTimer: null, host: card };
+  try {
+    entry.handle = await plugin.mount(body, widget, {});
+  } catch (err) {
+    body.appendChild(el("div", { class: "widget-error" }, `Failed: ${err.message}`));
+  }
+  const refreshSecs = widget.refreshSeconds ?? widget.settings?.refreshSeconds ?? 60;
+  if (entry.handle && plugin.refresh && refreshSecs >= 1) {
+    entry.refreshTimer = setInterval(
+      () => plugin.refresh(entry.handle, widget),
+      refreshSecs * 1000,
+    );
+  }
+  pinnedEntry = entry;
+}
+
+function waitTransition(node, ms) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      node.removeEventListener("animationend", onEnd);
+      clearTimeout(fallback);
+      resolve();
+    };
+    const onEnd = (e) => {
+      if (e.target === node) finish();
+    };
+    node.addEventListener("animationend", onEnd);
+    const fallback = setTimeout(finish, ms + 80);
+  });
+}
+
+async function runPageTransition(outPane, inPane, style, gen) {
+  inPane.classList.add("active", "pane-enter", `pane-enter--${style}`);
+  inPane.style.zIndex = "2";
+  outPane.classList.add("pane-exit", `pane-exit--${style}`);
+  outPane.style.zIndex = "1";
+  await waitTransition(outPane, TRANSITION_MS);
+  if (gen !== renderGen) return false;
+  outPane.classList.remove("active", "pane-exit", `pane-exit--${style}`);
+  outPane.style.zIndex = "";
+  outPane.inert = true;
+  outPane.setAttribute("aria-hidden", "true");
+  inPane.classList.remove("pane-enter", `pane-enter--${style}`);
+  inPane.style.zIndex = "";
+  return true;
+}
 
 async function loadConfig() {
   const res = await fetch("/api/config");
@@ -98,6 +221,7 @@ function destroyCachedPage(cached) {
 }
 
 function teardown() {
+  destroyPinned();
   for (const cached of pageCache.values()) destroyCachedPage(cached);
   pageCache.clear();
   active = [];
@@ -145,7 +269,7 @@ async function mountPage(page) {
   const entries = [];
   let cardIndex = 0;
   for (const widget of page.widgets || []) {
-    if (widget.enabled === false) continue;
+    if (widget.enabled === false || widget.pinned) continue;
     const plugin = registry.get(widget.type);
     const card = el("div", { class: "card card-enter", "data-id": widget.id });
     card.style.animationDelay = `${Math.min(cardIndex++ * 45, 450)}ms`;
@@ -303,7 +427,7 @@ function refreshVisibility() {
   const scene = resolveActiveScene(config);
   const nextSceneId = scene?.id || null;
   if (nextSceneId !== appliedSceneId) {
-    show(config);
+    void show(config);
     return;
   }
   const cur = visible.map((p) => p.id).join("|");
@@ -448,7 +572,7 @@ function scheduleConditionPolling() {
 }
 
 // ---- whole-config entry point (initial load + every SSE config-changed) -----
-function show(cfg) {
+async function show(cfg) {
   config = cfg;
   const scene = resolveActiveScene(cfg);
   appliedSceneId = scene?.id || null;
@@ -478,7 +602,9 @@ function show(cfg) {
   buildDots();
   // Config may have changed widget trees — drop cached pages and remount.
   teardown();
-  if (visible.length) renderPage(visible[pageIndex]);
+  const pinned = findPinnedWidget(cfg);
+  if (pinned) await mountPinned(pinned);
+  if (visible.length) await renderPage(visible[pageIndex]);
   else {
     grid.appendChild(el("div", { class: "widget-error" },
       order.length ? "No pages for this display / scene" : "No pages configured"));
@@ -498,41 +624,44 @@ async function renderPage(page) {
   }
   rendering = true;
   try {
-    // crossfade: fade the host out before swapping panes (skipped by reduced-motion CSS)
-    if (grid.querySelector(".page-pane.active") || grid.querySelector(".widget-error")) {
-      grid.classList.add("page-out");
-      await new Promise((r) => setTimeout(r, 180));
-      if (gen !== renderGen) return;
-    }
-    // Clear empty-state message if present.
+    const style = resolveTransitionStyle();
+    const outCached = activePageId ? pageCache.get(activePageId) : null;
+    const outPane = outCached?.pane || null;
+
     for (const child of [...grid.children]) {
       if (child.classList?.contains("widget-error")) child.remove();
-    }
-
-    if (activePageId && pageCache.has(activePageId)) {
-      suspendCachedPage(pageCache.get(activePageId));
     }
 
     let cached = pageCache.get(page.id);
     if (!cached) {
       cached = await mountPage(page);
       if (gen !== renderGen) {
-        // A newer switch won — discard this mount.
         destroyCachedPage(cached);
         return;
       }
       pageCache.set(page.id, cached);
-    } else {
-      resumeCachedPage(cached);
     }
-    cached.pane.classList.add("active");
-    cached.pane.inert = false;
-    cached.pane.removeAttribute("aria-hidden");
+
+    const inPane = cached.pane;
+
+    if (outPane && style) {
+      resumeCachedPage(cached);
+      const ok = await runPageTransition(outPane, inPane, style, gen);
+      if (!ok || gen !== renderGen) return;
+      for (const a of outCached.entries) {
+        a.plugin?.suspend?.(a.handle, { releaseMedia: false });
+      }
+    } else {
+      if (outPane) suspendCachedPage(outCached);
+      resumeCachedPage(cached);
+      inPane.classList.add("active");
+      inPane.inert = false;
+      inPane.removeAttribute("aria-hidden");
+    }
+
     active = cached.entries;
     activePageId = page.id;
     prunePageCache();
-
-    grid.classList.remove("page-out");
   } finally {
     if (gen === renderGen) rendering = false;
   }
@@ -551,11 +680,66 @@ function scheduleRotation() {
 }
 
 function goToPage(i, fromUser) {
+  if (rendering) return;
   pageIndex = i;
   if (fromUser) paused = true; // tapping a dot stops auto-advance
   renderPage(visible[pageIndex]);
   updateDots();
   scheduleRotation();
+}
+
+function initTouchNav() {
+  if (isPreview) return;
+  let startX = null;
+  let startY = null;
+  let startTime = null;
+  let longPressTimer = null;
+
+  const clearStart = () => {
+    startX = null;
+    startY = null;
+    startTime = null;
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  };
+
+  grid.addEventListener("pointerdown", (e) => {
+    if (rendering || e.button !== 0) return;
+    startX = e.clientX;
+    startY = e.clientY;
+    startTime = Date.now();
+    longPressTimer = setTimeout(() => {
+      if (startX == null) return;
+      document.getElementById("scale-gear")?.click();
+      clearStart();
+    }, 800);
+  });
+
+  grid.addEventListener("pointermove", (e) => {
+    if (startX == null) return;
+    if (Math.abs(e.clientX - startX) > 12 || Math.abs(e.clientY - startY) > 12) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
+  });
+
+  grid.addEventListener("pointerup", (e) => {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+    if (startX == null || rendering) { clearStart(); return; }
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    const dt = Date.now() - startTime;
+    clearStart();
+    if (visible.length < 2) return;
+    if (Math.abs(dx) < Math.abs(dy)) return;
+    if (Math.abs(dx) < 60 && dt > 350) return;
+    if (Math.abs(dx) < 40) return;
+    if (dx < 0) goToPage((pageIndex + 1) % visible.length, true);
+    else goToPage((pageIndex - 1 + visible.length) % visible.length, true);
+  });
+
+  grid.addEventListener("pointercancel", clearStart);
 }
 
 function buildDots() {
@@ -733,6 +917,7 @@ function setStatus(ok) {
   connectEvents();
   initAlerts();
   initValuePulse();
+  initTouchNav();
   // page / scene schedules and override min-hold cross boundaries without other triggers
   setInterval(refreshVisibility, 30000);
 })();

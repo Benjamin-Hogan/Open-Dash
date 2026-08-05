@@ -279,6 +279,13 @@ function makeBox(w, cols) {
   label.innerHTML = `<span class="box-title"></span><span class="box-type"></span>`;
   label.querySelector(".box-title").textContent = w.title || "(untitled)";
   label.querySelector(".box-type").textContent = (plugin?.meta?.label) || w.type;
+  if (w.pinned) {
+    const pin = document.createElement("span");
+    pin.className = "box-pin";
+    pin.textContent = "📌";
+    pin.title = "Pinned overlay";
+    label.appendChild(pin);
+  }
   box.appendChild(label);
 
   const tools = document.createElement("div");
@@ -454,12 +461,17 @@ function renderForm(editor, widget) {
     const next = gather(editor, widget);
     next.type = v;
     next.settings = {};
+    if (v === "heads-up") next.pinned = true;
     if (v !== "slideshow") next.slideshow = null;
     else next.slideshow = next.slideshow || { enabled: true, durationSeconds: 30, slides: [] };
     renderForm(editor, next);
   })));
   editor.appendChild(field("Title", input("text", widget.title, "title")));
   editor.appendChild(boolField("Enabled", widget.enabled !== false, "enabled"));
+  editor.appendChild(boolField("Pin to all pages (overlay)", widget.pinned === true, "pinned"));
+  if (widget.pinned) {
+    editor.appendChild(noteEl("Pinned widgets stay visible during page rotation. Only one pinned widget is recommended."));
+  }
 
   const plugin = registry.get(widget.type);
   const fields = (plugin?.schema?.fields || []).filter((f) => f.key !== "_slidesNote");
@@ -517,6 +529,7 @@ function gather(editor, base) {
   const get = (name) => editor.querySelector(`[data-name="${name}"]`);
   const title = get("title"); if (title) w.title = title.value;
   const en = get("enabled"); if (en) w.enabled = en.checked;
+  const pin = get("pinned"); if (pin) w.pinned = pin.checked;
   const rs = get("refreshSeconds"); w.refreshSeconds = rs && rs.value !== "" ? Number(rs.value) : null;
   // grid is preserved as-is (edited on the canvas, not here)
   w.settings = w.settings || {};
@@ -546,6 +559,10 @@ async function commit(editor, widget) {
   }
   const w = gather(editor, widget);
   if (!w.id) w.id = `${w.type}-${Date.now().toString(36)}`;
+  if (w.pinned) {
+    const others = pages().flatMap((p) => p.widgets || []).filter((x) => x.pinned && x.id !== w.id);
+    if (others.length) toast("Another widget is already pinned — only one overlay is recommended", "");
+  }
   const ws = currentWidgets();
   const idx = ws.findIndex((x) => x.id === state.editingId);
   if (idx >= 0) ws[idx] = w; else ws.push(w);
@@ -624,6 +641,15 @@ function openRotation() {
   const r = rotation();
   editor.appendChild(boolField("Enable page rotation", r.enabled === true, "rot-enabled"));
   editor.appendChild(field("Default seconds per page", input("number", r.defaultDurationSeconds ?? 30, "rot-default")));
+  const transOpts = ["random", "off", "fade", "slide-left", "slide-right", "slide-up", "slide-down",
+    "zoom-in", "zoom-out", "wipe-left", "wipe-right", "blur-fade", "scale-rotate"];
+  editor.appendChild(field("Page transition", select(
+    transOpts,
+    state.config.settings?.pageTransition ?? "random",
+    null,
+    "rot-transition",
+  )));
+  editor.appendChild(noteEl("Random picks a different animation each page change. Off = instant swap."));
 
   editor.appendChild(sectionTitle("Order & per-page duration"));
   editor.appendChild(noteEl("Blank duration = use the default above. ↑↓ changes rotation order only (page-bar ←/→ still reorders the page list)."));
@@ -688,6 +714,11 @@ function openRotation() {
       r.enabled = editor.querySelector('[data-name="rot-enabled"]').checked;
       const d = Number(editor.querySelector('[data-name="rot-default"]').value);
       r.defaultDurationSeconds = Math.max(2, d || 30);
+      const trans = editor.querySelector('[data-name="rot-transition"]')?.value;
+      if (trans) {
+        const s = state.config.settings || (state.config.settings = {});
+        s.pageTransition = trans;
+      }
       const natural = pages().map((p) => p.id);
       const newOrder = draft.map((row) => row.id);
       r.order = newOrder.every((id, i) => id === natural[i]) ? [] : newOrder;
@@ -1072,11 +1103,15 @@ function select(options, value, onchange, name) {
   return s;
 }
 function boolField(label, checked, name) {
+  // Renders as a switch, but the control underneath is still a plain checkbox
+  // carrying data-name — gather() reads `.checked` and neither knows nor cares.
   const d = document.createElement("div"); d.className = "field";
-  const l = document.createElement("label"); l.style.display = "flex"; l.style.gap = "8px"; l.style.alignItems = "center";
-  const c = document.createElement("input"); c.type = "checkbox"; c.checked = checked; c.dataset.name = name; c.id = `f-${name}`; c.style.width = "auto";
-  const span = document.createElement("span"); span.textContent = label;
-  l.append(c, span); d.appendChild(l); return d;
+  const l = document.createElement("label"); l.className = "switch-row";
+  const span = document.createElement("span"); span.className = "switch-label"; span.textContent = label;
+  const sw = document.createElement("span"); sw.className = "switch";
+  const c = document.createElement("input"); c.type = "checkbox"; c.checked = checked; c.dataset.name = name; c.id = `f-${name}`;
+  sw.appendChild(c);
+  l.append(span, sw); d.appendChild(l); return d;
 }
 function button(text, cls, fn) { const b = document.createElement("button"); b.type = "button"; b.className = cls; b.textContent = text; b.onclick = fn; return b; }
 
@@ -1272,10 +1307,15 @@ function gatherVariants(editor, { strict = false } = {}) {
   return out;
 }
 
+// Slides carry a stable id so the server can match per-slide secrets across a
+// reorder (see redact.preserve_secrets). Mint one for any slide missing it.
+const slideId = () => `slide-${Math.random().toString(36).slice(2, 10)}`;
+
 function appendSlideshowFields(editor, widget) {
   const cfg = widget.slideshow || { enabled: true, durationSeconds: 30, slides: [] };
   widget.slideshow = cfg;
   if (!Array.isArray(cfg.slides)) cfg.slides = [];
+  for (const s of cfg.slides) if (!s.id) s.id = slideId();
 
   editor.appendChild(boolField("Enable slideshow", cfg.enabled !== false, "ss-enabled"));
   editor.appendChild(field("Seconds per slide", input("number", cfg.durationSeconds ?? 30, "ss-duration")));
@@ -1289,6 +1329,7 @@ function appendSlideshowFields(editor, widget) {
       const card = document.createElement("div");
       card.className = "slide-card";
       card.dataset.slideIndex = i;
+      card.dataset.slideId = slide.id || "";
       const head = document.createElement("div");
       head.className = "slide-card-head";
       head.appendChild(Object.assign(document.createElement("strong"), { textContent: `Slide ${i + 1}` }));
@@ -1325,7 +1366,7 @@ function appendSlideshowFields(editor, widget) {
       const types = slideTypeOptions();
       const typeSel = select(types, slide.type || types[0], (v) => {
         const cur = gatherSlideshow(editor, widget);
-        cur.slides[i] = { type: v, title: cur.slides[i]?.title || "", settings: {} };
+        cur.slides[i] = { id: cur.slides[i]?.id || slideId(), type: v, title: cur.slides[i]?.title || "", settings: {} };
         widget.slideshow = cur;
         appendSlideshowFieldsRebuild(editor, widget);
       }, `ss-${i}-type`);
@@ -1353,7 +1394,7 @@ function appendSlideshowFields(editor, widget) {
   editor.appendChild(button("+ Add slide", "btn", () => {
     const cur = gatherSlideshow(editor, widget);
     const types = slideTypeOptions();
-    cur.slides.push({ type: types[0], title: "", settings: {} });
+    cur.slides.push({ id: slideId(), type: types[0], title: "", settings: {} });
     widget.slideshow = cur;
     appendSlideshowFieldsRebuild(editor, widget);
   }));
@@ -1389,14 +1430,9 @@ function gatherSlideshow(editor, widget) {
         else if (f.type === "number") settings[f.key] = node.value === "" ? null : Number(node.value);
         else settings[f.key] = node.value;
       }
-      // Preserve prior password values when blank (same as top-level widgets).
-      const prev = widget.slideshow?.slides?.[i];
-      if (prev?.settings) {
-        for (const [k, v] of Object.entries(prev.settings)) {
-          if ((k === "apiKey" || k.toLowerCase().includes("key")) && !settings[k] && v) settings[k] = v;
-        }
-      }
-      slides.push({ type, title, settings });
+      // Blank password fields are left blank on purpose: the server matches on
+      // slide id and carries the previous value over (redact.preserve_secrets).
+      slides.push({ id: card.dataset.slideId || slideId(), type, title, settings });
     });
   }
   return { enabled, durationSeconds: duration, slides };
@@ -1424,11 +1460,11 @@ function urlPresets(f, val) {
 function embedPresets(f, val) {
   const wrap = document.createElement("div");
   const ta = textarea(val, "set-" + f.key);       // gather() reads set-<key>
+  ta.className = "mono embed-code";
   ta.placeholder = "Paste a TradingView (or any <div>+<script>) snippet…";
-  ta.style.minHeight = "120px";
 
   const sel = document.createElement("select");
-  sel.style.marginTop = "6px";
+  sel.className = "embed-preset-select";
   const ph = document.createElement("option"); ph.value = ""; ph.textContent = "Quick-fill a preset…";
   sel.appendChild(ph);
   (f.presets || []).forEach((p, i) => {
@@ -1437,11 +1473,10 @@ function embedPresets(f, val) {
 
   const preview = document.createElement("iframe");
   preview.className = "embed-preview";
+  preview.title = "Live preview of the pasted snippet";
   preview.setAttribute("sandbox", "allow-scripts allow-same-origin allow-popups allow-forms");
-  Object.assign(preview.style, { width: "100%", height: "200px", marginTop: "8px",
-    border: "1px solid var(--border, #2a3a5e)", borderRadius: "8px", background: "#0c142e" });
   const previewLabel = noteEl("Live preview");
-  previewLabel.style.marginTop = "8px";
+  previewLabel.className = "note embed-preview-label";
 
   let t;
   const renderPreview = () => { clearTimeout(t); t = setTimeout(() => { preview.srcdoc = buildEmbedDoc(ta.value); }, 400); };
@@ -2105,10 +2140,70 @@ async function restoreBackup(b) {
 
 // ---- toast + wiring ---------------------------------------------------------
 
-let toastTimer;
+// ---- toasts -----------------------------------------------------------------
+//
+// A stack rather than one overwriting element, with two rules that matter:
+//   · errors never auto-dismiss (a failed save that vanishes in 3s is a failed
+//     save the user never sees) — they get an explicit close button;
+//   · identical messages collapse into one row with a ×N counter, so holding a
+//     device stepper produces "Display updated ×10" instead of ten toasts.
+
+const TOAST_MAX = 4;
+const _toasts = new Map(); // key -> { el, count, countEl, timer }
+
+function dismissToast(key) {
+  const t = _toasts.get(key);
+  if (!t) return;
+  clearTimeout(t.timer);
+  t.el.remove();
+  _toasts.delete(key);
+}
+
 function toast(msg, kind) {
-  const t = $("#toast"); t.textContent = msg; t.className = "toast " + (kind || "");
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.add("hidden"), 3000);
+  const stack = $("#toast-stack");
+  if (!stack) return;
+  const key = (kind || "") + "|" + msg;
+
+  const existing = _toasts.get(key);
+  if (existing) {
+    existing.count += 1;
+    existing.countEl.textContent = "×" + existing.count;
+    existing.countEl.classList.remove("hidden");
+    stack.appendChild(existing.el); // re-sort to newest
+    clearTimeout(existing.timer);
+    if (kind !== "err") existing.timer = setTimeout(() => dismissToast(key), 3000);
+    return;
+  }
+
+  const el = document.createElement("div");
+  el.className = "toast " + (kind || "");
+  const text = document.createElement("span");
+  text.textContent = msg;
+  const countEl = document.createElement("span");
+  countEl.className = "toast-count hidden";
+  el.append(text, countEl);
+
+  if (kind === "err") {
+    const x = document.createElement("button");
+    x.className = "toast-x";
+    x.type = "button";
+    x.textContent = "×";
+    x.title = "Dismiss";
+    x.onclick = () => dismissToast(key);
+    el.appendChild(x);
+  }
+
+  stack.appendChild(el);
+  const entry = { el, count: 1, countEl, timer: null };
+  _toasts.set(key, entry);
+  if (kind !== "err") entry.timer = setTimeout(() => dismissToast(key), 3000);
+
+  // Oldest-first eviction, but never drop an error the user hasn't seen.
+  while (_toasts.size > TOAST_MAX) {
+    const oldest = [..._toasts.entries()].find(([, t]) => !t.el.classList.contains("err"));
+    if (!oldest) break;
+    dismissToast(oldest[0]);
+  }
 }
 
 // inject a "Tidy up" button next to "+ Add widget"
@@ -2154,6 +2249,11 @@ $("#btn-refresh").onclick = async () => {
 };
 $("#btn-update").onclick = async () => {
   const btn = $("#btn-update");
+  if (!confirm(
+    "Update the dashboard?\n\n" +
+    "This pulls the latest commit on the current branch and restarts the " +
+    "dashboard if anything moved. Displays will blink."
+  )) return;
   btn.disabled = true;
   try {
     const r = await fetch("/api/system/update", { method: "POST" });

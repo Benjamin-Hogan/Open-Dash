@@ -32,7 +32,10 @@ body {
   height: 100vh;
   width: 100vw;
   overflow: hidden;
+  box-sizing: border-box;
 }
+body.pinned-bottom .grid { padding-bottom: var(--pinned-inset, 52px); }
+body.pinned-top .grid { padding-top: var(--pinned-inset, 52px); }
 /* One pane per mounted page — kept alive across rotation so media can soft-pause.
    Do NOT use visibility:hidden: Chromium discards YouTube iframes and they
    remount from t=0 when the page returns. Opacity + inert is enough. */
@@ -376,8 +379,57 @@ body {
 @keyframes alertpulse { 0%, 100% { box-shadow: 0 12px 32px rgba(0,0,0,.45); } 50% { box-shadow: 0 0 0 6px rgba(239,95,107,.25), 0 12px 32px rgba(0,0,0,.45); } }
 
 /* ---- page + card animations ------------------------------------------------ */
-.grid { transition: opacity .18s ease; }
-.grid.page-out { opacity: 0; }
+.page-pane.pane-exit,
+.page-pane.pane-enter {
+  pointer-events: none;
+  will-change: transform, opacity, filter;
+}
+.page-pane.pane-exit--fade { animation: paneFadeOut 420ms ease forwards; }
+.page-pane.pane-enter--fade { animation: paneFadeIn 420ms ease forwards; }
+.page-pane.pane-exit--slide-left { animation: paneSlideLeftOut 420ms cubic-bezier(.4, 0, .2, 1) forwards; }
+.page-pane.pane-enter--slide-left { animation: paneSlideLeftIn 420ms cubic-bezier(.4, 0, .2, 1) forwards; }
+.page-pane.pane-exit--slide-right { animation: paneSlideRightOut 420ms cubic-bezier(.4, 0, .2, 1) forwards; }
+.page-pane.pane-enter--slide-right { animation: paneSlideRightIn 420ms cubic-bezier(.4, 0, .2, 1) forwards; }
+.page-pane.pane-exit--slide-up { animation: paneSlideUpOut 420ms cubic-bezier(.4, 0, .2, 1) forwards; }
+.page-pane.pane-enter--slide-up { animation: paneSlideUpIn 420ms cubic-bezier(.4, 0, .2, 1) forwards; }
+.page-pane.pane-exit--slide-down { animation: paneSlideDownOut 420ms cubic-bezier(.4, 0, .2, 1) forwards; }
+.page-pane.pane-enter--slide-down { animation: paneSlideDownIn 420ms cubic-bezier(.4, 0, .2, 1) forwards; }
+.page-pane.pane-exit--zoom-in { animation: paneZoomInOut 420ms ease forwards; }
+.page-pane.pane-enter--zoom-in { animation: paneZoomInIn 420ms ease forwards; }
+.page-pane.pane-exit--zoom-out { animation: paneZoomOutOut 420ms ease forwards; }
+.page-pane.pane-enter--zoom-out { animation: paneZoomOutIn 420ms ease forwards; }
+.page-pane.pane-exit--wipe-left { animation: paneWipeLeftOut 420ms ease forwards; }
+.page-pane.pane-enter--wipe-left { animation: paneWipeLeftIn 420ms ease forwards; }
+.page-pane.pane-exit--wipe-right { animation: paneWipeRightOut 420ms ease forwards; }
+.page-pane.pane-enter--wipe-right { animation: paneWipeRightIn 420ms ease forwards; }
+.page-pane.pane-exit--blur-fade { animation: paneBlurOut 420ms ease forwards; }
+.page-pane.pane-enter--blur-fade { animation: paneBlurIn 420ms ease forwards; }
+.page-pane.pane-exit--scale-rotate { animation: paneScaleRotOut 460ms cubic-bezier(.2, .8, .3, 1) forwards; }
+.page-pane.pane-enter--scale-rotate { animation: paneScaleRotIn 460ms cubic-bezier(.2, .8, .3, 1) forwards; }
+
+@keyframes paneFadeOut { to { opacity: 0; } }
+@keyframes paneFadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes paneSlideLeftOut { to { opacity: 0; transform: translateX(-8%); } }
+@keyframes paneSlideLeftIn { from { opacity: 0; transform: translateX(8%); } to { opacity: 1; transform: none; } }
+@keyframes paneSlideRightOut { to { opacity: 0; transform: translateX(8%); } }
+@keyframes paneSlideRightIn { from { opacity: 0; transform: translateX(-8%); } to { opacity: 1; transform: none; } }
+@keyframes paneSlideUpOut { to { opacity: 0; transform: translateY(-6%); } }
+@keyframes paneSlideUpIn { from { opacity: 0; transform: translateY(6%); } to { opacity: 1; transform: none; } }
+@keyframes paneSlideDownOut { to { opacity: 0; transform: translateY(6%); } }
+@keyframes paneSlideDownIn { from { opacity: 0; transform: translateY(-6%); } to { opacity: 1; transform: none; } }
+@keyframes paneZoomInOut { to { opacity: 0; transform: scale(1.06); } }
+@keyframes paneZoomInIn { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: none; } }
+@keyframes paneZoomOutOut { to { opacity: 0; transform: scale(.94); } }
+@keyframes paneZoomOutIn { from { opacity: 0; transform: scale(1.06); } to { opacity: 1; transform: none; } }
+@keyframes paneWipeLeftOut { to { opacity: 0; clip-path: inset(0 100% 0 0); } }
+@keyframes paneWipeLeftIn { from { opacity: 1; clip-path: inset(0 0 0 100%); } to { clip-path: inset(0 0 0 0); } }
+@keyframes paneWipeRightOut { to { opacity: 0; clip-path: inset(0 0 0 100%); } }
+@keyframes paneWipeRightIn { from { opacity: 1; clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes paneBlurOut { to { opacity: 0; filter: blur(8px); } }
+@keyframes paneBlurIn { from { opacity: 0; filter: blur(8px); } to { opacity: 1; filter: none; } }
+@keyframes paneScaleRotOut { to { opacity: 0; transform: scale(.92) rotate(-1.5deg); } }
+@keyframes paneScaleRotIn { from { opacity: 0; transform: scale(1.04) rotate(1.5deg); } to { opacity: 1; transform: none; } }
+
 .card-enter { animation: cardin .45s cubic-bezier(.2, .8, .3, 1) backwards; }
 @keyframes cardin { from { opacity: 0; transform: translateY(14px) scale(.98); } to { opacity: 1; transform: none; } }
 .value-tick { animation: valuetick .9s ease; border-radius: 6px; }
@@ -385,13 +437,74 @@ body {
 
 /* preview mode (admin mini-preview iframe): hide interactive chrome */
 body.preview #scale-gear, body.preview .scale-hud,
-body.preview .pagedots, body.preview #status { display: none !important; }
+body.preview .pagedots, body.preview #status,
+body.preview .pinned-host { display: none !important; }
+
+/* ---- pinned heads-up host -------------------------------------------------- */
+.pinned-host {
+  position: fixed;
+  left: 0;
+  right: 0;
+  z-index: 25;
+  pointer-events: none;
+}
+body.pinned-bottom .pinned-host { bottom: 0; }
+body.pinned-top .pinned-host { top: 0; }
+.pinned-host.hidden { display: none; }
+.pinned-card {
+  border-radius: 0;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  background: color-mix(in srgb, var(--card-bg) 92%, transparent);
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+}
+body.pinned-top .pinned-card { border-top: 0; border-bottom: 1px solid var(--card-border); }
+.pinned-body { padding: 8px 14px; min-height: 36px; }
+
+/* ---- heads-up strip -------------------------------------------------------- */
+.heads-up {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  font-size: 0.875rem;
+}
+.hu-item { display: inline-flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+.hu-val { font-weight: 700; font-variant-numeric: tabular-nums; }
+.hu-sub { color: var(--muted); font-size: 0.8125rem; max-width: 28vw; overflow: hidden; text-overflow: ellipsis; }
+.hu-clock { font-size: 1rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* ---- local photos widget --------------------------------------------------- */
+.photos-stage {
+  position: absolute;
+  inset: 0;
+  background: #000;
+}
+.photos-stage.empty::after {
+  content: attr(data-empty);
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  padding: 12px;
+  text-align: center;
+}
+.photos-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
 
 /* accessibility: no motion for users/kiosks that ask for none */
 @media (prefers-reduced-motion: reduce) {
   .card-enter, .alert, .alert-out, .octo-bar.live .octo-fill, .octo.tone-printing .octo-dot,
-  .alert-danger, .weather svg *, .kp-bar { animation: none !important; }
-  .grid { transition: none; }
+  .alert-danger, .weather svg *, .kp-bar,
+  .page-pane.pane-exit, .page-pane.pane-enter { animation: none !important; }
   .value-tick { animation: none; }
   .pi-ring-fg, .kp-arc-fg { transition: none; }
 }

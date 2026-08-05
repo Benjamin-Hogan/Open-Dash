@@ -60,6 +60,94 @@ def test_migrate_strips_widget_availability():
     assert cfg.pages[0].widgets[0].id == "c1"
 
 
+def _raw_with_widget(widget: dict) -> dict:
+    return {
+        "version": 1,
+        "settings": {"title": "T"},
+        "pages": [{"id": "page-1", "name": "Home", "widgets": [widget]}],
+    }
+
+
+def test_migrate_folds_legacy_embed_into_settings():
+    """`extra="forbid"` would 422 a surviving `embed` key, so this is mandatory."""
+    raw = _raw_with_widget(
+        {
+            "id": "f1",
+            "type": "iframe",
+            "grid": {"x": 0, "y": 0, "w": 4, "h": 3},
+            "settings": {"url": "https://example.com"},
+            "embed": {"disableSandbox": True, "allow": "fullscreen"},
+        }
+    )
+    out = migrations.migrate(raw)
+    w = out["pages"][0]["widgets"][0]
+    assert "embed" not in w
+    assert w["settings"]["disableSandbox"] is True
+    assert w["settings"]["allow"] == "fullscreen"
+    # Round-trips through the validator that would previously have rejected it.
+    cfg = DashboardConfig.model_validate(out)
+    assert cfg.pages[0].widgets[0].settings["disableSandbox"] is True
+
+
+def test_migrate_embed_does_not_clobber_existing_settings():
+    """The admin has been writing settings all along — those values win."""
+    raw = _raw_with_widget(
+        {
+            "id": "f1",
+            "type": "iframe",
+            "grid": {"x": 0, "y": 0, "w": 4, "h": 3},
+            "settings": {"url": "https://example.com", "allow": "camera"},
+            "embed": {"allow": "fullscreen"},
+        }
+    )
+    out = migrations.migrate(raw)
+    assert out["pages"][0]["widgets"][0]["settings"]["allow"] == "camera"
+
+
+def test_migrate_folds_embed_on_slides_too():
+    raw = _raw_with_widget(
+        {
+            "id": "s1",
+            "type": "slideshow",
+            "grid": {"x": 0, "y": 0, "w": 6, "h": 4},
+            "slideshow": {
+                "enabled": True,
+                "slides": [
+                    {"type": "iframe", "settings": {}, "embed": {"disableSandbox": True}}
+                ],
+            },
+        }
+    )
+    out = migrations.migrate(raw)
+    slide = out["pages"][0]["widgets"][0]["slideshow"]["slides"][0]
+    assert "embed" not in slide
+    assert slide["settings"]["disableSandbox"] is True
+    DashboardConfig.model_validate(out)
+
+
+def test_migrate_backfills_slide_ids_and_is_idempotent():
+    raw = _raw_with_widget(
+        {
+            "id": "s1",
+            "type": "slideshow",
+            "grid": {"x": 0, "y": 0, "w": 6, "h": 4},
+            "slideshow": {
+                "enabled": True,
+                "slides": [{"type": "clock", "settings": {}}, {"type": "text", "settings": {}}],
+            },
+        }
+    )
+    once = migrations.migrate(raw)
+    ids = [s["id"] for s in once["pages"][0]["widgets"][0]["slideshow"]["slides"]]
+    assert all(i.startswith("slide-") for i in ids)
+    assert len(set(ids)) == 2
+
+    twice = migrations.migrate(once)
+    assert [s["id"] for s in twice["pages"][0]["widgets"][0]["slideshow"]["slides"]] == ids
+    # A config with nothing to migrate is returned untouched.
+    assert migrations.migrate(twice) is twice
+
+
 def test_safe_backup_path_rejects_traversal():
     with pytest.raises(ValueError):
         config_store._safe_backup_path("../evil.json")

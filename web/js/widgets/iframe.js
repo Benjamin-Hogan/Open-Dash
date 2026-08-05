@@ -1,5 +1,9 @@
 // Iframe embed — windy, tradingview, NASA Eyes, FlightRadar, etc.
 // Sandbox is ON by default; disableSandbox is an explicit per-widget opt-out.
+//
+// The security triplet (disableSandbox/referrerPolicy/allow) lives in settings,
+// not in a typed model, so variants can override it per scene —
+// effectiveSettings() merges variant overrides into settings only.
 import { define } from "./registry.js";
 import { el, effectiveSettings } from "./dom.js";
 
@@ -24,12 +28,11 @@ define("iframe", {
       class: "embed-frame",
       src: s.url || "about:blank",
       loading: "lazy",
-      referrerpolicy: widget.embed?.referrerPolicy || s.referrerPolicy,
-      allow: widget.embed?.allow || s.allow,
+      referrerpolicy: s.referrerPolicy,
+      allow: s.allow,
     });
     // sandbox unless explicitly disabled
-    const disable = widget.embed?.disableSandbox ?? s.disableSandbox;
-    if (!disable) {
+    if (!s.disableSandbox) {
       frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-popups allow-forms");
     }
     root.appendChild(frame);

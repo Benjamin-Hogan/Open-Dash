@@ -2,9 +2,15 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "admin",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "server.run"],
+      "port": 8081
+    },
+    {
       "name": "dashboard",
       "runtimeExecutable": "powershell",
-      "runtimeArgs": ["-NoProfile", "-Command", "Write-Host 'reusing docker server on 8082'"],
+      "runtimeArgs": ["-NoProfile", "-Command", "Write-Host 'attaching to server.run on 8082'"],
       "port": 8082
     }
   ]

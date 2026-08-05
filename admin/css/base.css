@@ -1,0 +1,88 @@
+/* Reset, document defaults, and the shared focus/scroll treatment. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-app);
+  color: var(--text-1);
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  line-height: var(--lh-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4 {
+  margin: 0;
+  line-height: var(--lh-tight);
+  font-weight: var(--fw-bold);
+}
+h1 { font-size: var(--fs-xl); }
+h2 { font-size: var(--fs-lg); }
+h3 { font-size: var(--fs-md); }
+
+p { margin: 0 0 var(--sp-3); }
+
+a {
+  color: var(--accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+/* Inputs inherit the UI font by default in too few browsers to rely on it. */
+button, input, select, textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* One focus treatment for everything. :focus-visible only, so pointer users
+ * never see a ring, but keyboard users always do — including on custom
+ * controls built from <button> and <div tabindex>. */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--r-sm);
+}
+
+/* Numbers in tables, meters and steppers must not jitter as they change. */
+.tnum,
+.badge,
+[data-tnum] {
+  font-variant-numeric: tabular-nums;
+}
+
+.muted { color: var(--text-2); font-weight: var(--fw-normal); }
+.small { font-size: var(--fs-sm); }
+.hidden { display: none !important; }
+
+.visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Scrollbars: present but quiet, so scrolling regions don't shout. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: var(--r-pill);
+}
+*::-webkit-scrollbar-thumb:hover { background-color: var(--text-3); background-clip: content-box; }

@@ -5,7 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Pi Dashboard — Admin</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="/admin.css" />
+  <link rel="stylesheet" href="/css/tokens.css" />
+  <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/components.css" />
+  <link rel="stylesheet" href="/css/panels.css" />
+  <!-- Blocking on purpose: sets [data-theme] before first paint. -->
+  <script src="/js/theme.js"></script>
 </head>
 <body>
   <div class="lan-banner" role="status">
@@ -49,7 +54,7 @@
     <section id="editor" class="panel editor hidden"></section>
   </main>
 
-  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+  <div id="toast-stack" class="toast-stack" role="status" aria-live="polite"></div>
   <script type="module" src="/admin.js"></script>
 </body>
 </html>

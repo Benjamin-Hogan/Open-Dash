@@ -71,6 +71,17 @@ async def put_config(new: DashboardConfig):
     return public_dump(saved)
 
 
+@app.post("/api/config/validate")
+async def validate_config(new: DashboardConfig):
+    """Dry-run validation: same validator as PUT, no version gate, no write.
+
+    FastAPI does the work — an invalid body never reaches this body and comes
+    back as a 422 whose ``detail[].loc`` the admin maps to individual fields.
+    Lets the admin flag a bad value before the user commits to a save.
+    """
+    return {"ok": True}
+
+
 class SecretsBody(BaseModel):
     values: dict[str, str]
 

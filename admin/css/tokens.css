@@ -1,0 +1,180 @@
+/* Design tokens — the only place raw values live.
+ *
+ * Component CSS must reference these, never a literal hex or px size, so that
+ * light/dark and any future density change is a one-file edit. Theme resolution
+ * is: [data-theme="light"|"dark"] on <html> wins; with data-theme="auto" (or
+ * absent) the OS preference decides. admin/js/theme.js applies the stored
+ * choice before first paint.
+ */
+
+:root {
+  /* ---- type: 1.2-ish ratio, 13px base. Denser than a content page on purpose. */
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15px;
+  --fs-xl: 19px;
+  --fs-2xl: 24px;
+  --lh-tight: 1.25;
+  --lh-body: 1.5;
+  --fw-normal: 400;
+  --fw-medium: 550;
+  --fw-bold: 680;
+  --font-ui: system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+
+  /* ---- space: 4px base */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+
+  /* ---- shape */
+  --r-sm: 6px;
+  --r-md: 9px;
+  --r-lg: 14px;
+  --r-pill: 999px;
+
+  /* ---- control sizing (keeps inputs/buttons/selects on one rhythm) */
+  --control-h-sm: 26px;
+  --control-h: 32px;
+  --control-px: var(--sp-3);
+
+  /* ---- motion: one curve, two durations. State is fast, surfaces are slower. */
+  --dur-fast: 120ms;
+  --dur-med: 200ms;
+  --ease: cubic-bezier(.2, .8, .3, 1);
+
+  /* ---- z layers */
+  --z-sticky: 10;
+  --z-popover: 100;
+  --z-modal: 200;
+  --z-toast: 300;
+}
+
+/* ---- dark (default) ------------------------------------------------------ */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg-app: #0b0d11;
+  --bg-sunken: #07090c;
+  --surface-1: #12151b;
+  --surface-2: #181c24;
+  --surface-3: #1f242e;
+  --surface-hover: #202631;
+
+  --border-subtle: #232936;
+  --border-strong: #333b4a;
+
+  --text-1: #e8edf4;
+  --text-2: #97a3b6;
+  --text-3: #6b7688;
+
+  --accent: #4aa3ff;
+  --accent-fg: #06121f;
+  --accent-soft: #16283d;
+
+  --ok: #3fc77a;
+  --warn: #e0a84a;
+  --danger: #ef5f6b;
+  --info: #4aa3ff;
+  --ok-soft: #12291c;
+  --warn-soft: #2a1f14;
+  --danger-soft: #2d151a;
+
+  --e-1: 0 1px 2px rgb(0 0 0 / .30);
+  --e-2: 0 4px 12px rgb(0 0 0 / .38);
+  --e-3: 0 12px 32px rgb(0 0 0 / .48);
+  --scrim: rgb(0 0 0 / .58);
+}
+
+/* ---- light --------------------------------------------------------------- */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-app: #f5f6f8;
+  --bg-sunken: #eaecf0;
+  --surface-1: #ffffff;
+  --surface-2: #f7f8fa;
+  --surface-3: #ffffff;
+  --surface-hover: #eef0f4;
+
+  --border-subtle: #e3e6eb;
+  --border-strong: #c7ced8;
+
+  --text-1: #10151c;
+  --text-2: #57616f;
+  --text-3: #838d9c;
+
+  --accent: #0b6fdc;
+  --accent-fg: #ffffff;
+  --accent-soft: #e6f0fd;
+
+  --ok: #157f45;
+  --warn: #8f5f06;
+  --danger: #c22f3c;
+  --info: #0b6fdc;
+  --ok-soft: #e4f5ea;
+  --warn-soft: #fbf1de;
+  --danger-soft: #fdeaec;
+
+  --e-1: 0 1px 2px rgb(16 21 28 / .07);
+  --e-2: 0 4px 12px rgb(16 21 28 / .10);
+  --e-3: 0 12px 32px rgb(16 21 28 / .16);
+  --scrim: rgb(16 21 28 / .38);
+}
+
+/* ---- auto: follow the OS unless an explicit choice is set ---------------- */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]):not([data-theme="light"]),
+  :root[data-theme="auto"] {
+    color-scheme: light;
+
+    --bg-app: #f5f6f8;
+    --bg-sunken: #eaecf0;
+    --surface-1: #ffffff;
+    --surface-2: #f7f8fa;
+    --surface-3: #ffffff;
+    --surface-hover: #eef0f4;
+
+    --border-subtle: #e3e6eb;
+    --border-strong: #c7ced8;
+
+    --text-1: #10151c;
+    --text-2: #57616f;
+    --text-3: #838d9c;
+
+    --accent: #0b6fdc;
+    --accent-fg: #ffffff;
+    --accent-soft: #e6f0fd;
+
+    --ok: #157f45;
+    --warn: #8f5f06;
+    --danger: #c22f3c;
+    --ok-soft: #e4f5ea;
+    --warn-soft: #fbf1de;
+    --danger-soft: #fdeaec;
+
+    --e-1: 0 1px 2px rgb(16 21 28 / .07);
+    --e-2: 0 4px 12px rgb(16 21 28 / .10);
+    --e-3: 0 12px 32px rgb(16 21 28 / .16);
+    --scrim: rgb(16 21 28 / .38);
+  }
+}
+
+/* Focus ring is defined after the palettes so it picks up the resolved accent.
+ * Two rings: an inner one in the page colour to hold the ring off the control. */
+:root {
+  --focus-ring: 0 0 0 2px var(--bg-app), 0 0 0 4px var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur-med: 0ms;
+  }
+}

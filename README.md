@@ -48,7 +48,8 @@ live-reloads over Server-Sent Events.
   **theme/title** are editable in the admin. **Page rotation** (separate from the
   Slideshow widget) edits enable/default duration, explicit page order, and
   per-page duration. Page tabs show a badge when a schedule or live condition is
-  on. **Displays** support rename plus scale/page filters. **Layout** also pins
+  on. **Page rotation** also sets **page transition** (`random`, `off`, or a fixed
+  animation style). **Displays** support rename plus scale/page filters. **Layout** also pins
   an optional **home location** (lat/lon) used by NWS alerts and as the default
   for weather / air-quality widgets. **Alerts** configures source toggles
   (OctoPrint / NWS / space weather), NWS minimum severity, Kp threshold +
@@ -70,7 +71,7 @@ docker compose up --build
 
 `compose.yaml` bind-mounts `server/`, `web/`, and `admin/` and runs
 `python -m server.run` by default. Config/secrets persist in the `dashboard-data`
-volume.
+volume. Optionally mount `./photos` → `/app/photos` for the **Local photos** widget.
 
 For local hot-reload during development, override the service command to:
 
@@ -111,7 +112,9 @@ separate `image`/`iframe` pointed at `/webcam/?action=stream`), `youtube-live`
 TTL), `ical` (lookahead days, location line, optional cache TTL), `air-quality`
 (optional lat/lon + NO₂ toggle + cache TTL; blank lat/lon uses the home location
 from Layout), `slideshow` (rotates child widgets with real media suspend/resume —
-slides edited in the widget form).
+slides edited in the widget form), `heads-up` (pinned glance strip: clock, weather,
+calendar countdown, print status — enable **Pin to all pages**), `photos` (local
+NAS folder slideshow via `PHOTOS_DIR`, optional `./photos` Docker mount).
 
 `embed` runs a pasted `<div>+<script>` snippet (TradingView and similar) inside a
 sandboxed iframe via `srcdoc` — for third-party widgets that ship code rather than
@@ -172,6 +175,7 @@ network-drive bind-mount problems.
 ## Docs
 
 - Feature ideation (ranked directions): [`docs/ideation/2026-07-17-open-dash-feature-ideas.md`](docs/ideation/2026-07-17-open-dash-feature-ideas.md)
+- Display bundle requirements: [`docs/plans/2026-07-20-display-bundle-plan.md`](docs/plans/2026-07-20-display-bundle-plan.md)
 - Scene modes requirements: [`docs/plans/2026-07-17-001-feat-scene-modes-plan.md`](docs/plans/2026-07-17-001-feat-scene-modes-plan.md)
 
 ### Scene modes (admin)
@@ -182,3 +186,10 @@ network-drive bind-mount problems.
 4. With no manual hold, the first scene whose schedule is in-window auto-applies (list order).
 
 Device **Shows** filters still intersect with a scene’s page set.
+
+### Display experience (kiosk)
+
+- **Heads-up strip:** add a **Heads-up strip** widget, enable **Pin to all pages**, configure glance items (clock, weather, calendar, print).
+- **Touch swipe:** swipe left/right on the dashboard to change pages (pauses auto-rotation like page dots).
+- **Page transitions:** **Page rotation** → **Page transition** (`random` picks a different animation each change).
+- **Local photos:** mount `./photos` in Docker (or set `PHOTOS_DIR`), add a **Local photos** widget with folder `.` or a subfolder name.

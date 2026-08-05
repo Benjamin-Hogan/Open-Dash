@@ -176,6 +176,29 @@ async def events_stream():
 
 # --- specific data routes (declared before the generic catch-all) -------------
 
+@router.get("/photos/file")
+async def photos_file(folder: str = ".", name: str = ""):
+    """Serve one image from PHOTOS_DIR with path validation."""
+    from fastapi.responses import FileResponse
+
+    from .shared import photo_paths
+
+    try:
+        path = photo_paths.resolve_file(folder, name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+    media = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }.get(path.suffix.lower(), "application/octet-stream")
+    return FileResponse(path, media_type=media, headers={"Cache-Control": "public, max-age=300"})
+
+
 @router.get("/data/stocks/search")
 async def stocks_search(q: str):
     if not q.strip():

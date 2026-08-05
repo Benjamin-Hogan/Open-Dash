@@ -24,12 +24,17 @@ class GridPos(BaseModel):
 
 
 class Slide(BaseModel):
-    """One slide in a slideshow widget — a mini-widget (type + settings)."""
+    """One slide in a slideshow widget — a mini-widget (type + settings).
+
+    ``id`` exists so per-slide secrets survive a reorder: preserve_secrets
+    matches on it rather than on list position. Blank on configs written before
+    it existed; migrations backfills those.
+    """
     model_config = ConfigDict(extra="forbid")
+    id: str = ""
     type: str
     title: str = ""
     settings: dict[str, Any] = Field(default_factory=dict)
-    embed: "Embed | None" = None
 
 
 class Slideshow(BaseModel):
@@ -174,20 +179,15 @@ class Variant(BaseModel):
     overrides: dict[str, Any] = Field(default_factory=dict)
 
 
-class Embed(BaseModel):
-    """iframe security/permission triplet, declared once per widget."""
-    model_config = ConfigDict(extra="forbid")
-    disableSandbox: bool = False
-    referrerPolicy: str | None = None
-    allow: str | None = None
-
-
 class Widget(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(min_length=1)
     type: str = Field(min_length=1)
     title: str = "Untitled"
     enabled: bool = True
+    # When true, dashboard renders this widget in the pinned overlay (not inside
+    # the rotating page pane). Intended for heads-up strips.
+    pinned: bool = False
     grid: GridPos = Field(default_factory=GridPos)
     # One refresh key for every widget type (the dual refreshSeconds/refreshMinutes
     # split in the original is gone). None = no auto-refresh.
@@ -195,7 +195,11 @@ class Widget(BaseModel):
     slideshow: Slideshow | None = None
     schedule: Schedule | None = None
     variants: list[Variant] = Field(default_factory=list)
-    embed: Embed | None = None
+    # Note: there is deliberately no typed `embed` model. The iframe security
+    # triplet (disableSandbox/referrerPolicy/allow) lives in `settings` so that
+    # variants can override it per scene — `effectiveSettings()` merges variant
+    # overrides into settings only. Legacy `embed` keys are folded into settings
+    # by migrations._merge_embed_into_settings.
     # Type-specific options (url, units, symbols, channelId, ...). Validated by
     # the owning plugin's schema, not here.
     settings: dict[str, Any] = Field(default_factory=dict)
@@ -245,6 +249,8 @@ class Settings(BaseModel):
     columns: int = Field(default=12, ge=1, le=48)
     rowHeightPx: int = Field(default=90, ge=20)
     gapPx: int = Field(default=12, ge=0)
+    # Page rotation transition: off | random | fade | slide-left | … (see dashboard.css)
+    pageTransition: str = "random"
     theme: Theme = Field(default_factory=Theme)
     location: LocationSettings = Field(default_factory=LocationSettings)
     alerts: AlertSettings = Field(default_factory=AlertSettings)
@@ -352,7 +358,3 @@ class DashboardConfig(BaseModel):
         if v is None or v == "":
             return None
         return v
-
-
-# resolve the forward ref in Slide.embed
-Slide.model_rebuild()
