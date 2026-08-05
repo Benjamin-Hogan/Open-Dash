@@ -10,6 +10,9 @@
   <link rel="stylesheet" href="/css/components.css" />
   <link rel="stylesheet" href="/css/shell.css" />
   <link rel="stylesheet" href="/css/panels.css" />
+  <!-- The dashboard's own stylesheet: the canvas mounts real widgets, so they
+       need their real styling. Scoped to .canvas-box-live in panels.css. -->
+  <link rel="stylesheet" href="/dashcss/dashboard.css" />
   <!-- Blocking on purpose: sets [data-theme] before first paint. -->
   <script src="/js/theme.js"></script>
 </head>
@@ -36,12 +39,15 @@
         <div class="canvas-head">
           <h2>Layout</h2>
           <div class="canvas-head-actions">
-            <span class="muted small" id="canvas-hint">Drag to move · drag corner to resize</span>
+            <span class="muted small" id="canvas-hint">Drag to move · drag an edge to resize</span>
+            <button id="btn-live" class="btn small ghost" aria-pressed="true"
+                    title="Render real widgets on the canvas">Live</button>
             <button id="btn-tidy" class="btn small ghost" title="Auto-arrange widgets with no gaps or overlaps">Tidy up</button>
             <button id="btn-preview" class="btn small ghost">Preview</button>
             <button id="btn-add" class="btn primary small">+ Add widget</button>
           </div>
         </div>
+        <div id="bulk-bar" class="bulk-bar hidden"></div>
         <div class="canvas-scroll">
           <div id="canvas" class="layout-canvas"></div>
           <div id="preview-wrap" class="preview-wrap hidden"><iframe id="preview-frame" title="Live page preview"></iframe></div>

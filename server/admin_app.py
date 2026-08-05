@@ -31,6 +31,7 @@ from .shared.staticfiles import NoCacheStaticFiles
 log = logging.getLogger("dashboard.admin")
 
 WIDGETS_DIR = WEB_DIR / "js" / "widgets"
+DASH_CSS_DIR = WEB_DIR / "css"
 
 
 @asynccontextmanager
@@ -177,5 +178,9 @@ async def system_update_now(background: BackgroundTasks):
 # Same-origin matters twice over: ES module identity is per-URL, so importing
 # the registry through a second path would instantiate a second, empty one.
 app.mount("/widgets", NoCacheStaticFiles(directory=str(WIDGETS_DIR)), name="widgets")
+# The admin canvas mounts real widget instances, so it needs the dashboard's own
+# stylesheet to render them as they will actually look. Scoped to the canvas in
+# admin CSS so these rules can't leak into the admin's own chrome.
+app.mount("/dashcss", NoCacheStaticFiles(directory=str(DASH_CSS_DIR)), name="dashcss")
 # Admin UI at root.
 app.mount("/", NoCacheStaticFiles(directory=str(WEB_DIR.parent / "admin"), html=True), name="admin")

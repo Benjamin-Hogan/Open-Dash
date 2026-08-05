@@ -12,8 +12,9 @@ import * as api from "/js/core/api.js";
 import * as savebar from "/js/savebar.js";
 import { clone } from "/js/core/clone.js";
 import { rotationPages, hasCustomOrder, syncRotationOrder } from "/js/model/order.js";
+import * as liveHost from "/js/view/live-host.js";
 
-const state = { config: null, activePage: 0, editingId: null };
+const state = { config: null, activePage: 0, editingId: null, selection: new Set() };
 const $ = (s) => document.querySelector(s);
 
 const EDITOR_ROW = 26; // px per grid row in the visual editor
@@ -225,6 +226,7 @@ async function deletePage(i) {
 
 function renderCanvas() {
   const canvas = $("#canvas");
+  liveHost.unmountAll();
   canvas.replaceChildren();
   const cols = state.config.settings?.columns || 12;
   const widgets = currentWidgets();
@@ -234,17 +236,42 @@ function renderCanvas() {
   canvas.style.setProperty("--rows", rows);
   canvas.style.setProperty("--editor-row", EDITOR_ROW + "px");
   canvas.style.setProperty("--canvas-gap", CANVAS_GAP + "px");
+
+  // Guides are drawn into an overlay so they can sit above every box without
+  // being a child of any of them.
+  const guideLayer = document.createElement("div");
+  guideLayer.className = "guide-layer";
+  guideLayer.id = "guide-layer";
+  canvas.appendChild(guideLayer);
+
   const bad = problems(cols);
+  const boxes = [];
   widgets.forEach((w) => {
     if (!w.grid) w.grid = { x: 0, y: 0, w: 4, h: 3 };
     const box = makeBox(w, cols);
     if (bad.has(w.id)) box.classList.add("overlap");
     canvas.appendChild(box);
+    boxes.push(box);
   });
+
   if (!widgets.length) {
-    canvas.appendChild(Object.assign(document.createElement("div"), { className: "canvas-empty", textContent: "No widgets on this page — click “+ Add widget”." }));
+    canvas.appendChild(Object.assign(document.createElement("div"), {
+      className: "canvas-empty",
+      textContent: "No widgets on this page — click “+ Add widget”.",
+    }));
   }
+
+  // Mount once the boxes are in the document, so container queries see their
+  // real size. Mounting is eager rather than observer-driven: an
+  // IntersectionObserver only fires while the page is compositing, so a
+  // background tab would sit there with every box empty. The observer below
+  // only releases widgets that scroll away.
+  liveHost.observe($(".canvas-scroll"));
+  for (const box of boxes) liveHost.track(box);
+  liveHost.mountAll(boxes);
+
   updateHint(bad.size);
+  updateBulkBar();
 }
 
 // flag widgets that overlap each other or run off the grid (x+w > cols)
@@ -302,22 +329,28 @@ function placeBox(box, w) {
   box.style.gridRow = `${w.grid.y + 1} / span ${w.grid.h}`;
 }
 
+// Eight resize handles, not just the SE corner.
+const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+
 function makeBox(w, cols) {
   const plugin = registry.get(w.type);
   const box = document.createElement("div");
   box.className = "canvas-box"
     + (w.enabled === false ? " disabled" : "")
-    + (state.editingId === w.id ? " selected" : "");
+    + (isSelected(w.id) ? " selected" : "");
+  box.dataset.widgetId = w.id;
   box.tabIndex = 0;
-  box.setAttribute("aria-label", `${w.title || w.type}, ${w.grid?.w ?? 0} by ${w.grid?.h ?? 0}`);
-  // Clicking a box selects it — the inspector follows the selection rather than
-  // requiring a trip to the ✎ button.
+  box.setAttribute("role", "listitem");
+  box.setAttribute("aria-label",
+    `${w.title || w.type}, column ${w.grid.x + 1} row ${w.grid.y + 1}, ${w.grid.w} by ${w.grid.h}`);
   box.addEventListener("click", (e) => {
-    if (e.target.closest(".box-btn, .resize-handle")) return;
-    if (state.editingId !== w.id) openEditor(w.id);
+    if (e.target.closest(".box-btn, .resize-handle, .live-poster-go")) return;
+    if (e.shiftKey || e.ctrlKey || e.metaKey) { toggleSelect(w.id); return; }
+    selectOnly(w.id);
   });
   placeBox(box, w);
 
+  // Chrome: title, type and tools sit above the live render.
   const label = document.createElement("div");
   label.className = "box-label";
   label.innerHTML = `<span class="box-title"></span><span class="box-type"></span>`;
@@ -330,65 +363,256 @@ function makeBox(w, cols) {
     pin.title = "Pinned overlay";
     label.appendChild(pin);
   }
+  const variant = activeVariantLabel(w);
+  if (variant) {
+    const v = document.createElement("span");
+    v.className = "box-variant";
+    v.textContent = variant;
+    v.title = `Variant “${variant}” is what renders right now`;
+    label.appendChild(v);
+  }
   box.appendChild(label);
+
+  // The live render. Pointer events off so dragging the box never lands inside
+  // an embedded iframe or steals a click from the canvas.
+  const live = document.createElement("div");
+  live.className = "canvas-box-live";
+  live._widget = w;
+  box.appendChild(live);
 
   const tools = document.createElement("div");
   tools.className = "box-tools";
-  const edit = document.createElement("button");
-  edit.className = "box-btn"; edit.textContent = "✎"; edit.title = "Edit";
-  edit.onclick = (e) => { e.stopPropagation(); openEditor(w.id); };
   const del = document.createElement("button");
   del.className = "box-btn"; del.textContent = "🗑"; del.title = "Delete";
   del.onclick = (e) => { e.stopPropagation(); delWidget(w.id); };
-  tools.append(edit, del);
+  tools.append(del);
   box.appendChild(tools);
 
-  const handle = document.createElement("div");
-  handle.className = "resize-handle";
-  box.appendChild(handle);
+  for (const dir of HANDLES) {
+    const h = document.createElement("div");
+    h.className = `resize-handle rh-${dir}`;
+    h.dataset.dir = dir;
+    h.addEventListener("pointerdown", (e) => { e.stopPropagation(); startDrag(e, w, box, cols, "resize", dir); });
+    box.appendChild(h);
+  }
 
   box.addEventListener("pointerdown", (e) => startDrag(e, w, box, cols, "move"));
-  handle.addEventListener("pointerdown", (e) => { e.stopPropagation(); startDrag(e, w, box, cols, "resize"); });
   return box;
+}
+
+// ---- selection --------------------------------------------------------------
+
+function isSelected(id) { return state.editingId === id || state.selection.has(id); }
+
+function selectOnly(id) {
+  state.selection.clear();
+  if (state.editingId !== id) openEditor(id);
+  else { renderCanvas(); renderList(); }
+}
+
+function toggleSelect(id) {
+  // Shift-clicking builds a multi-selection; the inspector steps aside for the
+  // bulk toolbar, since "edit these five widgets" isn't a form.
+  if (state.editingId && state.editingId !== id) state.selection.add(state.editingId);
+  state.editingId = null;
+  if (state.selection.has(id)) state.selection.delete(id);
+  else state.selection.add(id);
+  if (state.selection.size === 1) {
+    const only = [...state.selection][0];
+    state.selection.clear();
+    openEditor(only);
+    return;
+  }
+  if (!state.selection.size) { showDefault(); return; }
+  renderCanvas(); renderList();
+  openBulk();
+}
+
+function selectedWidgets() {
+  const ids = state.selection.size ? state.selection : new Set(state.editingId ? [state.editingId] : []);
+  return currentWidgets().filter((w) => ids.has(w.id));
 }
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
-function startDrag(e, w, box, cols, mode) {
-  if (e.target.closest(".box-btn")) return; // let buttons click
+function rectsOverlap(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+/** Would this rect collide with any widget other than the ones being moved? */
+function collides(rect, ignoreIds) {
+  return currentWidgets().some((o) =>
+    !ignoreIds.has(o.id) && o.grid && rectsOverlap(rect, o.grid));
+}
+
+/**
+ * Snap an edge to a neighbour's edge when it's within one cell, and report the
+ * lines to draw. Guides are what make a layout feel deliberate rather than
+ * approximately-dragged.
+ */
+function snapAndGuide(rect, ignoreIds, cols) {
+  const guides = { v: new Set(), h: new Set() };
+  const others = currentWidgets().filter((o) => !ignoreIds.has(o.id) && o.grid);
+
+  const vEdges = [0, cols];
+  const hEdges = [0];
+  for (const o of others) {
+    vEdges.push(o.grid.x, o.grid.x + o.grid.w);
+    hEdges.push(o.grid.y, o.grid.y + o.grid.h);
+  }
+
+  // Snap whichever of the two edges is closest, at most one cell away.
+  const snapAxis = (lo, size, edges, max) => {
+    let best = null;
+    for (const e of edges) {
+      for (const [edge, isStart] of [[lo, true], [lo + size, false]]) {
+        const d = Math.abs(edge - e);
+        if (d > 0 && d <= 1 && (!best || d < best.d)) best = { d, delta: e - edge, isStart, line: e };
+      }
+    }
+    if (!best) return { lo, lines: [] };
+    const next = clamp(lo + best.delta, 0, Math.max(0, max - size));
+    return { lo: next, lines: [best.line] };
+  };
+
+  const sx = snapAxis(rect.x, rect.w, vEdges, cols);
+  const sy = snapAxis(rect.y, rect.h, hEdges, Infinity);
+  rect.x = sx.lo;
+  rect.y = sy.lo;
+  for (const l of sx.lines) guides.v.add(l);
+  for (const l of sy.lines) guides.h.add(l);
+
+  // Alignment (not snapping): show a line when edges already coincide.
+  for (const o of others) {
+    if (o.grid.x === rect.x || o.grid.x + o.grid.w === rect.x + rect.w) guides.v.add(o.grid.x === rect.x ? rect.x : rect.x + rect.w);
+    if (o.grid.y === rect.y || o.grid.y + o.grid.h === rect.y + rect.h) guides.h.add(o.grid.y === rect.y ? rect.y : rect.y + rect.h);
+  }
+  return guides;
+}
+
+function drawGuides(guides, cols) {
+  const layer = $("#guide-layer");
+  if (!layer) return;
+  layer.replaceChildren();
+  if (!guides) return;
+  for (const x of guides.v) {
+    const g = document.createElement("div");
+    g.className = "guide guide-v";
+    g.style.left = `calc(${(x / cols) * 100}% - 0.5px)`;
+    layer.appendChild(g);
+  }
+  for (const y of guides.h) {
+    const g = document.createElement("div");
+    g.className = "guide guide-h";
+    g.style.top = `${y * (EDITOR_ROW + CANVAS_GAP)}px`;
+    layer.appendChild(g);
+  }
+}
+
+function showDragBadge(box, rect) {
+  let badge = box.querySelector(".drag-badge");
+  if (!badge) {
+    badge = document.createElement("div");
+    badge.className = "drag-badge";
+    box.appendChild(badge);
+  }
+  badge.textContent = `${rect.w} × ${rect.h}  ·  x ${rect.x} y ${rect.y}`;
+}
+
+function startDrag(e, w, box, cols, mode, dir = "se") {
+  if (e.target.closest(".box-btn, .live-poster-go")) return; // let buttons click
+  if (e.button !== 0) return;
   e.preventDefault();
   const canvas = $("#canvas");
   const cellW = canvas.getBoundingClientRect().width / cols;
   const cellH = EDITOR_ROW + CANVAS_GAP;
   const start = { x: e.clientX, y: e.clientY };
   const orig = { ...w.grid };
+  // Moving a multi-selection drags the whole group by the same delta.
+  const group = mode === "move" && isSelected(w.id) && selectedWidgets().length > 1
+    ? selectedWidgets() : [w];
+  const groupOrig = new Map(group.map((g) => [g.id, { ...g.grid }]));
+  const ignore = new Set(group.map((g) => g.id));
+
   box.setPointerCapture(e.pointerId);
   box.classList.add("dragging");
+  let lastGood = new Map(group.map((g) => [g.id, { ...g.grid }]));
 
   const onMove = (ev) => {
-    const dx = Math.round((ev.clientX - start.x) / cellW);
-    const dy = Math.round((ev.clientY - start.y) / cellH);
+    let dx = Math.round((ev.clientX - start.x) / cellW);
+    let dy = Math.round((ev.clientY - start.y) / cellH);
+    const freeform = ev.altKey; // Alt suspends snapping for a deliberate nudge
+
+    let guides = null;
     if (mode === "move") {
-      w.grid.x = clamp(orig.x + dx, 0, cols - w.grid.w);
-      w.grid.y = Math.max(0, orig.y + dy);
+      const lead = { ...groupOrig.get(w.id) };
+      lead.x = clamp(lead.x + dx, 0, cols - lead.w);
+      lead.y = Math.max(0, lead.y + dy);
+      if (!freeform) guides = snapAndGuide(lead, ignore, cols);
+      dx = lead.x - groupOrig.get(w.id).x;
+      dy = lead.y - groupOrig.get(w.id).y;
+
+      const next = group.map((g) => {
+        const o = groupOrig.get(g.id);
+        return { id: g.id, x: clamp(o.x + dx, 0, cols - o.w), y: Math.max(0, o.y + dy), w: o.w, h: o.h };
+      });
+      // Overlaps are blocked outright rather than flagged after the drop.
+      const blocked = next.some((r) => collides(r, ignore));
+      box.classList.toggle("blocked", blocked);
+      if (!blocked) {
+        for (const r of next) {
+          const g = group.find((x) => x.id === r.id);
+          g.grid.x = r.x; g.grid.y = r.y;
+        }
+        lastGood = new Map(group.map((g) => [g.id, { ...g.grid }]));
+      }
     } else {
-      w.grid.w = clamp(orig.w + dx, 1, cols - w.grid.x);
-      w.grid.h = Math.max(1, orig.h + dy);
+      const o = groupOrig.get(w.id);
+      const rect = { ...o };
+      if (dir.includes("e")) rect.w = clamp(o.w + dx, 1, cols - o.x);
+      if (dir.includes("s")) rect.h = Math.max(1, o.h + dy);
+      if (dir.includes("w")) {
+        const nx = clamp(o.x + dx, 0, o.x + o.w - 1);
+        rect.w = o.x + o.w - nx; rect.x = nx;
+      }
+      if (dir.includes("n")) {
+        const ny = clamp(o.y + dy, 0, o.y + o.h - 1);
+        rect.h = o.y + o.h - ny; rect.y = ny;
+      }
+      if (!freeform) guides = snapAndGuide(rect, ignore, cols);
+      const blocked = collides(rect, ignore);
+      box.classList.toggle("blocked", blocked);
+      if (!blocked) {
+        Object.assign(w.grid, rect);
+        lastGood = new Map([[w.id, { ...w.grid }]]);
+      }
     }
-    placeBox(box, w);
+
+    for (const g of group) placeBox(canvas.querySelector(`[data-widget-id="${g.id}"]`) || box, g);
+    drawGuides(guides, cols);
+    showDragBadge(box, w.grid);
   };
+
   const onUp = () => {
     box.releasePointerCapture(e.pointerId);
-    box.classList.remove("dragging");
+    box.classList.remove("dragging", "blocked");
     box.removeEventListener("pointermove", onMove);
     box.removeEventListener("pointerup", onUp);
-    const changed = orig.x !== w.grid.x || orig.y !== w.grid.y || orig.w !== w.grid.w || orig.h !== w.grid.h;
+    drawGuides(null, cols);
+    // Land on the last position that didn't collide.
+    for (const g of group) if (lastGood.has(g.id)) Object.assign(g.grid, lastGood.get(g.id));
+
+    const changed = group.some((g) => {
+      const o = groupOrig.get(g.id);
+      return o.x !== g.grid.x || o.y !== g.grid.y || o.w !== g.grid.w || o.h !== g.grid.h;
+    });
     if (changed) {
       renderCanvas(); // re-render to grow the canvas if needed
       const resized = orig.w !== w.grid.w || orig.h !== w.grid.h;
+      const what = group.length > 1 ? `${group.length} widgets` : (w.title || w.type);
       // One undo step per drag, not one per pointermove: the whole gesture
       // already mutated w.grid live, and this is the commit at the end of it.
-      save(`${resized ? "resized" : "moved"} ${w.title || w.type}`);
+      save(`${resized ? "resized" : "moved"} ${what}`);
     }
   };
   box.addEventListener("pointermove", onMove);
@@ -1164,7 +1388,129 @@ function openPanel(title, { scope = "staged", section = null } = {}) {
 /** What the inspector falls back to: the selected widget, else the page. */
 function showDefault() {
   state.editingId = null;
+  state.selection.clear();
   openPageSettings();
+}
+
+// ---- bulk selection toolbar -------------------------------------------------
+
+function updateBulkBar() {
+  const host = $("#bulk-bar");
+  if (!host) return;
+  const n = state.selection.size;
+  host.classList.toggle("hidden", n < 2);
+  if (n < 2) return;
+  host.replaceChildren();
+  const count = document.createElement("span");
+  count.className = "bulk-count";
+  count.textContent = `${n} selected`;
+  host.appendChild(count);
+
+  const act = (label, fn, cls = "ghost") => host.appendChild(button(label, "btn small " + cls, fn));
+  act("Align left", () => alignSelection("left"));
+  act("Align top", () => alignSelection("top"));
+  act("Same width", () => alignSelection("width"));
+  act("Disable", () => bulkToggle(false));
+  act("Enable", () => bulkToggle(true));
+  act("Copy to…", () => bulkCopyTo());
+  act("Delete", () => bulkDelete(), "danger");
+  act("Clear", () => showDefault());
+}
+
+/** The inspector when several widgets are selected — a form makes no sense. */
+function openBulk() {
+  const ws = selectedWidgets();
+  const editor = openPanel(`${ws.length} widgets selected`);
+  editor.appendChild(noteEl("Move them together by dragging any one, or nudge with the arrow keys. Bulk actions are on the toolbar above the canvas."));
+  const list = document.createElement("div");
+  list.className = "list";
+  for (const w of ws) {
+    const row = document.createElement("div");
+    row.className = "list-row";
+    const main = document.createElement("div");
+    main.className = "list-row-main";
+    const t = document.createElement("div");
+    t.className = "list-row-title";
+    t.textContent = w.title || w.id;
+    const m = document.createElement("div");
+    m.className = "list-row-meta";
+    m.textContent = `${registry.get(w.type)?.meta?.label || w.type} · ${w.grid.w}×${w.grid.h}`;
+    main.append(t, m);
+    row.append(main, button("Edit only this", "btn small ghost", () => selectOnly(w.id)));
+    list.appendChild(row);
+  }
+  editor.appendChild(list);
+}
+
+function alignSelection(how) {
+  const ws = selectedWidgets();
+  if (ws.length < 2) return;
+  if (how === "left") {
+    const x = Math.min(...ws.map((w) => w.grid.x));
+    for (const w of ws) w.grid.x = x;
+  } else if (how === "top") {
+    const y = Math.min(...ws.map((w) => w.grid.y));
+    for (const w of ws) w.grid.y = y;
+  } else if (how === "width") {
+    const wide = Math.max(...ws.map((w) => w.grid.w));
+    const cols = state.config.settings?.columns || 12;
+    for (const w of ws) w.grid.w = Math.min(wide, cols - w.grid.x);
+  }
+  renderCanvas();
+  save(`aligned ${ws.length} widgets`);
+}
+
+function bulkToggle(enabled) {
+  const ws = selectedWidgets();
+  for (const w of ws) w.enabled = enabled;
+  renderCanvas(); renderList();
+  save(`${enabled ? "enabled" : "disabled"} ${ws.length} widgets`);
+}
+
+async function bulkDelete() {
+  const ws = selectedWidgets();
+  const ok = await savebar.confirmDialog({
+    title: `Delete ${ws.length} widgets?`,
+    message: "They'll be removed from this page. You can undo this.",
+    confirmLabel: `Delete ${ws.length}`,
+    danger: true,
+  });
+  if (!ok) return;
+  const ids = new Set(ws.map((w) => w.id));
+  const list = currentWidgets();
+  for (let i = list.length - 1; i >= 0; i--) if (ids.has(list[i].id)) list.splice(i, 1);
+  showDefault();
+  save(`deleted ${ws.length} widgets`);
+}
+
+async function bulkCopyTo() {
+  const ws = selectedWidgets();
+  const ps = pages();
+  const idx = await pickDialog({
+    title: `Copy ${ws.length} widgets to…`,
+    options: ps.map((p, i) => ({
+      value: i, label: p.name || "Page",
+      hint: `${p.widgets?.length || 0} widget${(p.widgets?.length || 0) === 1 ? "" : "s"}`,
+      disabled: i === state.activePage,
+    })),
+  });
+  if (idx == null) return;
+  for (const w of ws) {
+    const copy = structuredClone(w);
+    copy.id = `${w.type}-${Math.random().toString(36).slice(2, 8)}`;
+    (ps[idx].widgets || (ps[idx].widgets = [])).push(copy);
+  }
+  save(`copied ${ws.length} widgets to “${ps[idx].name}”`);
+  toast(`Copied to “${ps[idx].name}”`, "ok");
+}
+
+/** Which variant actually renders right now — the rule is otherwise invisible. */
+function activeVariantLabel(w) {
+  const variants = w.variants || [];
+  if (!variants.length) return null;
+  const sceneLabel = scenes().find((s) => s.id === state.config.activeSceneId)?.variantLabel;
+  const active = (sceneLabel && variants.find((v) => v.label === sceneLabel)) || variants[0];
+  return active?.label || "variant 1";
 }
 
 // ---- dialogs (replacing prompt()/confirm()) ---------------------------------
@@ -2454,9 +2800,77 @@ $("#widget-filter").addEventListener("input", () => renderList());
 
 // Clicking empty canvas deselects and returns the inspector to the page.
 $("#canvas").addEventListener("pointerdown", (e) => {
-  if (e.target !== e.currentTarget) return;
-  if (state.editingId == null) return;
+  if (e.target !== e.currentTarget && !e.target.classList.contains("guide-layer")) return;
+  if (state.editingId == null && !state.selection.size) return;
   showDefault();
+});
+
+// Live / Static. Live rendering is the point of the canvas, but anyone who
+// finds it distracting (or is on a slow Pi) can switch the whole thing off.
+$("#btn-live").onclick = () => {
+  liveHost.setLive(!liveHost.isLive());
+  $("#btn-live").setAttribute("aria-pressed", String(liveHost.isLive()));
+  $("#btn-live").textContent = liveHost.isLive() ? "Live" : "Static";
+  renderCanvas();
+};
+
+// ---- keyboard editing -------------------------------------------------------
+// The canvas was pointer-only. Arrows nudge, Shift resizes, and everything is
+// one undo step per burst thanks to the store's coalesce keys.
+
+document.addEventListener("keydown", (e) => {
+  const typing = /^(input|textarea|select)$/i.test(document.activeElement?.tagName || "")
+    || document.activeElement?.isContentEditable;
+  if (typing || document.querySelector(".modal-backdrop")) return;
+
+  const ws = selectedWidgets();
+  const cols = state.config.settings?.columns || 12;
+
+  if (e.key === "Escape" && (state.editingId || state.selection.size)) {
+    e.preventDefault(); showDefault(); return;
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a" && currentWidgets().length) {
+    e.preventDefault();
+    state.editingId = null;
+    state.selection = new Set(currentWidgets().map((w) => w.id));
+    renderCanvas(); renderList(); openBulk();
+    return;
+  }
+  if (!ws.length) return;
+
+  if (e.key === "Delete" || e.key === "Backspace") {
+    e.preventDefault();
+    ws.length > 1 ? bulkDelete() : delWidget(ws[0].id);
+    return;
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d") {
+    e.preventDefault();
+    if (ws.length === 1) duplicateWidget(ws[0].id);
+    return;
+  }
+
+  const DIRS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+  const d = DIRS[e.key];
+  if (!d) return;
+  e.preventDefault();
+  const [dx, dy] = d;
+  const ids = new Set(ws.map((w) => w.id));
+  const next = ws.map((w) => {
+    const g = { ...w.grid };
+    if (e.shiftKey) {
+      g.w = clamp(g.w + dx, 1, cols - g.x);
+      g.h = Math.max(1, g.h + dy);
+    } else {
+      g.x = clamp(g.x + dx, 0, cols - g.w);
+      g.y = Math.max(0, g.y + dy);
+    }
+    return { id: w.id, g };
+  });
+  if (next.some((n) => collides(n.g, ids))) { toast("Blocked — something's in the way"); return; }
+  for (const n of next) Object.assign(ws.find((w) => w.id === n.id).grid, n.g);
+  renderCanvas();
+  const what = ws.length > 1 ? `${ws.length} widgets` : (ws[0].title || ws[0].type);
+  save(`${e.shiftKey ? "resized" : "moved"} ${what}`, { coalesce: `nudge:${[...ids].join(",")}:${e.shiftKey}` });
 });
 
 renderRail();

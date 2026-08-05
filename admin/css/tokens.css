@@ -86,6 +86,10 @@
   --warn-soft: #2a1f14;
   --danger-soft: #2d151a;
 
+  /* Alignment guides on the canvas. Deliberately not the accent — a guide must
+   * be legible against selected boxes, which are already accent-tinted. */
+  --guide: #ff4ecd;
+
   --e-1: 0 1px 2px rgb(0 0 0 / .30);
   --e-2: 0 4px 12px rgb(0 0 0 / .38);
   --e-3: 0 12px 32px rgb(0 0 0 / .48);
@@ -121,6 +125,8 @@
   --ok-soft: #e4f5ea;
   --warn-soft: #fbf1de;
   --danger-soft: #fdeaec;
+
+  --guide: #d1009e;
 
   --e-1: 0 1px 2px rgb(16 21 28 / .07);
   --e-2: 0 4px 12px rgb(16 21 28 / .10);
@@ -158,6 +164,8 @@
     --ok-soft: #e4f5ea;
     --warn-soft: #fbf1de;
     --danger-soft: #fdeaec;
+
+    --guide: #d1009e;
 
     --e-1: 0 1px 2px rgb(16 21 28 / .07);
     --e-2: 0 4px 12px rgb(16 21 28 / .10);
