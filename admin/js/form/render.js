@@ -20,7 +20,9 @@ const el = (tag, cls, text) => {
 
 /**
  * @param host   element to render into (cleared)
- * @param defs   FieldDef[]
+ * @param defs   FieldDef[], or (draft) => FieldDef[] when the field list itself
+ *               depends on the draft — e.g. a condition whose source-widget
+ *               options track the chosen trigger type
  * @param draft  the object being edited — mutated in place
  * @param opts   { onChange, custom: {typeName: (ctx) => Node} }
  * @returns {{ getValue, validate, setErrors, focusField, rerender }}
@@ -28,12 +30,13 @@ const el = (tag, cls, text) => {
 export function renderForm(host, defs, draft, opts = {}) {
   const { onChange = () => {}, custom = {} } = opts;
   const controls = new Map(); // path -> { wrap, input, setError }
+  const resolveDefs = () => (typeof defs === "function" ? defs(draft) : defs);
 
   // Any field can gate others via `when`, so a change to a gating control has
   // to redraw the form. Only booleans and selects gate in practice, and neither
   // holds a text cursor, so a redraw is safe — focus is restored afterwards so
   // keyboard users don't get dumped back to the top of the form.
-  const hasConditionals = () => defs.some((f) => typeof f.when === "function");
+  const hasConditionals = () => resolveDefs().some((f) => typeof f.when === "function");
 
   function change(path, { gating = false } = {}) {
     if (gating && hasConditionals()) {
@@ -139,7 +142,8 @@ export function renderForm(host, defs, draft, opts = {}) {
       }
 
       case "days":
-        return daysControl(f);
+      case "chips":
+        return chipsControl(f);
 
       case "grid":
         return gridControl(f, id);
@@ -166,14 +170,19 @@ export function renderForm(host, defs, draft, opts = {}) {
     }
   }
 
-  /** Day-of-week chips holding an array of 0–6 (Mon–Sun).
+  /** A toggleable chip group holding an array of selected values.
    *
-   *  The old chips were buttons toggling a CSS class, read back by querying for
-   *  `.day-chip.on` — so the selection lived in the class list and screen
+   *  Used for days of the week (0–6, Mon–Sun) and for printer match-states.
+   *  Both were previously buttons toggling a CSS class, read back by querying
+   *  for `.day-chip.on` — the selection lived in the class list and screen
    *  readers were told nothing. Here the array in the draft is the state and
    *  aria-pressed reflects it. */
-  function daysControl(f) {
-    const labels = f.dayLabels || ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  function chipsControl(f) {
+    const options = f.type === "days"
+      ? (f.dayLabels || ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
+          .map((label, i) => ({ value: i, label }))
+      : (f.options || []).map((o) => (typeof o === "object" ? o : { value: o, label: o }));
+
     const wrap = el("div", "day-picker");
     wrap.setAttribute("role", "group");
     if (f.label) wrap.setAttribute("aria-label", f.label);
@@ -182,28 +191,31 @@ export function renderForm(host, defs, draft, opts = {}) {
       const v = getPath(draft, f.key);
       return Array.isArray(v) ? v : [];
     };
-    labels.forEach((label, day) => {
+    for (const o of options) {
       const b = document.createElement("button");
       b.type = "button";
       b.className = "day-chip";
-      b.textContent = label;
+      b.textContent = o.label;
       const paint = () => {
-        const on = current().includes(day);
+        const on = current().includes(o.value);
         b.classList.toggle("on", on);
         b.setAttribute("aria-pressed", String(on));
       };
       b.onclick = () => {
-        const days = [...current()];
-        const i = days.indexOf(day);
-        if (i >= 0) days.splice(i, 1); else days.push(day);
-        days.sort((x, y) => x - y);
-        setPath(draft, f.key, days);
-        paint();
-        change(f.key);
+        const next = [...current()];
+        const i = next.indexOf(o.value);
+        if (i >= 0) next.splice(i, 1); else next.push(o.value);
+        // Keep a stable order so the saved JSON doesn't churn on every toggle.
+        next.sort((x, y) =>
+          options.findIndex((z) => z.value === x) - options.findIndex((z) => z.value === y));
+        setPath(draft, f.key, next);
+        for (const sibling of wrap.querySelectorAll("button")) sibling._paint?.();
+        change(f.key, { gating: !!f.gates });
       };
+      b._paint = paint;
       paint();
       wrap.appendChild(b);
-    });
+    }
     return wrap;
   }
 
@@ -314,7 +326,7 @@ export function renderForm(host, defs, draft, opts = {}) {
   function draw() {
     host.replaceChildren();
     controls.clear();
-    for (const chunk of byGroup(visible(defs, draft))) {
+    for (const chunk of byGroup(visible(resolveDefs(), draft))) {
       if (!chunk.group) {
         for (const f of chunk.fields) host.appendChild(renderOne(f));
         continue;
@@ -335,7 +347,7 @@ export function renderForm(host, defs, draft, opts = {}) {
 
   return {
     getValue: () => draft,
-    validate: () => validate(defs, draft),
+    validate: () => validate(resolveDefs(), draft),
     rerender: draw,
     setErrors(errors) {
       const map = byPath(errors || []);

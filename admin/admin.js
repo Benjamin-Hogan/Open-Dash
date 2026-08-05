@@ -23,6 +23,7 @@ import {
   describe as describeSchedule,
 } from "/js/model/schedule.js";
 import { getPath } from "/js/core/clone.js";
+import * as cond from "/js/model/condition.js";
 
 const state = {
   config: null,
@@ -2461,26 +2462,6 @@ async function openBackups() {
 // Same Schedule shape widgets use (days 0=Mon..6=Sun, HH:MM window, may wrap
 // past midnight). Displays skip the page outside the window.
 
-const CONDITION_TYPES = [
-  { value: "octoprint", label: "OctoPrint (printer state)" },
-  { value: "weather-alert", label: "Weather alert (NWS)" },
-  { value: "youtube-live", label: "YouTube live" },
-  { value: "calendar-soon", label: "Calendar event soon" },
-];
-
-function defaultConditionPriority(type, matchStates) {
-  if (type === "weather-alert") return 90;
-  if (type === "youtube-live") return 40;
-  if (type === "calendar-soon") return 30;
-  if (type === "octoprint") {
-    const states = matchStates || [];
-    if (states.includes("error") && !states.includes("printing") && !states.includes("paused")) return 80;
-    if (states.includes("error")) return 80;
-    return 50;
-  }
-  return 50;
-}
-
 function widgetsOfType(type) {
   const out = [];
   for (const p of pages()) {
@@ -2491,153 +2472,82 @@ function widgetsOfType(type) {
   return out;
 }
 
-function appendConditionFields(editor, condition) {
-  const c = condition || {};
-  const host = document.createElement("div");
-  host.dataset.name = "pc-host";
-  editor.appendChild(host);
-
-  const redraw = (next) => {
-    const cur = { ...c, ...next };
-    host.replaceChildren();
-    host.appendChild(boolField("Enable condition", cur.enabled === true, "pc-enabled"));
-    host.appendChild(noteEl(
-      "Time window AND condition must both match. Soft-join adds the page to the slideshow while true; force-override jumps to it immediately (highest priority wins)."
-    ));
-
-    const typeSel = select(CONDITION_TYPES, cur.type || "octoprint", (v) => {
-      const states = gatherMatchStates(host);
-      redraw({
-        enabled: host.querySelector('[data-name="pc-enabled"]')?.checked === true,
-        type: v,
-        mode: host.querySelector('[data-name="pc-mode"]')?.value || cur.mode || "soft-join",
-        priority: defaultConditionPriority(v, states),
-        sourceWidgetId: "",
-        matchStates: v === "octoprint" ? (states.length ? states : ["printing"]) : cur.matchStates,
-        minSeverity: host.querySelector('[data-name="pc-minSeverity"]')?.value || cur.minSeverity || "",
-        leadMinutes: Number(host.querySelector('[data-name="pc-leadMinutes"]')?.value) || cur.leadMinutes || 30,
-        pollSeconds: host.querySelector('[data-name="pc-pollSeconds"]')?.value ?? cur.pollSeconds,
-      });
-    }, "pc-type");
-    host.appendChild(field("When", typeSel));
-
-    host.appendChild(field("Mode", select(
-      [
-        { value: "soft-join", label: "Soft-join (rotate with other pages)" },
-        { value: "force-override", label: "Force-override (jump and hold)" },
-      ],
-      cur.mode || "soft-join",
-      null,
-      "pc-mode",
-    )));
-
-    const pri = cur.priority ?? defaultConditionPriority(cur.type || "octoprint", cur.matchStates);
-    host.appendChild(field("Priority (0–100, higher wins)", input("number", pri, "pc-priority")));
-
-    const type = cur.type || "octoprint";
-    if (type === "octoprint") {
-      const src = widgetsOfType("octoprint");
-      const opts = [{ value: "", label: src.length ? "— pick OctoPrint widget —" : "— add an OctoPrint widget first —" },
-        ...src.map((w) => ({ value: w.id, label: w.label }))];
-      host.appendChild(field("Source widget", select(opts, cur.sourceWidgetId || "", null, "pc-source")));
-      const states = cur.matchStates?.length ? cur.matchStates : ["printing"];
-      const wrap = document.createElement("div");
-      wrap.className = "day-picker";
-      wrap.dataset.name = "pc-matchStates";
-      for (const s of ["printing", "paused", "error"]) {
-        const b = document.createElement("button");
-        b.type = "button";
-        b.className = "day-chip" + (states.includes(s) ? " on" : "");
-        b.textContent = s;
-        b.dataset.state = s;
-        b.onclick = () => {
-          b.classList.toggle("on");
-          const nextStates = gatherMatchStates(host);
-          const priEl = host.querySelector('[data-name="pc-priority"]');
-          if (priEl && document.activeElement !== priEl) {
-            priEl.value = String(defaultConditionPriority("octoprint", nextStates));
-          }
-        };
-        wrap.appendChild(b);
-      }
-      host.appendChild(field("Match states", wrap));
-    } else if (type === "weather-alert") {
-      host.appendChild(field("Minimum severity", select(
-        [
-          { value: "", label: "Any" },
-          { value: "info", label: "Info+" },
-          { value: "warning", label: "Warning+" },
-          { value: "danger", label: "Danger only" },
-        ],
-        cur.minSeverity || "",
-        null,
-        "pc-minSeverity",
-      )));
-    } else if (type === "youtube-live") {
-      const src = widgetsOfType("youtube-live");
-      const opts = [{ value: "", label: src.length ? "— pick YouTube widget —" : "— add a YouTube widget first —" },
-        ...src.map((w) => ({ value: w.id, label: w.label }))];
-      host.appendChild(field("Source widget", select(opts, cur.sourceWidgetId || "", null, "pc-source")));
-      host.appendChild(noteEl("The YouTube widget must use Channel ID live mode (not a fixed video URL)."));
-    } else if (type === "calendar-soon") {
-      const src = widgetsOfType("ical");
-      const opts = [{ value: "", label: src.length ? "— pick Calendar widget —" : "— add an iCal widget first —" },
-        ...src.map((w) => ({ value: w.id, label: w.label }))];
-      host.appendChild(field("Source widget", select(opts, cur.sourceWidgetId || "", null, "pc-source")));
-      host.appendChild(field("Lead minutes", input("number", cur.leadMinutes ?? 30, "pc-leadMinutes")));
-    }
-
-    host.appendChild(field(
-      "Re-check every (seconds, blank = default 5)",
-      input("number", cur.pollSeconds ?? "", "pc-pollSeconds"),
-    ));
-  };
-
-  redraw({});
+/** Source-widget options for a trigger, naming what's missing when empty. */
+function sourceWidgetOptions(type) {
+  const want = cond.SOURCE_TYPE[type];
+  if (!want) return [];
+  const src = widgetsOfType(want);
+  const label = registry.get(want)?.meta?.label || want;
+  const article = /^[aeiou]/i.test(label) ? "an" : "a";
+  return [
+    {
+      value: "",
+      label: src.length
+        ? `— pick ${article} ${label} widget —`
+        : `— add ${article} ${label} widget first —`,
+    },
+    ...src.map((w) => ({ value: w.id, label: w.label })),
+  ];
 }
 
-function gatherMatchStates(root) {
-  const wrap = root.querySelector('[data-name="pc-matchStates"]');
-  if (!wrap) return [];
-  return [...wrap.querySelectorAll(".day-chip.on")].map((b) => b.dataset.state);
+/**
+ * FieldDefs for a live condition held at `base` in the draft.
+ * The rules about which fields belong to which trigger live in
+ * model/condition.js; this is only how they're presented.
+ */
+function conditionFieldDefs(base) {
+  const p = (k) => `${base}.${k}`;
+  const on = (d) => getPath(d, p("enabled")) === true;
+  const is = (...types) => (d) => on(d) && types.includes(getPath(d, p("type")) || "octoprint");
+  const hasSource = (d) => on(d) && !!cond.SOURCE_TYPE[getPath(d, p("type")) || "octoprint"];
+
+  return [
+    { key: p("enabled"), label: "Enable condition", type: "boolean" },
+    {
+      key: p("_note"), type: "note", when: on,
+      label: "The time window AND the condition must both match. Soft-join adds the page to the rotation while true; force-override jumps to it immediately, and the highest priority wins.",
+    },
+    { key: p("type"), label: "When", type: "select", options: cond.TYPES, when: on },
+    { key: p("mode"), label: "Mode", type: "select", options: cond.MODES, when: on },
+    {
+      key: p("priority"), label: "Priority", type: "number", min: 0, max: 100, when: on,
+      help: "0–100. Higher wins when two force-overrides are true at once.",
+    },
+    // options are filled in by conditionDefsFor, which knows the chosen trigger
+    { key: p("sourceWidgetId"), label: "Source widget", type: "select", when: hasSource, options: [] },
+    {
+      key: p("matchStates"), label: "Match states", type: "chips",
+      options: cond.PRINTER_STATES, when: is("octoprint"),
+      help: "The page shows while the printer is in any of these states.",
+    },
+    {
+      key: p("minSeverity"), label: "Minimum severity", type: "select",
+      options: cond.SEVERITIES, when: is("weather-alert"),
+    },
+    {
+      key: p("_yt"), type: "note", when: is("youtube-live"),
+      label: "The YouTube widget must use Channel ID live mode, not a fixed video URL.",
+    },
+    {
+      key: p("leadMinutes"), label: "Lead minutes", type: "number", min: 1, max: 10080,
+      when: is("calendar-soon"), help: "How far ahead of an event the page appears.",
+    },
+    {
+      key: p("pollSeconds"), label: "Re-check every", type: "number", min: 2, max: 300,
+      placeholder: "5", when: on, help: "Seconds. Blank = the default of 5.",
+    },
+  ];
 }
 
-function gatherCondition(editor) {
-  const host = editor.querySelector('[data-name="pc-host"]') || editor;
-  const enabled = host.querySelector('[data-name="pc-enabled"]')?.checked === true;
-  const type = host.querySelector('[data-name="pc-type"]')?.value || "octoprint";
-  const mode = host.querySelector('[data-name="pc-mode"]')?.value || "soft-join";
-  let priority = Math.round(Number(host.querySelector('[data-name="pc-priority"]')?.value));
-  if (!Number.isFinite(priority)) priority = defaultConditionPriority(type, gatherMatchStates(host));
-  priority = Math.max(0, Math.min(100, priority));
-  const sourceWidgetId = host.querySelector('[data-name="pc-source"]')?.value || null;
-  const matchStates = gatherMatchStates(host);
-  const minRaw = host.querySelector('[data-name="pc-minSeverity"]')?.value || "";
-  const minSeverity = minRaw || null;
-  let leadMinutes = Math.round(Number(host.querySelector('[data-name="pc-leadMinutes"]')?.value));
-  if (!Number.isFinite(leadMinutes) || leadMinutes < 1) leadMinutes = 30;
-  leadMinutes = Math.min(10080, leadMinutes);
-  const pollRaw = host.querySelector('[data-name="pc-pollSeconds"]')?.value;
-  let pollSeconds = null;
-  if (pollRaw !== "" && pollRaw != null) {
-    pollSeconds = Math.round(Number(pollRaw));
-    if (!Number.isFinite(pollSeconds) || pollSeconds < 2) pollSeconds = null;
-    else pollSeconds = Math.min(300, pollSeconds);
-  }
-  if (!enabled) return null;
-  const out = { enabled, type, mode, priority, pollSeconds };
-  if (type === "octoprint") {
-    out.sourceWidgetId = sourceWidgetId;
-    out.matchStates = matchStates.length ? matchStates : ["printing"];
-  } else if (type === "weather-alert") {
-    out.minSeverity = minSeverity;
-  } else if (type === "youtube-live") {
-    out.sourceWidgetId = sourceWidgetId;
-  } else if (type === "calendar-soon") {
-    out.sourceWidgetId = sourceWidgetId;
-    out.leadMinutes = leadMinutes;
-  }
-  return out;
+/**
+ * Bind the source-widget options to the trigger currently chosen. Called on
+ * every draw, so adding an OctoPrint widget makes it selectable here without
+ * reopening the panel.
+ */
+function conditionDefsFor(draft, base) {
+  const type = getPath(draft, `${base}.type`) || "octoprint";
+  return conditionFieldDefs(base).map((f) =>
+    f.key === `${base}.sourceWidgetId` ? { ...f, options: sourceWidgetOptions(type) } : f);
 }
 
 function openPageSchedule(i) {
@@ -2662,9 +2572,10 @@ function openPageSettings(index) {
     name: page.name || "",
     durationSeconds: page.durationSeconds ?? null,
     _schedule: scheduleToDraft(page.schedule),
+    _condition: cond.toDraft(page.condition),
   };
 
-  const defs = [
+  const defs = (d) => [
     { key: "name", label: "Page name", type: "text", required: true },
     {
       key: "durationSeconds", label: "Seconds in rotation", type: "number", min: 2,
@@ -2676,15 +2587,25 @@ function openPageSettings(index) {
       label: "Show this page only during a time window. Outside it, rotation skips the page, and a display assigned only this page falls back to the others.",
     },
     ...scheduleFieldDefs("_schedule"),
+    ...conditionDefsFor(d, "_condition"),
   ];
 
   const host = document.createElement("div");
   editor.appendChild(host);
-  const form = renderFormEngine(host, defs, draft);
-
-  // Conditions keep their own editor for now — see appendConditionFields.
-  editor.appendChild(sectionTitle("Live condition"));
-  appendConditionFields(editor, page.condition || {});
+  const form = renderFormEngine(host, defs, draft, {
+    onChange: (path) => {
+      // Switching trigger types resets the fields that belonged to the old one,
+      // so a stale source widget or priority can't linger.
+      if (path === "_condition.type") {
+        draft._condition.sourceWidgetId = "";
+        draft._condition.priority = cond.defaultPriority(draft._condition.type, draft._condition.matchStates);
+        form.rerender();
+      } else if (path === "_condition.matchStates") {
+        draft._condition.priority = cond.defaultPriority("octoprint", draft._condition.matchStates);
+        form.rerender();
+      }
+    },
+  });
 
   const actions = document.createElement("div"); actions.className = "editor-actions";
   actions.append(
@@ -2700,7 +2621,7 @@ function openPageSettings(index) {
       page.name = draft.name.trim() || "Page";
       page.durationSeconds = draft.durationSeconds == null ? null : Math.max(2, draft.durationSeconds);
       page.schedule = scheduleFromDraft(draft, "_schedule");
-      page.condition = gatherCondition(editor);
+      page.condition = cond.fromDraft(draft._condition);
       save(`changed page “${page.name}”`);
       openPageSettings(i);
     }),
