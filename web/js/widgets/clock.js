@@ -6,7 +6,7 @@ define("clock", {
   meta: { label: "Clock", description: "Time and date", category: "basic" },
   schema: {
     fields: [
-      { key: "timeZone", label: "Time zone (IANA, blank = local)", type: "text", placeholder: "America/Phoenix" },
+      { key: "timeZone", label: "Time zone (leave blank for the display's own)", type: "text", placeholder: "America/Phoenix" },
       { key: "hour12", label: "12-hour clock", type: "boolean", default: true },
       { key: "showSeconds", label: "Show seconds", type: "boolean", default: true },
     ],

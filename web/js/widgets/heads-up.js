@@ -16,7 +16,7 @@ define("heads-up", {
       { key: "showCalendar", label: "Show next calendar event", type: "boolean", default: true },
       { key: "showPrint", label: "Show print status", type: "boolean", default: false },
       { key: "icalUrl", label: "Calendar URL (.ics)", type: "text", placeholder: "https://…/calendar.ics" },
-      { key: "octoprintUrl", label: "OctoPrint URL (blank = first printer widget)", type: "text" },
+      { key: "octoprintUrl", label: "OctoPrint address (leave blank to use the first printer widget)", type: "text" },
       { key: "units", label: "Weather units", type: "select", options: ["imperial", "metric"], default: "imperial" },
       { key: "refreshSeconds", label: "Data refresh seconds", type: "number", default: 60 },
     ],

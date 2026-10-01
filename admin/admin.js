@@ -10,11 +10,11 @@ import { buildEmbedDoc } from "/widgets/embed.js";
 import * as store from "/js/core/store.js";
 import * as api from "/js/core/api.js";
 import * as savebar from "/js/savebar.js";
-import { clone } from "/js/core/clone.js";
+import { clone, deepEqual } from "/js/core/clone.js";
 import { rotationPages, hasCustomOrder, syncRotationOrder } from "/js/model/order.js";
 import * as liveHost from "/js/view/live-host.js";
 import { catalog, grouped, search, defaultSettings } from "/js/model/catalog.js";
-import { renderForm as renderFormEngine } from "/js/form/render.js";
+import { renderForm as renderFormEngine, humanize } from "/js/form/render.js";
 import { fromPluginSchema } from "/js/form/schema.js";
 import { fromServer as errorsFromServer } from "/js/form/validate.js";
 import {
@@ -30,14 +30,27 @@ const state = {
   activePage: 0,
   editingId: null,
   selection: new Set(),
-  // The widget form edits a clone so Cancel discards cleanly; the canvas reads
-  // it through canvasWidgets() so you see the edit as you make it.
+  // The widget form edits a clone (it carries editor-only shapes such as
+  // `_schedule`); every valid change is staged into the config straight away,
+  // so the canvas and the config never disagree. See stageWidget().
   draftWidget: null,
+  // Which surface is showing: the layout (canvas + inspector) or a full-page
+  // settings section.
+  view: "layout",
 };
 const $ = (s) => document.querySelector(s);
 
-const EDITOR_ROW = 26; // px per grid row in the visual editor
+// Rows on the canvas are sized from the display's own proportions, so a widget
+// is drawn at the shape it will actually have on the wall (see editorRowPx).
+let EDITOR_ROW = 26;
 const CANVAS_GAP = 4;
+// The reference display the canvas draws — the same 1280×720 the Preview
+// iframe renders at.
+const DISPLAY_WIDTH = 1280;
+// Below this many canvas px per display px, live widgets are too small to
+// read; the canvas shows labelled posters instead.
+const LIVE_MIN_SCALE = 0.5;
+let userWantsLive = true;   // the Live / Boxes choice; the width may still override it
 
 function pages() { return state.config.pages || (state.config.pages = []); }
 function currentPage() { return pages()[state.activePage] || null; }
@@ -46,16 +59,12 @@ function currentWidgets() {
   return p ? (p.widgets || (p.widgets = [])) : [];
 }
 /**
- * What the canvas draws: the page's widgets, with the one being edited swapped
- * for the in-progress draft. The widget form edits a clone so Cancel can
- * discard, but the whole point of a live canvas is seeing the edit as you make
- * it — so the canvas reads the draft while the form is open.
+ * What the canvas draws. Edits stage as they're made (stageWidget), so this is
+ * simply the page's widgets — the canvas, drags and keyboard nudges all act on
+ * the same objects the config holds.
  */
 function canvasWidgets() {
-  const ws = currentWidgets();
-  const draft = state.draftWidget;
-  if (!draft || !state.editingId) return ws;
-  return ws.map((w) => (w.id === state.editingId ? draft : w));
+  return currentWidgets();
 }
 function rotation() {
   return state.config.rotation || (state.config.rotation = { enabled: false, defaultDurationSeconds: 30, order: [] });
@@ -96,7 +105,7 @@ async function load() {
   }
 }
 
-function renderAll() { renderPageBar(); renderCanvas(); renderList(); updatePreview(); }
+function renderAll() { renderPageBar(); renderToolbar(); renderCanvas(); renderList(); updatePreview(); }
 
 // ---- live mini-preview (the real dashboard, one page, scaled down) -----------
 // The dashboard app supports ?page=<id>: locked to that page, no rotation, no
@@ -131,32 +140,57 @@ function pageIsGated(p) {
   return !!(p?.schedule?.enabled || p?.condition?.enabled);
 }
 
+/** Seconds this page stays up in the slideshow, as the tab shows it. */
+function pageSeconds(p) {
+  return p.durationSeconds ?? rotation().defaultDurationSeconds ?? 30;
+}
+
+/** Plain-language summary of a page, for the toolbar under its name. */
+function describePage(p) {
+  const n = p.widgets?.length || 0;
+  const bits = [`${n} widget${n === 1 ? "" : "s"}`];
+  if (rotation().enabled) bits.push(`${pageSeconds(p)} seconds in the slideshow`);
+  if (p.schedule?.enabled) bits.push(`shown ${describeSchedule(p.schedule) || "on a schedule"}`);
+  if (p.condition?.enabled) bits.push("shown when its condition is true");
+  return bits.join(", ");
+}
+
+/**
+ * Page tabs. Pure tabs now: the page's actions moved to the toolbar (Page
+ * settings and a menu), which is what kept this bar from ever wrapping.
+ */
 function renderPageBar() {
   const bar = $("#page-bar");
   bar.replaceChildren();
+  const tabs = document.createElement("div");
+  tabs.className = "page-tabs";
+  tabs.setAttribute("role", "tablist");
+  tabs.setAttribute("aria-label", "Pages");
+
   pages().forEach((p, i) => {
     const tab = document.createElement("button");
-    const gated = pageIsGated(p);
-    tab.className = "page-tab"
-      + (i === state.activePage ? " active" : "")
-      + (gated ? " gated" : "");
+    const active = i === state.activePage;
+    tab.type = "button";
+    tab.className = "page-tab";
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-selected", String(active));
+    tab.tabIndex = active ? 0 : -1;
     const label = document.createElement("span");
     label.textContent = p.name || "Page";
     tab.appendChild(label);
-    if (gated) {
+    if (pageIsGated(p)) {
       const badge = document.createElement("span");
       badge.className = "page-tab-badge" + (p.condition?.enabled ? " condition" : "");
-      badge.title = [
-        p.schedule?.enabled ? "Time schedule" : null,
-        p.condition?.enabled ? "Live condition" : null,
-      ].filter(Boolean).join(" · ");
+      badge.setAttribute("aria-hidden", "true");
       tab.appendChild(badge);
     }
-    const tips = [];
-    if (rotation().enabled && p.durationSeconds) tips.push(`Shows for ${p.durationSeconds}s`);
-    if (p.schedule?.enabled) tips.push("Scheduled");
-    if (p.condition?.enabled) tips.push("Conditional");
-    if (tips.length) tab.title = tips.join(" · ");
+    if (rotation().enabled) {
+      const meta = document.createElement("span");
+      meta.className = "page-tab-meta";
+      meta.textContent = `${pageSeconds(p)}s`;
+      tab.appendChild(meta);
+    }
+    tab.title = describePage(p);
     // Clicking the tab you're already on opens that page's settings — the same
     // gesture as clicking a widget to inspect it.
     tab.onclick = () => {
@@ -165,35 +199,63 @@ function renderPageBar() {
       renderAll();
       if (wasActive || state.editingId == null) openPageSettings(i);
     };
-    bar.appendChild(tab);
+    tabs.appendChild(tab);
   });
-  const add = document.createElement("button");
-  add.className = "page-add";
-  add.textContent = "＋ Page";
-  add.onclick = addPage;
-  bar.appendChild(add);
 
-  // Actions for the active page. Rename and Schedule used to live here as a
-  // prompt() and a separate panel; both are now in the Page settings inspector.
-  const acts = document.createElement("div");
-  acts.className = "page-actions";
-  const mk = (label, cls, fn, title) => {
-    const b = document.createElement("button");
-    b.className = "btn small " + (cls || "");
-    b.textContent = label;
-    if (title) b.title = title;
-    b.onclick = fn;
-    return b;
-  };
-  acts.append(
-    mk("Settings", pageIsGated(pages()[state.activePage]) ? "scheduled" : "ghost",
-       () => openPageSettings(state.activePage), "Name, duration, schedule and conditions"),
-    mk("Duplicate", "ghost", () => duplicatePage(state.activePage)),
-    mk("←", "ghost icon", () => movePage(state.activePage, -1), "Move page left"),
-    mk("→", "ghost icon", () => movePage(state.activePage, 1), "Move page right"),
-    mk("Delete", "ghost danger", () => deletePage(state.activePage), "Delete this page"),
-  );
-  bar.appendChild(acts);
+  // Arrow keys move between tabs (roving tabindex), as the tab pattern expects.
+  tabs.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight" && e.key !== "Home" && e.key !== "End") return;
+    e.preventDefault();
+    const n = pages().length;
+    const next = e.key === "Home" ? 0 : e.key === "End" ? n - 1
+      : (state.activePage + (e.key === "ArrowRight" ? 1 : -1) + n) % n;
+    state.activePage = next;
+    renderAll();
+    openPageSettings(next);
+    $("#page-bar .page-tab[aria-selected='true']")?.focus();
+  });
+  tabs.addEventListener("scroll", () => fadeTabs(tabs));
+
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "btn ghost page-add";
+  add.title = "Add a page";
+  add.setAttribute("aria-label", "Add page");
+  add.append(icon("i-plus"), Object.assign(document.createElement("span"), { textContent: "Page" }));
+  add.onclick = addPage;
+
+  bar.append(tabs, add);
+  fadeTabs(tabs);
+  tabs.querySelector("[aria-selected='true']")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+/** Fade the tab strip's edge only while there's more to scroll to. */
+function fadeTabs(tabs) {
+  const more = tabs.scrollWidth > tabs.clientWidth + 1
+    && tabs.scrollLeft + tabs.clientWidth < tabs.scrollWidth - 1;
+  tabs.classList.toggle("overflow", more);
+}
+
+/** The heading row above the canvas: page name, summary, page actions. */
+function renderToolbar() {
+  const p = currentPage();
+  if (!p) return;
+  $("#page-title").textContent = p.name || "Page";
+  $("#page-meta").textContent = describePage(p);
+  $("#btn-page-settings").classList.toggle("scheduled", pageIsGated(p));
+}
+
+function pageMenuItems() {
+  const i = state.activePage;
+  return [
+    { label: "Tidy up layout", icon: "i-tidy", run: tidyUp, title: "Arrange widgets with no gaps or overlaps" },
+    { sep: true },
+    { label: "Duplicate page", icon: "i-copy", run: () => duplicatePage(i) },
+    { label: "Move left", icon: "i-left", run: () => movePage(i, -1), disabled: i <= 0 },
+    { label: "Move right", icon: "i-right", run: () => movePage(i, 1), disabled: i >= pages().length - 1 },
+    { sep: true },
+    { label: "Delete page…", icon: "i-trash", run: () => deletePage(i), danger: true, disabled: pages().length <= 1 },
+  ];
 }
 
 function addPage() {
@@ -259,10 +321,32 @@ function renderCanvas() {
   canvas.replaceChildren();
   const cols = state.config.settings?.columns || 12;
   const widgets = canvasWidgets();
+  EDITOR_ROW = editorRowPx(canvas, cols);
+  // Live widgets render at the display's own pixel size and are scaled down
+  // as a whole, so they look exactly as they will on the wall instead of
+  // reflowing (and overflowing) inside a tiny box.
+  const scale = canvasScale(canvas, cols);
+  const tooSmall = scale < LIVE_MIN_SCALE;
+  const live = userWantsLive && !tooSmall;
+  canvasTooSmall = userWantsLive && tooSmall;
+  if (liveHost.isLive() !== live) {
+    // Too narrow: the hint under the canvas says why once, so posters don't
+    // repeat it in every box.
+    liveHost.setLive(live, canvasTooSmall ? "" : "Live preview is off");
+  }
+  canvas.style.setProperty("--canvas-scale", live ? String(scale) : "1");
+  // The canvas wears the display's theme, whatever the admin's own theme is.
+  canvas.dataset.theme = state.config.settings?.theme?.mode === "light" ? "light" : "dark";
+  canvas.classList.toggle("live-off", !live);
   const maxRow = widgets.reduce((m, w) => Math.max(m, (w.grid?.y || 0) + (w.grid?.h || 3)), 0);
-  const rows = Math.max(maxRow + 1, 8);
+  // Fill the display's height so the canvas reads as the screen, then grow
+  // past it when widgets run lower (the dashboard scrolls there too).
+  const s = state.config.settings || {};
+  const screenRows = Math.floor((DISPLAY_WIDTH * 9 / 16) / ((s.rowHeightPx || 90) + (s.gapPx ?? 12)));
+  const rows = Math.max(maxRow + 1, screenRows, 6);
   canvas.style.setProperty("--cols", cols);
   canvas.style.setProperty("--rows", rows);
+  canvas.style.minHeight = `${rows * (EDITOR_ROW + CANVAS_GAP) - CANVAS_GAP}px`;
   canvas.style.setProperty("--editor-row", EDITOR_ROW + "px");
   canvas.style.setProperty("--canvas-gap", CANVAS_GAP + "px");
 
@@ -303,6 +387,37 @@ function renderCanvas() {
   updateBulkBar();
 }
 
+/**
+ * Row height on the canvas, scaled so a widget has the same shape here as on
+ * the wall. A fixed 26px row drew a 3-row weather tile as a letterbox strip,
+ * and the real widget mounted inside it spilled over itself.
+ */
+function editorRowPx(canvas, cols) {
+  const rowPx = state.config.settings?.rowHeightPx || 90;
+  return clamp(Math.round(rowPx * canvasScale(canvas, cols)), 16, 120);
+}
+
+/** Canvas pixels per display pixel. */
+function canvasScale(canvas, cols) {
+  const width = canvas.clientWidth || 800;
+  const colW = (width - CANVAS_GAP * (cols - 1)) / cols;
+  const gap = state.config.settings?.gapPx ?? 12;
+  const displayColW = (DISPLAY_WIDTH - gap * (cols - 1)) / cols;
+  return Math.max(0.1, colW / displayColW);
+}
+
+let canvasTooSmall = false;   // live preview wanted but the canvas is too narrow to read
+
+// Re-scale when the canvas changes width (window resize, inspector toggle).
+let canvasWidth = 0;
+new ResizeObserver(([entry]) => {
+  const w = Math.round(entry.contentRect.width);
+  if (!state.config || Math.abs(w - canvasWidth) < 8) return;
+  canvasWidth = w;
+  clearTimeout(renderCanvas._t);
+  renderCanvas._t = setTimeout(renderCanvas, 120);
+}).observe($("#canvas"));
+
 // flag widgets that overlap each other or run off the grid (x+w > cols)
 function problems(cols) {
   const ws = currentWidgets();
@@ -327,10 +442,15 @@ function updateHint(badCount) {
   const hint = $("#canvas-hint");
   if (!hint) return;
   if (badCount) {
-    hint.textContent = `⚠ ${badCount} widget(s) overlap or run off-grid — try “Tidy up”`;
+    hint.textContent = `${badCount} widget${badCount === 1 ? "" : "s"} overlap or run off the grid. Use Tidy up layout in the page menu.`;
     hint.classList.add("warn");
+  } else if (canvasTooSmall) {
+    hint.textContent = phone()
+      ? "Showing outlines on this screen. Use Preview to see the page live."
+      : "Showing outlines: hide the inspector or widen the window for a live preview.";
+    hint.classList.remove("warn");
   } else {
-    hint.textContent = "Drag to move · drag corner to resize";
+    hint.textContent = "Drag to move or resize. Arrow keys nudge the selected widget.";
     hint.classList.remove("warn");
   }
 }
@@ -383,13 +503,23 @@ function makeBox(w, cols) {
   const label = document.createElement("div");
   label.className = "box-label";
   label.innerHTML = `<span class="box-title"></span><span class="box-type"></span>`;
+  const typeLabel = (plugin?.meta?.label) || w.type;
   label.querySelector(".box-title").textContent = w.title || "(untitled)";
-  label.querySelector(".box-type").textContent = (plugin?.meta?.label) || w.type;
+  // "Clock  Clock" says nothing twice; show the type only when it adds something.
+  if (sameText(w.title, typeLabel)) label.querySelector(".box-type").remove();
+  else label.querySelector(".box-type").textContent = typeLabel;
+  if (w.enabled === false) box.setAttribute("aria-label", box.getAttribute("aria-label") + ", turned off");
+  if (w.enabled === false) {
+    const off = document.createElement("span");
+    off.className = "box-off";
+    off.textContent = "Off";
+    label.appendChild(off);
+  }
   if (w.pinned) {
     const pin = document.createElement("span");
-    pin.className = "box-pin";
-    pin.textContent = "📌";
-    pin.title = "Pinned overlay";
+    pin.className = "box-off";
+    pin.textContent = "Pinned";
+    pin.title = "Pinned to every page";
     label.appendChild(pin);
   }
   const variant = activeVariantLabel(w);
@@ -411,8 +541,13 @@ function makeBox(w, cols) {
 
   const tools = document.createElement("div");
   tools.className = "box-tools";
+  // A mouse shortcut; keyboard users have Delete on the selected box and the
+  // row menu, so this stays out of the Tab order instead of being an
+  // invisible stop on every box.
   const del = document.createElement("button");
-  del.className = "box-btn"; del.textContent = "🗑"; del.title = "Delete";
+  del.className = "box-btn"; del.title = "Delete"; del.tabIndex = -1;
+  del.setAttribute("aria-label", `Delete ${w.title || w.type}`);
+  del.appendChild(icon("i-trash"));
   del.onclick = (e) => { e.stopPropagation(); delWidget(w.id); };
   tools.append(del);
   box.appendChild(tools);
@@ -435,8 +570,8 @@ function isSelected(id) { return state.editingId === id || state.selection.has(i
 
 function selectOnly(id) {
   state.selection.clear();
-  if (state.editingId !== id) openEditor(id);
-  else { renderCanvas(); renderList(); }
+  if (state.editingId !== id) openEditor(id).then(showInspector);
+  else { renderCanvas(); renderList(); showInspector(); }
 }
 
 function toggleSelect(id) {
@@ -463,6 +598,7 @@ function selectedWidgets() {
 }
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+const sameText = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
 
 function rectsOverlap(a, b) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
@@ -642,6 +778,7 @@ function startDrag(e, w, box, cols, mode, dir = "se") {
       // One undo step per drag, not one per pointermove: the whole gesture
       // already mutated w.grid live, and this is the commit at the end of it.
       save(`${resized ? "resized" : "moved"} ${what}`);
+      syncDraftGrid();
     }
   };
   box.addEventListener("pointermove", onMove);
@@ -652,15 +789,39 @@ function startDrag(e, w, box, cols, mode, dir = "se") {
 
 let dragIndex = null;
 
+function widgetMenuItems(w) {
+  const off = w.enabled === false;
+  return [
+    { label: "Edit settings", icon: "i-edit", run: () => selectOnly(w.id), kbd: "Enter" },
+    { label: "Duplicate", icon: "i-copy", run: () => duplicateWidget(w.id), kbd: "Ctrl D" },
+    { label: "Copy to another page…", icon: "i-right", run: () => copyWidgetTo(w.id), disabled: pages().length < 2 },
+    { label: off ? "Turn on" : "Turn off", icon: off ? "i-on" : "i-off", run: () => toggle(w.id) },
+    { sep: true },
+    { label: "Delete", icon: "i-trash", run: () => delWidget(w.id), danger: true, kbd: "Del" },
+  ];
+}
+
+/** Short status pills for a row: what makes this widget behave differently. */
+function widgetPills(w) {
+  const pills = [];
+  if (w.enabled === false) pills.push(["Off", ""]);
+  if (w.schedule?.enabled) pills.push(["Scheduled", "pill-sched"]);
+  if (w.pinned) pills.push(["Pinned", "pill-sched"]);
+  const v = activeVariantLabel(w);
+  if (v) pills.push([`Variant ${v}`, ""]);
+  return pills;
+}
+
 function renderList() {
   const list = $("#widget-list");
   list.replaceChildren();
   const widgets = currentWidgets();
+  $("#widget-count").textContent = widgets.length ? String(widgets.length) : "";
   if (!widgets.length) {
     list.appendChild(emptyState(
       "No widgets on this page",
       "Add a clock, the weather, a live radar embed — anything the dashboard can render.",
-      button("+ Add widget", "btn primary small", () => openEditor(null)),
+      button("Add widget", "btn primary small", () => openEditor(null)),
     ));
     return;
   }
@@ -677,18 +838,70 @@ function renderList() {
   widgets.forEach((w, i) => {
     if (!match(w)) return;
     const plugin = registry.get(w.type);
+    const typeLabel = (plugin?.meta?.label) || w.type;
+    const selected = isSelected(w.id);
     const row = document.createElement("div");
-    row.className = "wrow" + (w.enabled === false ? " disabled" : "") + (state.editingId === w.id ? " selected" : "");
+    row.className = "wrow" + (w.enabled === false ? " disabled" : "") + (selected ? " selected" : "");
+    row.setAttribute("role", "listitem");
+    row.tabIndex = 0;
     row.draggable = true;
-    row.innerHTML = `<span class="drag-grip" title="Drag to reorder">⠿</span><div class="winfo"><div class="wtitle"></div><div class="wtype"></div></div>`;
-    row.querySelector(".wtitle").textContent = w.title || "(untitled)";
-    row.querySelector(".wtype").textContent = `${(plugin?.meta?.label) || w.type} · ${w.id}`;
-    const mk = (label, cls, fn) => { const b = document.createElement("button"); b.className = "btn small " + (cls || ""); b.textContent = label; b.onclick = fn; return b; };
-    row.appendChild(mk(w.enabled === false ? "Enable" : "Disable", "", () => toggle(w.id)));
-    row.appendChild(mk("Edit", "", () => openEditor(w.id)));
-    row.appendChild(mk("Duplicate", "", () => duplicateWidget(w.id)));
-    row.appendChild(mk("Copy to…", "", () => copyWidgetTo(w.id)));
-    row.appendChild(mk("Delete", "danger", () => delWidget(w.id)));
+    row.dataset.widgetId = w.id;
+
+    const grip = icon("i-grip");
+    grip.classList.add("drag-grip");
+    const ico = document.createElement("span");
+    ico.className = "wicon";
+    ico.setAttribute("aria-hidden", "true");
+    ico.textContent = typeLabel.slice(0, 1).toUpperCase();
+    const info = document.createElement("div");
+    info.className = "winfo";
+    const title = document.createElement("div");
+    title.className = "wtitle";
+    title.textContent = w.title || "(untitled)";
+    info.appendChild(title);
+    if (!sameText(w.title, typeLabel)) {
+      const type = document.createElement("div");
+      type.className = "wtype";
+      type.textContent = typeLabel;
+      info.appendChild(type);
+    }
+    const pills = document.createElement("div");
+    pills.className = "wpills";
+    for (const [text, cls] of widgetPills(w)) {
+      pills.appendChild(Object.assign(document.createElement("span"), { className: `badge ${cls}`, textContent: text }));
+    }
+    const size = document.createElement("span");
+    size.className = "wsize";
+    size.textContent = `${w.grid?.w ?? "?"}×${w.grid?.h ?? "?"}`;
+    size.title = "Width × height in grid cells";
+
+    const anchor = document.createElement("span");
+    anchor.className = "menu-anchor";
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "btn ghost icon";
+    more.setAttribute("aria-label", `Actions for ${w.title || typeLabel}`);
+    more.setAttribute("aria-haspopup", "menu");
+    more.setAttribute("aria-expanded", "false");
+    more.title = "Actions";
+    more.appendChild(icon("i-more"));
+    const menu = document.createElement("div");
+    menu.className = "menu";
+    menu.setAttribute("role", "menu");
+    menu.hidden = true;
+    more.onclick = (e) => { e.stopPropagation(); openMenu(more, menu, widgetMenuItems(w)); };
+    anchor.append(more, menu);
+
+    row.setAttribute("aria-label", [w.title || typeLabel, ...widgetPills(w).map((p) => p[0])].join(", "));
+    row.append(grip, ico, info, pills, size, anchor);
+    row.addEventListener("click", (e) => {
+      if (e.target.closest(".menu-anchor")) return;
+      selectOnly(w.id);
+    });
+    row.addEventListener("keydown", (e) => {
+      if (e.target !== row) return;
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectOnly(w.id); }
+    });
     // drag-reorder
     row.addEventListener("dragstart", () => { dragIndex = i; row.classList.add("row-dragging"); });
     row.addEventListener("dragend", () => row.classList.remove("row-dragging"));
@@ -772,35 +985,152 @@ function nextFreeRow() {
   return currentWidgets().reduce((m, w) => Math.max(m, (w.grid?.y || 0) + (w.grid?.h || 3)), 0);
 }
 
-async function openEditor(id) {
+async function openEditor(id, { keepOriginal = false } = {}) {
   const editor = $("#editor");
-  const existing = currentWidgets().find((w) => w.id === id);
-  let widget;
-  if (existing) {
-    widget = structuredClone(existing);
-  } else {
+  let existing = currentWidgets().find((w) => w.id === id);
+  if (existing) leaveWidget();
+  else {
+    // Adding a widget places it straight away — it appears on the canvas and
+    // the inspector opens on it. There's no half-added state to cancel out of;
+    // Undo (or Delete widget) removes it. Cancelling the picker leaves the
+    // current editor exactly as it was.
+    flushStage();
     const type = await pickWidgetType();
     if (!type) return;
-    widget = {
-      id: "", type, title: registry.get(type)?.meta?.label || "",
+    leaveWidget();
+    existing = {
+      id: `${type}-${Date.now().toString(36)}`,
+      type, title: registry.get(type)?.meta?.label || "",
       enabled: true, grid: { x: 0, y: nextFreeRow(), w: 4, h: 3 },
       // Defaults are materialised up front. The form used to *display* each
       // field's default but only write what was in the DOM, so a widget added
       // and saved untouched came out with an empty settings bag.
       settings: defaultSettings(type),
     };
-    if (type === "heads-up") widget.pinned = true;
+    if (type === "heads-up") existing.pinned = true;
+    if (type === "slideshow") existing.slideshow = { enabled: true, durationSeconds: 30, slides: [] };
+    currentWidgets().push(existing);
+    save(`added ${existing.title || type}`);
+    announce(`Added ${existing.title || type}`);
   }
+  const widget = structuredClone(existing);
   if (widget.type === "slideshow") {
     widget.slideshow = widget.slideshow || { enabled: true, durationSeconds: 30, slides: [] };
   }
-  // The schedule is edited in its normalised form and folded back on save, so
+  // The schedule is edited in its normalised form and folded back on stage, so
   // the form never has to know about the legacy flat shape.
   widget._schedule = scheduleToDraft(widget.schedule);
-  state.editingId = existing ? id : null;
+  state.editingId = widget.id;
   state.selection.clear();
   state.draftWidget = widget;
+  // Undo/redo reopen the editor; Revert should still go back to how the widget
+  // was when you first opened it, not to the post-undo state.
+  if (!keepOriginal || editorOriginal?.id !== widget.id) editorOriginal = structuredClone(existing);
   renderForm(editor, widget);
+  // Taken after the form has rendered, because rendering fills in empty
+  // shapes (a variants list, schedule windows). A draft that still folds back
+  // to this is "unchanged", whatever the editor added along the way.
+  editorBase = { id: widget.id, raw: structuredClone(existing), norm: stagedCopy(widget) };
+}
+
+// ---- auto-staging -----------------------------------------------------------
+//
+// Inspector edits stage as you make them: there is no per-panel Apply. A burst
+// of edits to one widget or page coalesces into a single undo step, and Save in
+// the top bar is the only thing that writes to the dashboard. Invalid values
+// are flagged in place and simply not staged until they're fixed.
+
+let pendingStage = null;      // { run } — the debounced stage, flushed before navigating away
+let editorOriginal = null;    // the widget as it was when the inspector opened (for Revert)
+let editorBase = null;        // { id, raw, norm } — see openEditor
+
+function scheduleStage(run, delay = 250) {
+  clearTimeout(pendingStage?.timer);
+  pendingStage = { run, timer: setTimeout(() => { pendingStage = null; run(); }, delay) };
+}
+function flushStage() {
+  if (!pendingStage) return;
+  clearTimeout(pendingStage.timer);
+  const { run } = pendingStage;
+  pendingStage = null;
+  run();
+}
+
+let stageStructural = false;
+/** Queue a stage of the open widget; "structural" (needs a canvas redraw) sticks
+ *  until the queued stage runs, so a later cosmetic edit can't downgrade it.
+ *  The draft and form are captured now, so a stage can never land on a
+ *  different widget that was opened in the meantime. */
+function queueWidgetStage(structural = false, delay = 300) {
+  const draft = state.draftWidget;
+  const form = widgetForm;
+  if (!draft || !form) return;
+  stageStructural = stageStructural || structural;
+  scheduleStage(() => {
+    const s = stageStructural;
+    stageStructural = false;
+    stageWidget(draft, form, { structural: s });
+  }, delay);
+}
+
+/**
+ * Moving away from the widget editor. A value that failed validation was never
+ * staged, so it's about to be dropped — say so instead of losing it silently.
+ */
+function leaveWidget() {
+  flushStage();
+  if (state.draftWidget && widgetForm) {
+    const errs = widgetForm.validate();
+    if (errs.length) {
+      const name = editorBase?.raw?.title || state.draftWidget.type;
+      toast(`Your last change to “${name}” wasn't kept: ${errs[0].message}`, "err");
+    }
+  }
+  widgetForm = null;
+}
+
+/** The config shape of the widget being edited (editor-only fields folded back). */
+function stagedCopy(draft) {
+  const w = structuredClone(draft);
+  w.schedule = scheduleFromDraft(w, "_schedule");
+  delete w._schedule;
+  if (w.type !== "slideshow") w.slideshow = null;
+  return w;
+}
+
+/** Validate a draft and, if it's valid, write it into the config. */
+function stageWidget(draft, form, { structural = false } = {}) {
+  if (!draft || !form) return false;
+  const errors = form.validate();
+  const label = draft.title || registry.get(draft.type)?.meta?.label || draft.type;
+  if (errors.length) {
+    // Flagged in place; if the user is leaving, leaveWidget() says it was dropped.
+    if (draft === state.draftWidget) form.setErrors(errors);
+    return false;
+  }
+  if (draft === state.draftWidget) form.setErrors([]);
+  const ws = currentWidgets();
+  const idx = ws.findIndex((x) => x.id === draft.id);
+  if (idx < 0) return false;
+  let next = stagedCopy(draft);
+  // Back where it started? Put the exact original object back, so Undo history
+  // and the unsaved-changes count see no change at all.
+  if (editorBase?.id === draft.id && deepEqual(next, editorBase.norm)) next = structuredClone(editorBase.raw);
+  ws[idx] = next;
+  save(`edited ${label}`, { coalesce: `widget:${next.id}` });
+  if (structural) { renderCanvas(); renderList(); }
+  else liveHost.refresh(next);
+  return true;
+}
+
+/** After a drag or nudge changed the config, keep the open draft in step. */
+function syncDraftGrid() {
+  const draft = state.draftWidget;
+  if (!draft) return;
+  const live = currentWidgets().find((w) => w.id === draft.id);
+  if (!live) return;
+  draft.grid = { ...live.grid };
+  widgetForm?.rerender();
 }
 
 // The widget form is now built from FieldDefs and rendered by the form engine.
@@ -821,21 +1151,21 @@ function widgetFieldDefs(widget, editor) {
   const defs = [
     { key: "type", type: "custom", label: "Type", render: () => typeRow(widget, editor) },
     { key: "title", label: "Title", type: "text", required: true },
-    { key: "enabled", label: "Enabled", type: "boolean" },
+    { key: "enabled", label: "Show on the display", type: "boolean" },
     {
-      key: "pinned", label: "Pin to all pages (overlay)", type: "boolean",
-      help: "Pinned widgets stay visible during page rotation. Only one is recommended.",
+      key: "pinned", label: "Pin to every page", type: "boolean",
+      help: "Stays on screen as an overlay while pages change. One pinned widget works best.",
     },
     {
-      key: "grid", label: "Position & size", type: "grid",
-      help: `Columns 0–${cols - 1}. You can also drag on the canvas.`,
+      key: "grid", label: "Position and size", type: "grid",
+      help: `In grid cells; the grid has ${cols} columns. You can also drag it on the canvas.`,
     },
     ...settingsFields,
     {
-      key: "refreshSeconds", label: "Refresh seconds", type: "number", min: 1,
-      placeholder: "none", help: "Blank = never auto-refresh.",
+      key: "refreshSeconds", label: "Refresh every (seconds)", type: "number", min: 1,
+      placeholder: "never", help: "Leave blank to never refresh automatically.",
     },
-    { key: "_schedHead", type: "note", label: "Hide this widget outside a time window (same rules as page schedules)." },
+    { key: "_schedHead", type: "note", label: "Show this widget only during set hours. Same rules as page schedules." },
     ...scheduleFieldDefs("_schedule"),
     {
       key: "variants", type: "custom", label: "Variants",
@@ -897,6 +1227,7 @@ function typeRow(widget, editor) {
       ? (widget.slideshow || { enabled: true, durationSeconds: 30, slides: [] })
       : null;
     renderForm(editor, widget);
+    queueWidgetStage(true, 0);
   }));
   return row;
 }
@@ -916,13 +1247,19 @@ function slideTypeRow(slide, editor, widget) {
     slide.type = v;
     slide.settings = defaultSettings(v);
     renderForm(editor, widget);
+    queueWidgetStage(false, 0);
   }));
   return row;
 }
 
 function renderForm(editor, widget) {
   const label = registry.get(widget.type)?.meta?.label || widget.type;
-  openPanel(state.editingId ? (widget.title || label) : "Add widget");
+  openPanel(widget.title || label, {
+    subtitle: `${label} widget on ${currentPage()?.name || "this page"}`,
+    icon: "i-widget",
+    // Re-rendering the same widget (type change) isn't leaving it.
+    sameWidget: state.draftWidget === widget && !!widgetForm,
+  });
 
   const host = document.createElement("div");
   editor.appendChild(host);
@@ -935,53 +1272,48 @@ function renderForm(editor, widget) {
       "embed-presets": ({ field: f, get, set }) => embedPresets(f, get() ?? "", set),
     },
     onChange: (path) => {
-      // The canvas reads the draft, so this is a real live preview: type a URL
-      // or change a column and the box on the left updates as you go.
-      if (path === "title" || path === "enabled" || path === "pinned" || path.startsWith("grid")) {
-        renderCanvas();
-      } else if (path.startsWith("settings") || path.startsWith("slideshow")) {
-        liveHost.refresh(widget);
+      // Every change stages (debounced), so the canvas is a real live preview:
+      // type a URL or change a column and the box updates as you go.
+      const structural = path === "title" || path === "enabled" || path === "pinned" || path.startsWith("grid");
+      if (path === "title") $("#inspector-title").textContent = widget.title || label;
+      if (path === "pinned" && widget.pinned) {
+        const others = pages().flatMap((p) => p.widgets || []).filter((x) => x.pinned && x.id !== widget.id);
+        if (others.length) toast("Another widget is already pinned — only one overlay is recommended", "");
       }
+      queueWidgetStage(structural);
     },
   });
+  // Custom editors (variants, slides, stock picker) write to the draft without
+  // going through the engine's onChange; catch those here. Staging a draft
+  // that didn't change is a no-op, so over-triggering costs nothing.
+  for (const type of ["input", "change", "click"]) {
+    host.addEventListener(type, (e) => {
+      if (type === "click" && !e.target.closest("button")) return;
+      queueWidgetStage(type === "click");
+    });
+  }
 
-  const actions = document.createElement("div");
-  actions.className = "editor-actions";
-  actions.append(
-    button("Cancel", "btn", () => { state.editingId = null; showDefault(); }),
-    button("Save", "btn primary", () => commit(editor, widget)),
+  setInspectorFoot(
+    button("Delete widget", "btn ghost danger", () => delWidget(widget.id)),
+    spacer(),
+    button("Revert", "btn ghost", revertWidget),
   );
-  editor.appendChild(actions);
   editor._widget = widget;
 }
 
-async function commit(editor, widget) {
-  // Required fields and numeric bounds are checked before anything is staged,
-  // and the first offender is scrolled to and focused.
-  const errors = widgetForm?.validate() || [];
-  if (errors.length) {
-    widgetForm.setErrors(errors);
-    widgetForm.focusField(errors[0].path);
-    toast(errors[0].message, "err");
-    return;
-  }
-  widgetForm?.setErrors([]);
-
-  const w = widget;
-  w.schedule = scheduleFromDraft(w, "_schedule");
-  delete w._schedule;   // editor-only shape; never reaches the config
-  if (w.type !== "slideshow") w.slideshow = null;
-  if (!w.id) w.id = `${w.type}-${Date.now().toString(36)}`;
-  if (w.pinned) {
-    const others = pages().flatMap((p) => p.widgets || []).filter((x) => x.pinned && x.id !== w.id);
-    if (others.length) toast("Another widget is already pinned — only one overlay is recommended", "");
-  }
+/** Put the widget back the way it was when the inspector opened on it. */
+function revertWidget() {
+  clearTimeout(pendingStage?.timer);
+  pendingStage = null;
+  const orig = editorOriginal;
+  if (!orig) return;
   const ws = currentWidgets();
-  const idx = ws.findIndex((x) => x.id === state.editingId);
-  const isNew = idx < 0;
-  if (!isNew) ws[idx] = w; else ws.push(w);
-  showDefault();
-  save(`${isNew ? "added" : "edited"} ${w.title || w.type}`);
+  const idx = ws.findIndex((x) => x.id === orig.id);
+  if (idx < 0) return;
+  ws[idx] = structuredClone(orig);
+  save(`reverted ${orig.title || orig.type}`);
+  renderCanvas(); renderList();
+  openEditor(orig.id, { keepOriginal: true });
 }
 
 // ---- staging (no network; the store owns history, savebar owns the wire) -----
@@ -1002,27 +1334,57 @@ function adoptConfig(next) {
   Object.assign(state.config, clone(next));
 }
 
-/** Called by the store after undo/redo/discard/save/external change. */
+/**
+ * Called by the store after undo/redo/discard/save/external change. Stays where
+ * you were: the same settings page, or the same widget if it still exists.
+ */
 function onConfigReplaced(next) {
+  clearTimeout(pendingStage?.timer);
+  pendingStage = null;   // a queued stage belongs to the config being replaced
+  widgetForm = null;     // and so does the open form: undo isn't "leaving" it
   adoptConfig(next);
   if (!pages().length) pages().push({ id: "page-1", name: "Home", widgets: [] });
   state.activePage = Math.min(state.activePage, pages().length - 1);
-  $("#version").textContent = "v" + state.config.version;
+  const editing = state.editingId;
   state.editingId = null;
+  state.draftWidget = null;
+  renderRail();
   renderAll();
-  showDefault();
+  if (state.view === "settings") {
+    RAIL.find((r) => r.id === activeSection)?.open();
+  } else if (editing && currentWidgets().some((w) => w.id === editing)) {
+    openEditor(editing, { keepOriginal: true });
+  } else {
+    showDefault();
+  }
 }
 
 // ---- page rotation (not the slideshow *widget*) -----------------------------
 
 function rotationPageOrder() { return rotationPages(state.config); }
 
+/**
+ * Settings pages stage as you edit, like the inspector: any input or change
+ * inside `host` re-runs `apply` (debounced), which reads the controls, writes
+ * the config and calls save() with a coalesce key so a burst of edits is one
+ * undo step. `apply` returns false to refuse an invalid value.
+ */
+function autoStage(host, apply) {
+  const run = () => scheduleStage(apply, 300);
+  host.addEventListener("input", run);
+  host.addEventListener("change", run);
+  host.appendChild(Object.assign(document.createElement("p"), {
+    className: "autosave-note",
+    textContent: "Changes are kept as you make them. Press Save in the top bar to send them to the displays.",
+  }));
+}
+
 function openRotation() {
   state.editingId = null;
-  const editor = openPanel("Page rotation", { section: "rotation" });
+  const editor = openPanel("Slideshow", { section: "rotation" });
   editor.appendChild(noteEl("Cycle through pages on a timer. This is separate from the Slideshow widget, which rotates slides inside one tile."));
   const r = rotation();
-  editor.appendChild(boolField("Enable page rotation", r.enabled === true, "rot-enabled"));
+  editor.appendChild(boolField("Play pages as a slideshow", r.enabled === true, "rot-enabled"));
   editor.appendChild(field("Default seconds per page", input("number", r.defaultDurationSeconds ?? 30, "rot-default")));
   const transOpts = ["random", "off", "fade", "slide-left", "slide-right", "slide-up", "slide-down",
     "zoom-in", "zoom-out", "wipe-left", "wipe-right", "blur-fade", "scale-rotate"];
@@ -1034,10 +1396,10 @@ function openRotation() {
   )));
   editor.appendChild(noteEl("Random picks a different animation each page change. Off = instant swap."));
 
-  editor.appendChild(sectionTitle("Pages in rotation"));
+  editor.appendChild(sectionTitle("Pages in the slideshow"));
   editor.appendChild(noteEl(
-    "Rotation follows the page bar — drag the tabs up there to change the order. " +
-    "Blank duration = use the default above."));
+    "Pages play in tab order; use Move left or Move right in a page's menu to change it. " +
+    "Leave a time blank to use the default above."));
   if (hasCustomOrder(state.config)) {
     editor.appendChild(noteEl(
       "⚠ This config has a separate rotation order left over from an older version. " +
@@ -1072,31 +1434,26 @@ function openRotation() {
   });
   editor.appendChild(list);
 
-  const actions = document.createElement("div"); actions.className = "editor-actions";
-  actions.append(
-    button("Cancel", "btn", () => showDefault()),
-    button("Save", "btn primary", () => {
-      r.enabled = editor.querySelector('[data-name="rot-enabled"]').checked;
-      const d = Number(editor.querySelector('[data-name="rot-default"]').value);
-      r.defaultDurationSeconds = Math.max(2, d || 30);
-      const trans = editor.querySelector('[data-name="rot-transition"]')?.value;
-      if (trans) {
-        const s = state.config.settings || (state.config.settings = {});
-        s.pageTransition = trans;
-      }
-      syncRotationOrder(state.config);
-      const byId = new Map(pages().map((p) => [p.id, p]));
-      for (const row of draft) {
-        const p = byId.get(row.id);
-        if (!p) continue;
-        const raw = String(row.durationSeconds ?? "").trim();
-        p.durationSeconds = raw === "" ? null : Math.max(2, Number(raw) || 2);
-      }
-      showDefault();
-      save("changed page rotation");
-    }),
-  );
-  editor.appendChild(actions);
+  autoStage(editor, () => {
+    r.enabled = editor.querySelector('[data-name="rot-enabled"]').checked;
+    const d = Number(editor.querySelector('[data-name="rot-default"]').value);
+    r.defaultDurationSeconds = Math.max(2, d || 30);
+    const trans = editor.querySelector('[data-name="rot-transition"]')?.value;
+    if (trans) {
+      const s = state.config.settings || (state.config.settings = {});
+      s.pageTransition = trans;
+    }
+    syncRotationOrder(state.config);
+    const byId = new Map(pages().map((p) => [p.id, p]));
+    for (const row of draft) {
+      const p = byId.get(row.id);
+      if (!p) continue;
+      const raw = String(row.durationSeconds ?? "").trim();
+      p.durationSeconds = raw === "" ? null : Math.max(2, Number(raw) || 2);
+    }
+    save("changed the slideshow", { coalesce: "rotation" });
+    renderPageBar();
+  });
 }
 
 // ---- alert engine settings + active banners ---------------------------------
@@ -1114,14 +1471,17 @@ function openAlerts() {
   state.editingId = null;
   const a = alertsSettings();
   const editor = openPanel("Alerts", { section: "alerts" });
-  editor.appendChild(noteEl("Sources push banners to every display. Auto-dismiss times apply to severity (including NWS, capped by the official expiry). ✕ clears every display and stays dismissed until NWS cancels that alert."));
+  editor.appendChild(noteEl("Alerts appear as a banner on every display. Choose what can raise one and how long it stays up. Dismissing a banner clears it from every display."));
 
   editor.appendChild(sectionTitle("Sources"));
-  editor.appendChild(boolField("OctoPrint print transitions", a.octoprintEnabled !== false, "al-op"));
-  editor.appendChild(boolField("NWS severe weather", a.nwsEnabled !== false, "al-nws"));
-  editor.appendChild(boolField("Space weather (geomagnetic storm)", a.spaceEnabled !== false, "al-space"));
+  editor.appendChild(boolField("3D printer", a.octoprintEnabled !== false, "al-op",
+    "When a print starts, finishes or fails on OctoPrint."));
+  editor.appendChild(boolField("Severe weather", a.nwsEnabled !== false, "al-nws",
+    "National Weather Service warnings for your home location."));
+  editor.appendChild(boolField("Geomagnetic storm", a.spaceEnabled !== false, "al-space",
+    "When the Kp index reaches the threshold below. Good for aurora watching."));
 
-  editor.appendChild(sectionTitle("NWS"));
+  editor.appendChild(sectionTitle("Severe weather"));
   editor.appendChild(field("Minimum severity", select(
     [
       { value: "info", label: "Info and above" },
@@ -1133,18 +1493,18 @@ function openAlerts() {
     "al-nws-min",
   )));
 
-  editor.appendChild(sectionTitle("Space weather"));
-  editor.appendChild(field("Kp threshold (fire when ≥)", input("number", a.kpThreshold ?? 6, "al-kp")));
-  editor.appendChild(field("Space alert lifetime (seconds, 0 = use warning TTL)", input("number", a.spaceTtlSeconds ?? 3600, "al-space-ttl")));
-  editor.appendChild(noteEl("Hysteresis resets when Kp drops below threshold − 1 (same as before for the default of 6)."));
+  editor.appendChild(sectionTitle("Geomagnetic storm"));
+  editor.appendChild(field("Kp threshold (alert at or above)", input("number", a.kpThreshold ?? 6, "al-kp")));
+  editor.appendChild(field("Keep the banner up for (seconds)", input("number", a.spaceTtlSeconds ?? 3600, "al-space-ttl")));
+  editor.appendChild(noteEl("Set 0 to use the warning time below. The alert re-arms once Kp drops one below the threshold."));
 
   editor.appendChild(sectionTitle("Auto-dismiss"));
-  editor.appendChild(field("Info alerts (seconds, 0 = keep)", input("number", a.infoTtlSeconds ?? 90, "al-info")));
-  editor.appendChild(field("Warning alerts (seconds, 0 = keep)", input("number", a.warningTtlSeconds ?? 0, "al-warning")));
-  editor.appendChild(field("Danger alerts (seconds, 0 = keep)", input("number", a.dangerTtlSeconds ?? 0, "al-danger")));
-  editor.appendChild(noteEl("Defaults: info = 90s, warning/danger = keep until dismissed. Saving new times also updates alerts already on screen. Use Test alert to preview."));
+  editor.appendChild(noteEl("How long each kind of banner stays before it hides itself. Use 0 to keep it until someone dismisses it."));
+  editor.appendChild(field("Info (seconds)", input("number", a.infoTtlSeconds ?? 90, "al-info")));
+  editor.appendChild(field("Warning (seconds)", input("number", a.warningTtlSeconds ?? 0, "al-warning")));
+  editor.appendChild(field("Danger (seconds)", input("number", a.dangerTtlSeconds ?? 0, "al-danger")));
 
-  editor.appendChild(sectionTitle("Active on displays"));
+  editor.appendChild(sectionTitle("Showing on displays now"));
   const activeHost = document.createElement("div");
   activeHost.className = "alert-active-list";
   activeHost.appendChild(noteEl("Loading…"));
@@ -1197,29 +1557,23 @@ function openAlerts() {
   };
   refreshActive();
 
-  const actions = document.createElement("div"); actions.className = "editor-actions";
-  actions.append(
-    button("Cancel", "btn", () => showDefault()),
-    button("Save", "btn primary", () => {
-      const readInt = (name) => Math.max(0, Math.round(Number(editor.querySelector(`[data-name="${name}"]`).value) || 0));
-      const readNum = (name, fallback) => {
-        const v = Number(editor.querySelector(`[data-name="${name}"]`).value);
-        return Number.isFinite(v) ? v : fallback;
-      };
-      a.octoprintEnabled = editor.querySelector('[data-name="al-op"]')?.checked !== false;
-      a.nwsEnabled = editor.querySelector('[data-name="al-nws"]')?.checked !== false;
-      a.spaceEnabled = editor.querySelector('[data-name="al-space"]')?.checked !== false;
-      a.nwsMinSeverity = editor.querySelector('[data-name="al-nws-min"]')?.value || "info";
-      a.kpThreshold = Math.min(9, Math.max(0, readNum("al-kp", 6)));
-      a.spaceTtlSeconds = readInt("al-space-ttl");
-      a.infoTtlSeconds = readInt("al-info");
-      a.warningTtlSeconds = readInt("al-warning");
-      a.dangerTtlSeconds = readInt("al-danger");
-      showDefault();
-      save("changed alert rules");
-    }),
-  );
-  editor.appendChild(actions);
+  autoStage(editor, () => {
+    const readInt = (name) => Math.max(0, Math.round(Number(editor.querySelector(`[data-name="${name}"]`).value) || 0));
+    const readNum = (name, fallback) => {
+      const v = Number(editor.querySelector(`[data-name="${name}"]`).value);
+      return Number.isFinite(v) ? v : fallback;
+    };
+    a.octoprintEnabled = editor.querySelector('[data-name="al-op"]')?.checked !== false;
+    a.nwsEnabled = editor.querySelector('[data-name="al-nws"]')?.checked !== false;
+    a.spaceEnabled = editor.querySelector('[data-name="al-space"]')?.checked !== false;
+    a.nwsMinSeverity = editor.querySelector('[data-name="al-nws-min"]')?.value || "info";
+    a.kpThreshold = Math.min(9, Math.max(0, readNum("al-kp", 6)));
+    a.spaceTtlSeconds = readInt("al-space-ttl");
+    a.infoTtlSeconds = readInt("al-info");
+    a.warningTtlSeconds = readInt("al-warning");
+    a.dangerTtlSeconds = readInt("al-danger");
+    save("changed alert rules", { coalesce: "alerts" });
+  });
 }
 
 // ---- scenes (named context presets) -----------------------------------------
@@ -1278,10 +1632,6 @@ function openScenes() {
   if (scenes().length > 4) editor.appendChild(filterBox("Filter scenes…", draw));
   draw();
   editor.appendChild(list);
-
-  const actions = document.createElement("div"); actions.className = "editor-actions";
-  actions.append(button("Close", "btn", () => showDefault()));
-  editor.appendChild(actions);
 }
 
 function sceneRow(sc) {
@@ -1351,11 +1701,6 @@ function openSceneEditor(sceneId) {
       schedule: null,
     };
 
-  const h = document.createElement("h2");
-  h.textContent = existing ? `Edit scene — ${draft.name}` : "New scene";
-  h.style.margin = "0 0 6px";
-  editor.appendChild(h);
-
   editor.appendChild(field("Name", input("text", draft.name || "", "sc-name")));
 
   editor.appendChild(sectionTitle("Pages"));
@@ -1388,10 +1733,10 @@ function openSceneEditor(sceneId) {
     null,
     "sc-theme-mode",
   )));
-  editor.appendChild(field("Accent override (blank = no change)", input("text", draft.theme?.accent || "", "sc-theme-accent", "#4aa3ff")));
+  editor.appendChild(field("Accent color (leave blank to keep)", input("text", draft.theme?.accent || "", "sc-theme-accent", "#4aa3ff")));
 
   editor.appendChild(sectionTitle("Variants & rotation"));
-  editor.appendChild(field("Variant label (blank = none)", input("text", draft.variantLabel || "", "sc-variant", "night")));
+  editor.appendChild(field("Variant label (leave blank for none)", input("text", draft.variantLabel || "", "sc-variant", "night")));
   editor.appendChild(noteEl("Widgets that define a variant with this label switch to it while the scene is active."));
   const rotEn = draft.rotation?.enabled;
   editor.appendChild(field("Rotation override", select(
@@ -1404,7 +1749,7 @@ function openSceneEditor(sceneId) {
     null,
     "sc-rot-enabled",
   )));
-  editor.appendChild(field("Default seconds/page override (blank = no change)", input("number", draft.rotation?.defaultDurationSeconds ?? "", "sc-rot-secs")));
+  editor.appendChild(field("Seconds per page (leave blank to keep)", input("number", draft.rotation?.defaultDurationSeconds ?? "", "sc-rot-secs")));
 
   editor.appendChild(sectionTitle("Schedule (auto-activate)"));
   const schedDraft = { _schedule: scheduleToDraft(draft.schedule) };
@@ -1414,7 +1759,6 @@ function openSceneEditor(sceneId) {
 
   const actions = document.createElement("div"); actions.className = "editor-actions";
   actions.append(
-    button("Cancel", "btn", () => openScenes()),
     button("Save scene", "btn primary", async () => {
       draft.name = editor.querySelector('[data-name="sc-name"]')?.value?.trim() || "Scene";
       draft.pageIds = pageChips.filter((c) => c.classList.contains("on")).map((c) => c.dataset.pageId);
@@ -1441,6 +1785,7 @@ function openSceneEditor(sceneId) {
       save(`${isNew ? "added" : "edited"} scene “${draft.name}”`);
       openScenes();
     }),
+    button("Back to scenes", "btn ghost", () => openScenes()),
   );
   editor.appendChild(actions);
 }
@@ -1453,48 +1798,118 @@ function openSceneEditor(sceneId) {
 // into the config or applies immediately — the old Alerts panel mixed both with
 // no way to tell which was which.
 
+// Layout is one surface; everything else is a settings page of its own. On a
+// phone the bottom bar has room for four, so the rest go under "More".
 const RAIL = [
-  { id: "pages",      icon: "▤", label: "Pages",       open: () => openPageSettings() },
-  { id: "rotation",   icon: "⏱", label: "Rotation",    open: openRotation },
-  { id: "scenes",     icon: "◲", label: "Scenes",      open: openScenes },
-  { sep: true },
-  { id: "appearance", icon: "◈", label: "Appearance",  open: openLayout },
-  { id: "alerts",     icon: "⚑", label: "Alerts",      open: openAlerts },
-  { id: "displays",   icon: "⬒", label: "Displays",    open: openDisplays },
-  { sep: true },
-  { id: "keys",       icon: "🔑", label: "API keys",   open: openKeys },
-  { id: "backups",    icon: "⌛", label: "Backups",     open: openBackups },
-  { id: "system",     icon: "⚙", label: "System",      open: openSystem },
+  { id: "pages",      icon: "i-layout",  label: "Layout",      open: () => openPageSettings(), phone: true },
+  { group: "Settings" },
+  { id: "rotation",   icon: "i-rotate",  label: "Slideshow",   open: openRotation, phone: true },
+  { id: "scenes",     icon: "i-scenes",  label: "Scenes",      open: openScenes },
+  { id: "appearance", icon: "i-paint",   label: "Appearance",  open: openLayout },
+  { id: "alerts",     icon: "i-bell",    label: "Alerts",      open: openAlerts, phone: true },
+  { id: "displays",   icon: "i-tv",      label: "Displays",    open: openDisplays, phone: true },
+  { id: "keys",       icon: "i-key",     label: "API keys",    open: openKeys },
+  { spacer: true },
+  { id: "backups",    icon: "i-history", label: "Backups",     open: openBackups },
+  { id: "system",     icon: "i-gear",    label: "System",      open: openSystem },
 ];
+const SETTINGS_SECTIONS = new Set(RAIL.filter((r) => r.id && r.id !== "pages").map((r) => r.id));
 
 let activeSection = "pages";
+
+function goSection(item) {
+  activeSection = item.id;
+  renderRail();
+  item.open();
+}
 
 function renderRail() {
   const rail = $("#rail");
   rail.replaceChildren();
   for (const item of RAIL) {
-    if (item.sep) {
-      const s = document.createElement("div");
-      s.className = "rail-sep";
-      rail.appendChild(s);
+    if (item.group) {
+      rail.appendChild(Object.assign(document.createElement("div"), { className: "rail-group", textContent: item.group }));
+      continue;
+    }
+    if (item.spacer) {
+      rail.appendChild(Object.assign(document.createElement("div"), { className: "rail-spacer" }));
       continue;
     }
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "rail-btn";
+    b.className = "rail-btn" + (item.phone ? "" : " desk-only");
     b.dataset.label = item.label;
     b.dataset.section = item.id;
-    b.textContent = item.icon;
-    b.setAttribute("aria-label", item.label);
-    b.setAttribute("aria-current", String(activeSection === item.id));
-    b.onclick = () => { activeSection = item.id; renderRail(); item.open(); };
+    b.append(icon(item.icon), Object.assign(document.createElement("span"), { className: "lbl", textContent: item.label }));
+    if (activeSection === item.id) b.setAttribute("aria-current", "page");
+    b.onclick = () => goSection(item);
     rail.appendChild(b);
   }
+
+  // Phone only: the sections that don't fit the bottom bar.
+  const anchor = document.createElement("span");
+  anchor.className = "menu-anchor rail-more";
+  const more = document.createElement("button");
+  more.type = "button";
+  more.className = "rail-btn";
+  more.setAttribute("aria-haspopup", "menu");
+  more.setAttribute("aria-expanded", "false");
+  more.append(icon("i-more"), Object.assign(document.createElement("span"), { className: "lbl", textContent: "More" }));
+  const overflow = RAIL.filter((r) => r.id && !r.phone);
+  if (overflow.some((r) => r.id === activeSection)) more.setAttribute("aria-current", "page");
+  const menu = document.createElement("div");
+  menu.className = "menu rail-more-menu";
+  menu.setAttribute("role", "menu");
+  menu.hidden = true;
+  more.onclick = (e) => {
+    e.stopPropagation();
+    openMenu(more, menu, overflow.map((r) => ({ label: r.label, icon: r.icon, run: () => goSection(r) })));
+  };
+  anchor.append(more, menu);
+  rail.appendChild(anchor);
+
+  const ver = document.createElement("div");
+  ver.className = "rail-version";
+  ver.id = "version";
+  ver.textContent = state.config ? `Config v${state.config.version}` : "";
+  rail.appendChild(ver);
 }
 
-/** Clear the inspector and title it. Returns the body to append into. */
-function openPanel(title, { scope = "staged", section = null } = {}) {
+function setView(view) {
+  state.view = view;
+  document.body.dataset.view = view;
+  if (view === "settings") closeSheet();
+}
+
+/**
+ * Clear a surface and title it. Returns the body to append into.
+ *
+ * Settings sections get a full page; the page and widget editors go in the
+ * inspector beside the canvas. Settings used to share the 340px inspector,
+ * which is where most of the wrapping came from.
+ */
+function openPanel(title, { scope = "staged", section = null, subtitle = "", icon: iconId = null, sameWidget = false } = {}) {
+  flushStage();
+  closeMenu();
+  if (!sameWidget) leaveWidget();
   if (section) { activeSection = section; renderRail(); }
+
+  if (section && SETTINGS_SECTIONS.has(section)) {
+    setView("settings");
+    state.editingId = null;
+    state.draftWidget = null;
+    $("#settings-title").textContent = title;
+    const pill = $("#settings-scope");
+    pill.textContent = "Takes effect immediately";
+    pill.className = "badge scope-pill" + (scope === "immediate" ? " warn" : " hidden");
+    const body = $("#settings-body");
+    body.replaceChildren();
+    $(".settings-scroll").scrollTop = 0;
+    return body;
+  }
+
+  if (state.view !== "layout") { activeSection = "pages"; renderRail(); }
+  setView("layout");
   // The canvas and the strip both show what's selected, and the selection is
   // whatever the inspector is displaying — so they refresh together with it.
   renderCanvas();
@@ -1503,11 +1918,109 @@ function openPanel(title, { scope = "staged", section = null } = {}) {
   editor.replaceChildren();
   editor.scrollTop = 0;
   $("#inspector-title").textContent = title;
-  const pill = $("#inspector-scope");
-  pill.textContent = scope === "immediate" ? "Applies immediately" : "Staged";
-  pill.className = "badge scope-pill " + (scope === "immediate" ? "immediate warn" : "staged");
+  $("#inspector-sub").textContent = subtitle;
+  $("#inspector-icon").replaceChildren(icon(iconId || "i-sliders"));
+  $("#inspector-scope").classList.add("hidden");
+  setInspectorFoot();
   return editor;
 }
+
+/** The inspector's sticky footer (Delete / Revert and similar). */
+function setInspectorFoot(...nodes) {
+  $("#inspector-foot").replaceChildren(...nodes);
+}
+function spacer() { return Object.assign(document.createElement("span"), { className: "grow" }); }
+
+/** Status line under the canvas, also read out by screen readers. */
+function announce(text) {
+  const hint = $("#canvas-hint");
+  if (!hint) return;
+  hint.classList.remove("warn");
+  hint.textContent = text;
+}
+
+// ---- inspector open/closed --------------------------------------------------
+//
+// Docked beside the canvas on desktop and tablet; collapsing it gives the
+// canvas the room. On a phone it's a bottom sheet (a modal dialog) that opens
+// when something is selected.
+
+const phone = () => window.matchMedia("(max-width: 760px)").matches;
+let sheetReturnFocus = null;
+
+function syncInspector() {
+  const insp = $("#inspector");
+  const closed = document.body.classList.contains("inspector-closed");
+  const sheet = document.body.classList.contains("sheet-open");
+  const shown = phone() ? sheet : !closed;
+  insp.inert = !shown;
+  const modal = phone() && sheet;
+  for (const sel of [".topbar", "#workspace", "#rail"]) { const el = $(sel); if (el) el.inert = modal; }
+  if (modal) {
+    insp.setAttribute("role", "dialog");
+    insp.setAttribute("aria-modal", "true");
+    insp.setAttribute("aria-labelledby", "inspector-title");
+    insp.removeAttribute("aria-label");
+  } else {
+    insp.removeAttribute("role");
+    insp.removeAttribute("aria-modal");
+    insp.removeAttribute("aria-labelledby");
+    insp.setAttribute("aria-label", "Inspector");
+  }
+  const t = $("#btn-inspector");
+  t.setAttribute("aria-pressed", String(!closed));
+  t.setAttribute("aria-label", closed ? "Show inspector" : "Hide inspector");
+}
+
+/** Make sure the inspector is visible (desktop: docked open; phone: sheet up). */
+function showInspector() {
+  if (phone()) {
+    if (!document.body.classList.contains("sheet-open")) {
+      sheetReturnFocus = document.activeElement;
+      document.body.classList.add("sheet-open");
+      syncInspector();
+      setTimeout(() => $("#inspector-close")?.focus(), 30);
+    }
+    return;
+  }
+  document.body.classList.remove("inspector-closed");
+  syncInspector();
+}
+function closeSheet() {
+  if (!document.body.classList.contains("sheet-open")) return;
+  document.body.classList.remove("sheet-open");
+  syncInspector();
+  restoreFocus(sheetReturnFocus);
+  sheetReturnFocus = null;
+}
+
+/**
+ * Put focus back after an overlay closes. Rows and canvas boxes are rebuilt on
+ * every render, so the element that opened the overlay may be gone: fall back
+ * to the same widget's row (or box), then to the canvas.
+ */
+function restoreFocus(el) {
+  if (el && el !== document.body && document.contains(el)) { el.focus(); return; }
+  const id = el?.dataset?.widgetId || el?.closest?.("[data-widget-id]")?.dataset.widgetId || state.editingId;
+  const target = (id && (document.querySelector(`.wrow[data-widget-id="${CSS.escape(id)}"]`)
+    || document.querySelector(`#canvas .canvas-box[data-widget-id="${CSS.escape(id)}"]`)))
+    || $("#btn-add");
+  target?.focus();
+}
+function hideInspector() {
+  if (phone()) { closeSheet(); return; }
+  document.body.classList.add("inspector-closed");
+  syncInspector();
+}
+
+$("#btn-inspector").onclick = () =>
+  document.body.classList.contains("inspector-closed") ? showInspector() : hideInspector();
+$("#inspector-close").onclick = hideInspector;
+$("#scrim").onclick = closeSheet;
+window.matchMedia("(max-width: 760px)").addEventListener("change", () => {
+  document.body.classList.remove("sheet-open");
+  syncInspector();
+});
 
 /**
  * Point a server-side 422 at the control that caused it.
@@ -1554,11 +2067,13 @@ function anchorServerErrors(errs) {
   toast(`${first.path || "config"}: ${first.message}`, "err");
 }
 
-/** What the inspector falls back to: the selected widget, else the page. */
+/** What the inspector falls back to: the current page's settings. */
 function showDefault() {
+  leaveWidget();
   state.editingId = null;
   state.draftWidget = null;
   state.selection.clear();
+  closeSheet();
   openPageSettings();
 }
 
@@ -1745,8 +2260,9 @@ function pickWidgetType({ title = "Add widget", exclude = [] } = {}) {
       // than after the widget is on the page rendering an empty state.
       if (item.needsGlobalKey && missingKeys.has(item.needsGlobalKey)) {
         const badge = document.createElement("span");
-        badge.className = "badge warn-pill picker-badge";
-        badge.textContent = "Needs " + item.needsGlobalKey;
+        badge.className = "badge warn picker-badge";
+        badge.textContent = "Needs an API key";
+        badge.title = `Add ${item.needsGlobalKey} under Settings → API keys`;
         head.appendChild(badge);
       } else if (item.needsWidgetSecret) {
         const badge = document.createElement("span");
@@ -1830,8 +2346,8 @@ function openPalette() {
   const done = () => { settled = true; };
 
   const commands = [
-    ...RAIL.filter((r) => !r.sep).map((r) => ({
-      label: r.label, group: "Go to", run: () => { activeSection = r.id; renderRail(); r.open(); },
+    ...RAIL.filter((r) => r.id).map((r) => ({
+      label: r.label, group: "Go to", run: () => goSection(r),
     })),
     { label: "Add widget", group: "Action", run: () => openEditor(null) },
     { label: "Tidy up layout", group: "Action", run: tidyUp },
@@ -2046,7 +2562,7 @@ function select(options, value, onchange, name) {
   for (const o of options) {
     // options may be plain strings or { value, label } pairs
     const val = typeof o === "object" ? o.value : o;
-    const txt = typeof o === "object" ? o.label : o;
+    const txt = typeof o === "object" ? o.label : humanize(o);
     const opt = document.createElement("option");
     opt.value = val; opt.textContent = txt; if (val === value) opt.selected = true;
     s.appendChild(opt);
@@ -2054,18 +2570,112 @@ function select(options, value, onchange, name) {
   if (onchange) s.onchange = () => onchange(s.value);
   return s;
 }
-function boolField(label, checked, name) {
+function boolField(label, checked, name, help) {
   // Renders as a switch, but the control underneath is still a plain checkbox
   // carrying data-name — gather() reads `.checked` and neither knows nor cares.
+  // Same row shape as the form engine's booleans: text left, switch right.
   const d = document.createElement("div"); d.className = "field";
   const l = document.createElement("label"); l.className = "switch-row";
+  const text = document.createElement("span"); text.className = "switch-text";
   const span = document.createElement("span"); span.className = "switch-label"; span.textContent = label;
+  text.appendChild(span);
   const sw = document.createElement("span"); sw.className = "switch";
   const c = document.createElement("input"); c.type = "checkbox"; c.checked = checked; c.dataset.name = name; c.id = `f-${name}`;
+  if (help) {
+    const h = document.createElement("span"); h.className = "switch-help"; h.id = `f-${name}-help`; h.textContent = help;
+    c.setAttribute("aria-describedby", h.id);
+    text.appendChild(h);
+  }
   sw.appendChild(c);
-  l.append(span, sw); d.appendChild(l); return d;
+  l.append(text, sw); d.appendChild(l); return d;
 }
 function button(text, cls, fn) { const b = document.createElement("button"); b.type = "button"; b.className = cls; b.textContent = text; b.onclick = fn; return b; }
+
+/** An icon from the sprite in index.html. Decorative: the control names itself. */
+function icon(id) {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("class", "i");
+  svg.setAttribute("aria-hidden", "true");
+  const use = document.createElementNS(ns, "use");
+  use.setAttribute("href", `#${id}`);
+  svg.appendChild(use);
+  return svg;
+}
+
+// ---- menus ------------------------------------------------------------------
+//
+// One small menu implementation for the page ⋯, each widget row's ⋯ and the
+// phone "More" tab. Focus goes into the menu, arrows move, Esc closes and
+// hands focus back to the trigger, and a menu that would run off the left of
+// its scroll container opens the other way.
+
+let openMenuState = null;
+
+function closeMenu({ restoreFocus = false } = {}) {
+  if (!openMenuState) return;
+  const { menu, trigger } = openMenuState;
+  menu.hidden = true;
+  menu.classList.remove("flip");
+  trigger.setAttribute("aria-expanded", "false");
+  openMenuState = null;
+  if (restoreFocus) trigger.focus();
+}
+
+/** items: [{ label, icon, run, danger, disabled, kbd, title } | { sep: true }] */
+function openMenu(trigger, menu, items) {
+  const wasOpen = openMenuState?.menu === menu;
+  closeMenu();
+  if (wasOpen) return;
+  menu.replaceChildren();
+  for (const it of items) {
+    if (it.sep) {
+      const hr = document.createElement("div");
+      hr.className = "menu-sep";
+      hr.setAttribute("role", "separator");
+      menu.appendChild(hr);
+      continue;
+    }
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "menu-item" + (it.danger ? " danger" : "");
+    b.setAttribute("role", "menuitem");
+    if (it.title) b.title = it.title;
+    b.disabled = !!it.disabled;
+    if (it.icon) b.appendChild(icon(it.icon));
+    b.appendChild(document.createTextNode(it.label));
+    if (it.kbd) b.appendChild(Object.assign(document.createElement("kbd"), { textContent: it.kbd }));
+    b.onclick = (e) => { e.stopPropagation(); closeMenu(); it.run(); };
+    menu.appendChild(b);
+  }
+  menu.hidden = false;
+  trigger.setAttribute("aria-expanded", "true");
+  openMenuState = { menu, trigger };
+  const box = (menu.closest(".workspace, .settings-scroll") || document.body).getBoundingClientRect();
+  if (menu.getBoundingClientRect().left < box.left + 8) menu.classList.add("flip");
+  menu.querySelector(".menu-item:not(:disabled)")?.focus();
+}
+
+document.addEventListener("click", (e) => {
+  if (openMenuState && !openMenuState.menu.contains(e.target) && !openMenuState.trigger.contains(e.target)) closeMenu();
+});
+document.addEventListener("keydown", (e) => {
+  if (!openMenuState) return;
+  const items = [...openMenuState.menu.querySelectorAll(".menu-item:not(:disabled)")];
+  const i = items.indexOf(document.activeElement);
+  if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); closeMenu({ restoreFocus: true }); }
+  else if (e.key === "ArrowDown") { e.preventDefault(); e.stopPropagation(); items[(i + 1) % items.length]?.focus(); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); e.stopPropagation(); items[(i - 1 + items.length) % items.length]?.focus(); }
+  else if (e.key === "Tab") closeMenu();
+  // Keys meant for the menu never reach the canvas shortcuts.
+  else if (["ArrowLeft", "ArrowRight", "Delete", "Backspace", "Enter", " "].includes(e.key) && openMenuState.menu.contains(e.target)) e.stopPropagation();
+}, true);
+
+/** Focus a canvas box by widget id (boxes are rebuilt on every render). */
+function focusBox(id) {
+  // A timeout, not rAF: rAF doesn't run while the tab isn't painting.
+  setTimeout(() => document.querySelector(`#canvas .canvas-box[data-widget-id="${CSS.escape(id)}"]`)?.focus(), 0);
+}
 
 // ---- shared schedule fields (page + widget) ---------------------------------
 //
@@ -2085,7 +2695,7 @@ function scheduleFieldDefs(base) {
     { key: p("enabled"), label: "Enable schedule", type: "boolean" },
     {
       key: p("timeZone"), label: "Timezone", type: "text", when: on,
-      placeholder: "America/Phoenix", help: "IANA name. Blank = whatever the display's clock says.",
+      placeholder: "America/Phoenix", help: "A name like America/Phoenix. Leave blank to use the display's own clock.",
     },
     { key: p("dateFrom"), label: "Active from", type: "date", when: on },
     { key: p("dateTo"), label: "Active until", type: "date", when: on },
@@ -2131,7 +2741,7 @@ function variantsEditor(widget, editor) {
   const wrap = document.createElement("div");
   wrap.appendChild(sectionTitle("Variants"));
   wrap.appendChild(noteEl(
-    "Named setting overrides that Scenes select by label. With no scene active the first variant is what renders — the badge on the canvas box shows which."));
+    "Alternate settings a scene can switch this widget to, matched by label. With no scene active the first variant shows; the badge on the canvas says which."));
 
   const host = document.createElement("div");
   host.className = "variant-list";
@@ -2347,7 +2957,7 @@ function stockPicker(get, set) {
       try {
         const d = await api.searchStocks(q);
         results.replaceChildren();
-        if (d.needsKey) { results.innerHTML = `<div>Set ${d.env} to search</div>`; return; }
+        if (d.needsKey) { results.replaceChildren(Object.assign(document.createElement("div"), { textContent: "Add a stock data API key under Settings → API keys to search." })); return; }
         for (const r of d.results || []) {
           const item = document.createElement("div");
           item.textContent = `${r.symbol} — ${r.description || ""}`;
@@ -2370,7 +2980,7 @@ function stockPicker(get, set) {
 async function openKeys() {
   state.editingId = null;
   const editor = openPanel("API keys", { scope: "immediate", section: "keys" });
-  editor.appendChild(noteEl("Stored on the server (data/secrets.json), never sent back to the browser. Widgets work without keys but show a “needs key” state."));
+  editor.appendChild(noteEl("Keys are stored on the Pi and never sent back to the browser. Unlike other settings they're saved the moment you press Save keys — they aren't part of the dashboard's unsaved edits. Widgets that need a missing key show a notice instead of data."));
 
   let status = {};
   try { status = await (await fetch("/api/secrets")).json(); }
@@ -2390,7 +3000,6 @@ async function openKeys() {
 
   const actions = document.createElement("div"); actions.className = "editor-actions";
   actions.append(
-    button("Cancel", "btn", () => showDefault()),
     button("Save keys", "btn primary", async () => {
       const values = {};
       for (const [key, inp] of Object.entries(inputs)) if (!inp.disabled && inp.value) values[key] = inp.value;
@@ -2402,8 +3011,8 @@ async function openKeys() {
           body: JSON.stringify({ values }),
         });
         if (!res.ok) { toast("Save failed: " + res.status, "err"); return; }
-        toast("Keys saved · dashboards refreshing", "ok");
-        showDefault();
+        toast("Keys saved. Displays are refreshing.", "ok");
+        openKeys();
       } catch (e) { toast("Save failed: " + e.message, "err"); }
     }),
   );
@@ -2453,9 +3062,6 @@ async function openBackups() {
   if (backups.length > 5) editor.appendChild(filterBox("Filter by date or version…", draw));
   draw();
   editor.appendChild(list);
-  const actions = document.createElement("div"); actions.className = "editor-actions";
-  actions.append(button("Close", "btn", () => showDefault()));
-  editor.appendChild(actions);
 }
 
 // ---- page schedule (time-window visibility for the whole page) ---------------
@@ -2565,9 +3171,16 @@ function openPageSettings(index) {
   const page = pages()[i];
   if (!page) return;
   state.editingId = null;
-  const editor = openPanel(page.name || "Page", { section: "pages" });
+  state.draftWidget = null;
+  const n = pages().length;
+  const editor = openPanel("Page settings", {
+    section: "pages",
+    subtitle: `${page.name || "Page"}, ${i + 1} of ${n}${rotation().enabled ? " in the slideshow" : ""}`,
+    icon: "i-sliders",
+  });
+  const original = structuredClone(page);
 
-  // A draft, so Revert works and a half-typed page name never reaches the store.
+  // A draft holding the editable shapes; valid changes stage as you go.
   const draft = {
     name: page.name || "",
     durationSeconds: page.durationSeconds ?? null,
@@ -2576,19 +3189,49 @@ function openPageSettings(index) {
   };
 
   const defs = (d) => [
-    { key: "name", label: "Page name", type: "text", required: true },
+    { key: "name", label: "Name", type: "text", required: true },
     {
-      key: "durationSeconds", label: "Seconds in rotation", type: "number", min: 2,
+      key: "durationSeconds", label: "Time on screen (seconds)", type: "number", min: 2,
       placeholder: String(rotation().defaultDurationSeconds ?? 30),
-      help: "Blank = use the rotation default.",
+      help: `Leave blank to use the slideshow default of ${rotation().defaultDurationSeconds ?? 30} seconds.`,
     },
     {
       key: "_schedHead", type: "note",
-      label: "Show this page only during a time window. Outside it, rotation skips the page, and a display assigned only this page falls back to the others.",
+      label: "Show this page only during set hours. Outside them the slideshow skips it, and a display assigned only this page falls back to the others.",
     },
     ...scheduleFieldDefs("_schedule"),
     ...conditionDefsFor(d, "_condition"),
   ];
+
+  // The page's own fields, as the draft would write them.
+  const PAGE_KEYS = ["name", "durationSeconds", "schedule", "condition"];
+  const fieldsFrom = (d) => ({
+    name: d.name.trim() || "Page",
+    durationSeconds: d.durationSeconds == null ? null : Math.max(2, d.durationSeconds),
+    schedule: scheduleFromDraft(d, "_schedule"),
+    condition: cond.fromDraft(d._condition),
+  });
+  // Exactly as it was, including fields that were absent rather than null, so
+  // ending up back at the start counts as no change at all.
+  const restoreOriginal = () => {
+    for (const k of PAGE_KEYS) {
+      if (k in original) page[k] = structuredClone(original[k]);
+      else delete page[k];
+    }
+  };
+  let baseline = null;   // fieldsFrom(draft) as first rendered; set below
+
+  const stagePage = () => {
+    const errors = form.validate();
+    form.setErrors(errors);
+    if (errors.length) return;
+    const next = fieldsFrom(draft);
+    if (deepEqual(next, baseline)) restoreOriginal();
+    else Object.assign(page, next);
+    save(`changed page “${page.name}”`, { coalesce: `page:${page.id}` });
+    renderPageBar();
+    renderToolbar();
+  };
 
   const host = document.createElement("div");
   editor.appendChild(host);
@@ -2604,29 +3247,25 @@ function openPageSettings(index) {
         draft._condition.priority = cond.defaultPriority("octoprint", draft._condition.matchStates);
         form.rerender();
       }
+      scheduleStage(stagePage, path === "name" ? 350 : 200);
     },
   });
+  baseline = fieldsFrom(draft);
+  // List add/remove/reorder buttons inside the schedule don't all report paths.
+  host.addEventListener("click", (e) => { if (e.target.closest("button")) scheduleStage(stagePage, 200); });
 
-  const actions = document.createElement("div"); actions.className = "editor-actions";
-  actions.append(
-    button("Revert", "btn", () => openPageSettings(i)),
-    button("Apply", "btn primary", () => {
-      const errors = form.validate();
-      if (errors.length) {
-        form.setErrors(errors);
-        form.focusField(errors[0].path);
-        toast(errors[0].message, "err");
-        return;
-      }
-      page.name = draft.name.trim() || "Page";
-      page.durationSeconds = draft.durationSeconds == null ? null : Math.max(2, draft.durationSeconds);
-      page.schedule = scheduleFromDraft(draft, "_schedule");
-      page.condition = cond.fromDraft(draft._condition);
-      save(`changed page “${page.name}”`);
+  setInspectorFoot(
+    Object.assign(document.createElement("span"), { className: "grow", textContent: "Changes are kept until you save." }),
+    button("Revert page", "btn ghost", () => {
+      clearTimeout(pendingStage?.timer);
+      pendingStage = null;
+      // Only the page's own fields — widget moves made meanwhile stay put.
+      restoreOriginal();
+      save(`reverted page “${original.name || "Page"}”`);
+      renderAll();
       openPageSettings(i);
     }),
   );
-  editor.appendChild(actions);
 }
 
 // ---- system (immediate-effect operations) -----------------------------------
@@ -2685,19 +3324,21 @@ function openSystem() {
 
 function openLayout() {
   state.editingId = null;
-  const editor = openPanel("Appearance & grid", { section: "appearance" });
+  const editor = openPanel("Appearance", { section: "appearance" });
   const s = state.config.settings || (state.config.settings = {});
   const theme = s.theme || (s.theme = { mode: "dark", accent: "#4aa3ff" });
   const oldCols = s.columns || 12, oldRow = s.rowHeightPx || 90, oldGap = s.gapPx ?? 12;
-
-  const h = document.createElement("h2"); h.textContent = "Layout & appearance"; h.style.margin = "0 0 6px";
-  editor.appendChild(h);
-
   const loc = s.location || (s.location = { lat: null, lon: null, city: "", region: "" });
 
-  editor.appendChild(sectionTitle("Dashboard"));
-  editor.appendChild(field("Title", input("text", s.title || "Pi Dashboard", "lay-title")));
-  editor.appendChild(field("Theme", select(
+  editor.appendChild(noteEl("How the dashboard looks, where home is, and the grid widgets snap to."));
+
+  // Title, theme and location stage as you type. The grid has its own button
+  // below, because changing it can rescale every widget on every page.
+  const general = document.createElement("div");
+  editor.appendChild(general);
+  general.appendChild(sectionTitle("Dashboard"));
+  general.appendChild(field("Title", input("text", s.title || "Pi Dashboard", "lay-title")));
+  general.appendChild(field("Theme", select(
     [
       { value: "dark", label: "Dark" },
       { value: "light", label: "Light" },
@@ -2707,21 +3348,24 @@ function openLayout() {
     null,
     "lay-theme",
   )));
-  editor.appendChild(field("Accent color", input("color", theme.accent || "#4aa3ff", "lay-accent")));
+  general.appendChild(field("Accent color", input("color", theme.accent || "#4aa3ff", "lay-accent")));
 
-  editor.appendChild(sectionTitle("Home location"));
-  editor.appendChild(noteEl("Used for NWS weather alerts and as the default for weather / air-quality widgets (unless a widget sets its own lat/lon). Leave lat+lon blank to use IP geolocation (falls back to Phoenix, AZ)."));
-  editor.appendChild(field("Latitude", input("number", loc.lat ?? "", "lay-lat", "e.g. 33.45")));
-  editor.appendChild(field("Longitude", input("number", loc.lon ?? "", "lay-lon", "e.g. -112.07")));
-  editor.appendChild(field("City (label)", input("text", loc.city || "", "lay-city")));
-  editor.appendChild(field("Region (label)", input("text", loc.region || "", "lay-region")));
+  general.appendChild(sectionTitle("Home location"));
+  general.appendChild(noteEl("Used for severe-weather alerts and as the default for weather and air-quality widgets that don't set their own. Leave latitude and longitude blank to locate by IP address."));
+  general.appendChild(field("Latitude", input("number", loc.lat ?? "", "lay-lat", "e.g. 33.45")));
+  general.appendChild(field("Longitude", input("number", loc.lon ?? "", "lay-lon", "e.g. -112.07")));
+  general.appendChild(field("City (shown on widgets)", input("text", loc.city || "", "lay-city")));
+  general.appendChild(field("Region (shown on widgets)", input("text", loc.region || "", "lay-region")));
+  const locError = Object.assign(document.createElement("div"), { className: "field-error", hidden: true });
+  locError.setAttribute("role", "alert");
+  general.appendChild(locError);
+  autoStage(general, () => stageAppearance(general, locError));
 
   editor.appendChild(sectionTitle("Grid"));
-  editor.appendChild(noteEl("Widgets snap to this grid when you drag-resize on the canvas — so it sets how finely you can size them. More columns = smaller width steps; a shorter row height = smaller height steps. This grid is shared by every display."));
-
+  editor.appendChild(noteEl("Widgets snap to this grid when you drag or resize them, so it sets how finely you can size them. More columns give smaller width steps; a shorter row gives smaller height steps. Every display shares this grid."));
   editor.appendChild(field("Columns (1–48)", input("number", oldCols, "lay-cols")));
-  editor.appendChild(field("Row height px (≥20)", input("number", oldRow, "lay-row")));
-  editor.appendChild(field("Gap px (≥0)", input("number", oldGap, "lay-gap")));
+  editor.appendChild(field("Row height in pixels (20 or more)", input("number", oldRow, "lay-row")));
+  editor.appendChild(field("Gap between widgets in pixels", input("number", oldGap, "lay-gap")));
 
   const stepNote = noteEl("");
   const colsEl = editor.querySelector('[data-name="lay-cols"]');
@@ -2729,57 +3373,56 @@ function openLayout() {
   const updateStep = () => {
     const c = Math.max(1, Math.round(Number(colsEl.value) || 12));
     const r = Math.max(20, Math.round(Number(rowEl.value) || 90));
-    stepNote.textContent = `Resize step: width ≈ ${(100 / c).toFixed(1)}% of the screen · height = ${r}px per row.`;
+    stepNote.textContent = `Each width step is about ${(100 / c).toFixed(1)}% of the screen; each height step is ${r}px.`;
   };
   editor.appendChild(stepNote); updateStep();
   colsEl.oninput = updateStep; rowEl.oninput = updateStep;
 
-  editor.appendChild(boolField("Keep current look — rescale existing widgets to the new grid", true, "lay-rescale"));
-  editor.appendChild(noteEl("With this on, changing the grid resizes every widget proportionally so the dashboard looks the same, just with finer steps. Off = widgets keep their exact numbers (a bigger grid makes them smaller)."));
+  editor.appendChild(boolField("Keep the current look", true, "lay-rescale",
+    "Resize every widget so the dashboard looks the same on the new grid, just with finer steps. Off keeps each widget's numbers, so a bigger grid makes them smaller."));
 
   const actions = document.createElement("div"); actions.className = "editor-actions";
-  actions.append(
-    button("Cancel", "btn", () => showDefault()),
-    button("Save", "btn primary", () => saveLayout(oldCols, oldRow)),
-  );
+  actions.append(button("Apply grid change", "btn primary", () => applyGrid(editor, oldCols, oldRow)));
   editor.appendChild(actions);
 }
 
-function saveLayout(oldCols, oldRow) {
-  const editor = $("#editor");
+/** Stage title, theme and home location. Refuses a half-entered location. */
+function stageAppearance(host, errorEl) {
   const s = state.config.settings || (state.config.settings = {});
-  s.title = editor.querySelector('[data-name="lay-title"]')?.value?.trim() || "Pi Dashboard";
-  s.theme = s.theme || {};
-  s.theme.mode = editor.querySelector('[data-name="lay-theme"]')?.value || "dark";
-  s.theme.accent = editor.querySelector('[data-name="lay-accent"]')?.value || "#4aa3ff";
-
-  const latRaw = editor.querySelector('[data-name="lay-lat"]')?.value?.trim() ?? "";
-  const lonRaw = editor.querySelector('[data-name="lay-lon"]')?.value?.trim() ?? "";
+  const q = (n) => host.querySelector(`[data-name="${n}"]`);
+  const latRaw = q("lay-lat")?.value?.trim() ?? "";
+  const lonRaw = q("lay-lon")?.value?.trim() ?? "";
   const lat = latRaw === "" ? null : Number(latRaw);
   const lon = lonRaw === "" ? null : Number(lonRaw);
-  if ((lat == null) !== (lon == null)) {
-    toast("Set both latitude and longitude, or leave both blank for auto", "err");
-    return;
-  }
-  if (lat != null && (!Number.isFinite(lat) || lat < -90 || lat > 90)) {
-    toast("Latitude must be between -90 and 90", "err");
-    return;
-  }
-  if (lon != null && (!Number.isFinite(lon) || lon < -180 || lon > 180)) {
-    toast("Longitude must be between -180 and 180", "err");
-    return;
-  }
-  s.location = {
-    lat,
-    lon,
-    city: editor.querySelector('[data-name="lay-city"]')?.value?.trim() || "",
-    region: editor.querySelector('[data-name="lay-region"]')?.value?.trim() || "",
-  };
+  let problem = null;
+  if ((lat == null) !== (lon == null)) problem = "Set both latitude and longitude, or leave both blank to locate by IP address.";
+  else if (lat != null && (!Number.isFinite(lat) || lat < -90 || lat > 90)) problem = "Latitude must be between -90 and 90.";
+  else if (lon != null && (!Number.isFinite(lon) || lon < -180 || lon > 180)) problem = "Longitude must be between -180 and 180.";
+  errorEl.hidden = !problem;
+  errorEl.textContent = problem || "";
+  for (const n of ["lay-lat", "lay-lon"]) q(n)?.closest(".field")?.classList.toggle("invalid", !!problem);
 
-  const newCols = clamp(Math.round(Number(editor.querySelector('[data-name="lay-cols"]').value) || 12), 1, 48);
-  const newRow = Math.max(20, Math.round(Number(editor.querySelector('[data-name="lay-row"]').value) || 90));
-  const newGap = Math.max(0, Math.round(Number(editor.querySelector('[data-name="lay-gap"]').value) || 0));
-  const rescale = editor.querySelector('[data-name="lay-rescale"]').checked;
+  s.title = q("lay-title")?.value?.trim() || "Pi Dashboard";
+  s.theme = s.theme || {};
+  s.theme.mode = q("lay-theme")?.value || "dark";
+  s.theme.accent = q("lay-accent")?.value || "#4aa3ff";
+  if (!problem) {
+    s.location = {
+      lat, lon,
+      city: q("lay-city")?.value?.trim() || "",
+      region: q("lay-region")?.value?.trim() || "",
+    };
+  }
+  save("changed appearance", { coalesce: "appearance" });
+}
+
+function applyGrid(host, oldCols, oldRow) {
+  const s = state.config.settings || (state.config.settings = {});
+  const q = (n) => host.querySelector(`[data-name="${n}"]`);
+  const newCols = clamp(Math.round(Number(q("lay-cols").value) || 12), 1, 48);
+  const newRow = Math.max(20, Math.round(Number(q("lay-row").value) || 90));
+  const newGap = Math.max(0, Math.round(Number(q("lay-gap").value) || 0));
+  const rescale = q("lay-rescale").checked;
 
   if (rescale && (newCols !== oldCols || newRow !== oldRow)) {
     const rx = newCols / oldCols;   // width lever: keep w/columns constant
@@ -2794,9 +3437,14 @@ function saveLayout(oldCols, oldRow) {
       }
     }
   }
+  if (newCols === s.columns && newRow === s.rowHeightPx && newGap === s.gapPx) {
+    toast("The grid is already set to that", "");
+    return;
+  }
   s.columns = newCols; s.rowHeightPx = newRow; s.gapPx = newGap;
-  showDefault();
-  save("changed layout & appearance");
+  save("changed the grid");
+  toast("Grid updated", "ok");
+  openLayout();
 }
 
 // ---- displays (per-device scaling) ------------------------------------------
@@ -2848,10 +3496,6 @@ async function openDisplays() {
   if (devices.length > 4) editor.appendChild(filterBox("Filter displays…", draw));
   draw();
   editor.appendChild(list);
-
-  const actions = document.createElement("div"); actions.className = "editor-actions";
-  actions.append(button("Close", "btn", () => showDefault()));
-  editor.appendChild(actions);
 }
 
 function deviceRow(d) {
@@ -3064,12 +3708,21 @@ function toast(msg, kind) {
   }
 }
 
-// inject a "Tidy up" button next to "+ Add widget"
-// Canvas header. Everything that used to be a topbar button now lives on the
-// rail (built by renderRail) or in the System panel.
-$("#btn-add").onclick = () => openEditor(null);
+// Toolbar. Tidy up, duplicate, move and delete live in the page menu; Add
+// widget is the one primary action on the screen.
+$("#btn-add").onclick = () => {
+  const before = state.editingId;
+  openEditor(null).then(() => {
+    if (state.editingId && state.editingId !== before) showInspector();
+    else $("#btn-add").focus();   // picker cancelled: back where you started
+  });
+};
 $("#btn-preview").onclick = togglePreview;
-$("#btn-tidy").onclick = tidyUp;
+$("#btn-page-settings").onclick = () => { showDefault(); showInspector(); };
+$("#btn-page-more").onclick = (e) => {
+  e.stopPropagation();
+  openMenu($("#btn-page-more"), $("#page-menu"), pageMenuItems());
+};
 $("#btn-palette").onclick = openPalette;
 
 // Filter the widget strip. Purely a view filter — it never touches the config.
@@ -3084,12 +3737,14 @@ $("#canvas").addEventListener("pointerdown", (e) => {
 
 // Live / Static. Live rendering is the point of the canvas, but anyone who
 // finds it distracting (or is on a slow Pi) can switch the whole thing off.
-$("#btn-live").onclick = () => {
-  liveHost.setLive(!liveHost.isLive());
-  $("#btn-live").setAttribute("aria-pressed", String(liveHost.isLive()));
-  $("#btn-live").textContent = liveHost.isLive() ? "Live" : "Static";
+function setLive(on) {
+  userWantsLive = on;
+  $("#btn-live").setAttribute("aria-pressed", String(on));
+  $("#btn-static").setAttribute("aria-pressed", String(!on));
   renderCanvas();
-};
+}
+$("#btn-live").onclick = () => setLive(true);
+$("#btn-static").onclick = () => setLive(false);
 
 // ---- keyboard editing -------------------------------------------------------
 // The canvas was pointer-only. Arrows nudge, Shift resizes, and everything is
@@ -3112,8 +3767,37 @@ document.addEventListener("keydown", (e) => {
   const ws = selectedWidgets();
   const cols = state.config.settings?.columns || 12;
 
+  if (e.key === "Escape" && document.body.classList.contains("sheet-open")) {
+    e.preventDefault(); closeSheet(); return;
+  }
   if (e.key === "Escape" && (state.editingId || state.selection.size)) {
     e.preventDefault(); showDefault(); return;
+  }
+  if (state.view !== "layout") return;
+  // Canvas shortcuts only act when focus is on the canvas, or on nothing in
+  // particular. Arrow keys in a menu, or Backspace on a toolbar button, must
+  // never move or delete the selected widget.
+  const active = document.activeElement;
+  const box = active?.closest?.(".canvas-box");
+  if (!(active === document.body || active == null || box)) return;
+
+  const DIRS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+  // A focused box that isn't selected yet: Enter/Space selects it, arrows move
+  // focus between boxes. Only a selected widget is moved by the arrows.
+  if (box && !isSelected(box.dataset.widgetId)) {
+    const id = box.dataset.widgetId;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      selectOnly(id);
+      focusBox(id);
+    } else if (DIRS[e.key]) {
+      e.preventDefault();
+      const boxes = [...document.querySelectorAll("#canvas .canvas-box")];
+      const i = boxes.indexOf(box);
+      const step = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : -1;
+      boxes[(i + step + boxes.length) % boxes.length]?.focus();
+    }
+    return;
   }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a" && currentWidgets().length) {
     e.preventDefault();
@@ -3135,7 +3819,6 @@ document.addEventListener("keydown", (e) => {
     return;
   }
 
-  const DIRS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
   const d = DIRS[e.key];
   if (!d) return;
   e.preventDefault();
@@ -3157,7 +3840,14 @@ document.addEventListener("keydown", (e) => {
   renderCanvas();
   const what = ws.length > 1 ? `${ws.length} widgets` : (ws[0].title || ws[0].type);
   save(`${e.shiftKey ? "resized" : "moved"} ${what}`, { coalesce: `nudge:${[...ids].join(",")}:${e.shiftKey}` });
+  syncDraftGrid();
+  if (box) focusBox(box.dataset.widgetId);   // the canvas re-rendered under the focus
+  const g = ws[0].grid;
+  announce(ws.length > 1
+    ? `${what} ${e.shiftKey ? "resized" : "moved"}`
+    : `${what}: column ${g.x + 1}, row ${g.y + 1}, ${g.w} by ${g.h}`);
 });
 
 renderRail();
+syncInspector();
 load();

@@ -15,7 +15,7 @@ define("ical", {
       { key: "count", label: "Events to show", type: "number", default: 10 },
       { key: "lookaheadDays", label: "Lookahead days", type: "number", default: 60 },
       { key: "showLocation", label: "Show event location", type: "boolean", default: false },
-      { key: "cacheTtlSeconds", label: "Server cache TTL seconds (blank = default)", type: "number" },
+      { key: "cacheTtlSeconds", label: "Fetch new data at most every (seconds)", type: "number" },
     ],
   },
   async mount(root, widget) {

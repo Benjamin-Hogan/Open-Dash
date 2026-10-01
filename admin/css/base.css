@@ -10,7 +10,11 @@ html {
   -webkit-text-size-adjust: 100%;
 }
 
-body {
+/* `html body`, not `body`: the dashboard stylesheet is loaded after this one
+ * (for the live canvas) and has its own body rule — dark text colour,
+ * background and font — which would otherwise win and wash out every admin
+ * element that inherits its colour, worst of all in the light theme. */
+html body {
   margin: 0;
   background: var(--bg-app);
   color: var(--text-1);

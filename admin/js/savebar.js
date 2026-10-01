@@ -92,10 +92,20 @@ function el(tag, attrs = {}, children = []) {
 }
 
 function buildBar(host) {
-  const undo = el("button", { class: "btn ghost icon", type: "button", title: "Undo (Ctrl+Z)", "aria-label": "Undo" }, "↶");
-  const redo = el("button", { class: "btn ghost icon", type: "button", title: "Redo (Ctrl+Shift+Z)", "aria-label": "Redo" }, "↷");
-  const changes = el("button", { class: "badge", type: "button", title: "Show what changed" }, "No changes");
-  const discard = el("button", { class: "btn ghost small", type: "button", title: "Throw away unsaved changes" }, "Discard");
+  const icon = (id) => {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("class", "i");
+    svg.setAttribute("aria-hidden", "true");
+    const use = document.createElementNS(ns, "use");
+    use.setAttribute("href", `#${id}`);
+    svg.appendChild(use);
+    return svg;
+  };
+  const undo = el("button", { class: "btn ghost icon", type: "button", title: "Undo (Ctrl+Z)", "aria-label": "Undo" }, [icon("i-undo")]);
+  const redo = el("button", { class: "btn ghost icon", type: "button", title: "Redo (Ctrl+Shift+Z)", "aria-label": "Redo" }, [icon("i-redo")]);
+  const changes = el("button", { class: "badge changes-pill", type: "button", title: "Show what changed" }, "No changes");
+  const discard = el("button", { class: "btn ghost discard", type: "button", title: "Throw away unsaved changes" }, "Discard");
   const save = el("button", { class: "btn primary", type: "button", title: "Save to the dashboard (Ctrl+S)" }, "Save");
 
   undo.onclick = () => doUndo();
@@ -105,7 +115,7 @@ function buildBar(host) {
   save.onclick = () => saveNow();
 
   const wrap = el("div", { class: "savebar" }, [undo, redo, changes, discard, save]);
-  host.prepend(wrap);
+  host.append(wrap);
   return { wrap, undo, redo, changes, discard, save };
 }
 
@@ -388,7 +398,7 @@ async function doDiscard() {
   const n = store.snapshot().changeCount;
   const ok = await confirmDialog({
     title: "Discard changes?",
-    message: `${n} unsaved ${n === 1 ? "change" : "changes"} will be thrown away and the dashboard will go back to the last saved version.`,
+    message: `${n} unsaved ${n === 1 ? "edit" : "edits"} will be thrown away and the dashboard will go back to the last saved version.`,
     confirmLabel: "Discard",
     danger: true,
   });

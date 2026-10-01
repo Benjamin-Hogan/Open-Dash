@@ -10,11 +10,11 @@ define("weather", {
   schema: {
     fields: [
       { key: "units", label: "Units", type: "select", options: ["imperial", "metric"], default: "imperial" },
-      { key: "lat", label: "Latitude (blank = home/auto)", type: "number" },
-      { key: "lon", label: "Longitude (blank = home/auto)", type: "number" },
+      { key: "lat", label: "Latitude (leave blank for home)", type: "number" },
+      { key: "lon", label: "Longitude (leave blank for home)", type: "number" },
       { key: "showForecast", label: "Show 5-day forecast", type: "boolean", default: true },
       { key: "animated", label: "Animate icons", type: "boolean", default: true },
-      { key: "cacheTtlSeconds", label: "Server cache TTL seconds (blank = default)", type: "number" },
+      { key: "cacheTtlSeconds", label: "Fetch new data at most every (seconds)", type: "number" },
     ],
   },
   async mount(root, widget) {

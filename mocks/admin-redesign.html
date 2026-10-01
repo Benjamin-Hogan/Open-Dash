@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Admin Redesign Mock</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+/* ===== tokens (same palette family as admin/css/tokens.css; contrast-checked) ===== */
+:root{
+  --fs-xs:11.5px;--fs-sm:12.5px;--fs-md:13.5px;--fs-lg:15px;--fs-xl:18px;
+  --sp-1:4px;--sp-2:8px;--sp-3:12px;--sp-4:16px;--sp-5:24px;--sp-6:32px;
+  --r-sm:6px;--r-md:8px;--r-lg:12px;--r-pill:999px;
+  --control-h:32px;--top-h:52px;--insp-w:360px;
+  --font:"IBM Plex Sans",system-ui,"Segoe UI",sans-serif;
+  --ease:cubic-bezier(.2,.8,.3,1);
+}
+:root,:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg-app:#0c0e12;--bg-sunken:#08090c;--surface-1:#13161c;--surface-2:#191d25;--surface-3:#212632;--surface-hover:#1f2430;
+  --border-subtle:#242a36;--border-strong:#353d4c;--input-border:#5e687c;--switch-off:#626d81;
+  --text-1:#e8edf4;--text-2:#a8b3c4;--text-3:#8792a5;
+  --accent:#4aa3ff;--accent-fg:#06121f;--accent-soft:#16283d;
+  --ok:#3fc77a;--warn:#e7b25a;--danger:#f26d78;--warn-soft:#2a1f14;--danger-soft:#2d151a;
+  --bezel:#050608;--wall:#0a0c10;
+  --e-2:0 4px 12px rgb(0 0 0/.38);--e-3:0 16px 40px rgb(0 0 0/.5);--scrim:rgb(0 0 0/.55);
+}
+:root[data-theme="light"]{
+  color-scheme:light;
+  --bg-app:#f4f5f7;--bg-sunken:#eef0f3;--surface-1:#fff;--surface-2:#f7f8fa;--surface-3:#fff;--surface-hover:#eef0f4;
+  --border-subtle:#e1e5ea;--border-strong:#c6cdd7;--input-border:#8b95a4;--switch-off:#808a99;
+  --text-1:#10151c;--text-2:#4a5463;--text-3:#5d6878;
+  --accent:#0b6fdc;--accent-fg:#fff;--accent-soft:#e6f0fd;
+  --ok:#157f45;--warn:#8a5a04;--danger:#c22f3c;--warn-soft:#fbf1de;--danger-soft:#fdeaec;
+  --bezel:#1b1f27;--wall:#0d1015;
+  --e-2:0 4px 12px rgb(16 21 28/.10);--e-3:0 16px 40px rgb(16 21 28/.18);--scrim:rgb(16 21 28/.35);
+}
+:root{--focus:0 0 0 2px var(--bg-app),0 0 0 4px var(--accent)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg-app);color:var(--text-1);font:400 var(--fs-md)/1.5 var(--font);font-variant-numeric:tabular-nums;overflow:hidden}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:none;box-shadow:var(--focus)}
+.sr{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+svg.i{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+
+/* ===== controls ===== */
+.btn{display:inline-flex;align-items:center;gap:6px;height:var(--control-h);padding:0 12px;border-radius:var(--r-md);border:1px solid var(--border-strong);background:var(--surface-2);font-size:var(--fs-sm);font-weight:500;cursor:pointer;white-space:nowrap;transition:background .12s,border-color .12s}
+.btn:hover{background:var(--surface-hover)}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--text-2)}
+.btn.ghost:hover{background:var(--surface-hover);color:var(--text-1)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-fg);font-weight:600}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.danger-text{background:transparent;border-color:transparent;color:var(--danger)}
+.btn.danger-text:hover{background:var(--danger-soft)}
+.btn.icon{width:var(--control-h);padding:0;justify-content:center}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.btn[aria-expanded="true"]{background:var(--surface-hover);color:var(--text-1)}
+kbd{font:500 10.5px var(--font);padding:1px 5px;border-radius:4px;border:1px solid var(--border-strong);color:var(--text-2)}
+.seg{display:inline-flex;padding:2px;border-radius:var(--r-md);background:var(--bg-sunken);border:1px solid var(--border-strong)}
+.seg button{height:26px;padding:0 10px;border:0;border-radius:6px;background:transparent;color:var(--text-2);font-size:var(--fs-sm);font-weight:500;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--surface-3);color:var(--text-1);box-shadow:0 1px 2px rgb(0 0 0/.25),inset 0 0 0 1px var(--border-strong)}
+input.in,select.in{width:100%;height:var(--control-h);padding:0 10px;border-radius:var(--r-md);border:1px solid var(--input-border);background:var(--bg-sunken);font-size:var(--fs-md)}
+input.in:focus,select.in:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);outline:none}
+.suffix{position:relative}.suffix input{padding-right:34px}.suffix span{position:absolute;right:10px;top:50%;transform:translateY(-50%);color:var(--text-2);font-size:var(--fs-sm);pointer-events:none}
+
+.field{display:grid;gap:6px;margin-bottom:var(--sp-4)}
+.field>label,.flabel{font-size:var(--fs-sm);font-weight:500;color:var(--text-1)}
+.help{font-size:var(--fs-xs);color:var(--text-3);line-height:1.45;margin:0}
+.req{color:var(--danger);margin-left:2px}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:var(--sp-3)}
+
+/* Switch rows: the whole row is the <label>, text column flexes, the switch
+   never shares a box with text. This is the fix for the wrapping bug. */
+.sw-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:var(--sp-3);padding:10px 0;cursor:pointer}
+.sw-row+.sw-row,.reveal+.sw-row{border-top:1px solid var(--border-subtle)}
+.sw-row .t{display:block;font-size:var(--fs-md);font-weight:500;overflow-wrap:anywhere}
+.sw-row .help{display:block;margin-top:2px}
+.switch{position:relative;width:40px;height:22px;margin-top:1px;border-radius:var(--r-pill);background:var(--switch-off);transition:background .15s}
+.switch::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform .18s var(--ease)}
+.switch input{position:absolute;inset:0;margin:0;opacity:0;cursor:pointer}
+.switch:has(input:checked){background:var(--accent)}
+.switch:has(input:checked)::after{transform:translateX(18px)}
+.switch:has(input:focus-visible){box-shadow:var(--focus)}
+.reveal{display:none;margin:0 0 12px 2px;padding:4px 0 2px 14px;border-left:2px solid var(--border-strong)}
+.sw-row:has(input:checked)+.reveal{display:block}
+.chips{display:flex;flex-wrap:wrap;gap:3px}
+.chip{height:30px;min-width:34px;padding:0 4px;border-radius:var(--r-sm);border:1px solid var(--input-border);background:transparent;color:var(--text-2);font-size:var(--fs-sm);cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--text-1)}
+
+/* ===== shell ===== */
+.top{position:relative;z-index:20;height:var(--top-h);display:flex;align-items:center;gap:var(--sp-3);padding:0 var(--sp-3) 0 var(--sp-4);border-bottom:1px solid var(--border-subtle);background:var(--surface-1)}
+.brand{display:flex;align-items:center;gap:10px;min-width:0}
+.logo{width:24px;height:24px;border-radius:6px;background:linear-gradient(135deg,var(--accent),#7b6cff);display:grid;place-items:center;color:#fff;font-weight:700;font-size:12px;flex:none}
+.brand b{font-size:var(--fs-lg);font-weight:600;white-space:nowrap}
+.conn{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-xs);color:var(--text-2);white-space:nowrap}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--ok);flex:none}
+.top .grow{flex:1}
+.search{display:flex;align-items:center;gap:8px;width:min(320px,30vw);height:32px;padding:0 10px;border:1px solid var(--border-strong);border-radius:var(--r-md);background:var(--bg-sunken);color:var(--text-2);font-size:var(--fs-sm);cursor:pointer}
+.search span{flex:1;text-align:left}
+.savebar{display:flex;align-items:center;gap:6px}
+.pending{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:var(--r-pill);background:var(--warn-soft);color:var(--warn);font-size:var(--fs-sm);font-weight:500;border:0;cursor:pointer;white-space:nowrap}
+.pending .dot{background:var(--warn)}
+
+.app{display:grid;grid-template-columns:200px minmax(0,1fr);height:calc(100% - var(--top-h))}
+.rail{display:flex;flex-direction:column;gap:2px;padding:var(--sp-3) var(--sp-2);border-right:1px solid var(--border-subtle);background:var(--surface-1);overflow-y:auto}
+.rail h3{margin:var(--sp-4) 10px 4px;font-size:var(--fs-xs);font-weight:500;color:var(--text-3)}
+.nav{position:relative;display:flex;align-items:center;gap:10px;min-height:34px;padding:0 10px;border-radius:var(--r-md);border:0;background:transparent;color:var(--text-2);font-size:var(--fs-md);cursor:pointer;text-align:left;white-space:nowrap}
+.nav:hover{background:var(--surface-hover);color:var(--text-1)}
+.nav[aria-current="page"]{background:var(--accent-soft);color:var(--text-1);font-weight:500}
+.nav[aria-current="page"] svg{color:var(--accent)}
+.nav .badge{margin-left:auto;width:7px;height:7px;border-radius:50%;background:var(--warn)}
+.rail .spacer{flex:1}
+.rail .more-btn{display:none}
+
+/* ===== layout view ===== */
+.view{display:none;min-height:0;height:100%}
+body[data-view="layout"] #v-layout{display:grid}
+body[data-view="settings"] #v-settings{display:block}
+#v-layout{grid-template-columns:minmax(0,1fr) var(--insp-w);transition:grid-template-columns .22s var(--ease)}
+.work{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:auto}
+
+.workhead{position:sticky;top:0;z-index:5;background:var(--bg-app);border-bottom:1px solid var(--border-subtle)}
+.pagebar{display:flex;align-items:center;gap:var(--sp-2);padding:var(--sp-2) var(--sp-5) 0;background:var(--surface-1);border-bottom:1px solid var(--border-subtle)}
+.tabs{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none;min-width:0}
+.tabs.overflow{mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent)}
+.tab{position:relative;display:flex;align-items:center;gap:8px;height:40px;padding:0 12px;border:0;background:transparent;color:var(--text-2);font-size:var(--fs-md);font-weight:500;cursor:pointer;white-space:nowrap}
+.tab:hover{color:var(--text-1)}
+.tab[aria-selected="true"]{color:var(--text-1)}
+.tab[aria-selected="true"]::after{content:"";position:absolute;left:8px;right:8px;bottom:-1px;height:2px;border-radius:2px;background:var(--accent)}
+.tab small{color:var(--text-3);font-size:var(--fs-xs);font-weight:400}
+.addpage{flex:none}
+
+.workhead{container-type:inline-size}
+.toolbar{display:flex;align-items:center;gap:var(--sp-2);flex-wrap:nowrap;padding:var(--sp-3) var(--sp-5)}
+.toolbar>*{flex:none}
+.toolbar .title{flex:1 1 auto;min-width:0;margin-right:var(--sp-2)}
+.toolbar h1{margin:0;font-size:var(--fs-xl);font-weight:600;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.toolbar .meta{font-size:var(--fs-sm);color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@container (max-width:720px){.tl .tb-lbl{display:none}.tl{width:var(--control-h);padding:0;justify-content:center}}
+@container (max-width:420px){.toolbar .meta{display:none}}
+.anchor{position:relative;display:inline-flex}
+
+/* the wall display */
+.stage{padding:var(--sp-4) var(--sp-5) var(--sp-3)}
+.bezel{position:relative;max-width:1100px;margin:0 auto;padding:10px;border-radius:14px;background:var(--bezel);box-shadow:var(--e-3),inset 0 0 0 1px rgb(255 255 255/.04)}
+.bezel::after{content:"";position:absolute;bottom:4px;left:50%;width:6px;height:2px;border-radius:2px;background:var(--ok);opacity:.6;transform:translateX(-50%)}
+.screen{position:relative;aspect-ratio:16/9;border-radius:6px;background:var(--wall);overflow:hidden;
+  display:grid;grid-template-columns:repeat(12,1fr);grid-template-rows:repeat(6,1fr);gap:6px;padding:6px;
+  background-image:linear-gradient(rgb(255 255 255/.025) 1px,transparent 1px),linear-gradient(90deg,rgb(255 255 255/.025) 1px,transparent 1px);background-size:calc(100%/12) calc(100%/6)}
+.w{position:relative;min-width:0;min-height:0;overflow:hidden;border-radius:8px;background:#141821;border:1px solid #232a37;color:#e8edf4;cursor:grab;container-type:size;transition:grid-area .15s}
+.w:hover{border-color:#3a4558}
+.w:focus-visible{box-shadow:0 0 0 2px var(--accent)}
+.w[aria-pressed="true"]{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.w .cap{position:absolute;top:5px;left:8px;right:8px;font-size:10.5px;font-weight:500;color:#9aa5b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0;transition:opacity .12s;z-index:1}
+.w:hover .cap,.w:focus-visible .cap,.w[aria-pressed="true"] .cap,body.boxes .w .cap{opacity:1}
+.w .body{position:absolute;inset:0;display:grid;place-items:center;padding:8px;text-align:center}
+.w.off .body{opacity:.35}
+.w.off{background-image:repeating-linear-gradient(-45deg,transparent 0 8px,rgb(255 255 255/.03) 8px 16px)}
+.offtag{position:absolute;top:5px;right:6px;z-index:2;height:18px;padding:0 6px;border-radius:var(--r-pill);background:#2a3140;color:#c9d2df;font-size:10px;font-weight:500;line-height:18px}
+.h{position:absolute;width:9px;height:9px;border-radius:2px;background:#fff;border:1.5px solid var(--accent);display:none;z-index:2}
+.w[aria-pressed="true"] .h{display:block}
+.h.se{right:-1px;bottom:-1px;cursor:nwse-resize}.h.e{right:-1px;top:calc(50% - 4px);cursor:ew-resize}.h.s{bottom:-1px;left:calc(50% - 4px);cursor:ns-resize}
+body.boxes .w .body{opacity:.12}
+/* Widget faces respond to their own box: secondary content drops out before anything clips. */
+.clock{font-size:clamp(14px,26cqmin,64px);font-weight:300;letter-spacing:-.02em;line-height:1}
+.clock small{display:block;font-size:clamp(9px,8cqmin,14px);font-weight:400;color:#9aa5b8;letter-spacing:0;margin-top:4px}
+.wx{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;align-items:center;text-align:left;width:100%}
+.wx .t{font-size:clamp(16px,22cqh,48px);font-weight:300;line-height:1}
+.wx .s{font-size:11px;color:#9aa5b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wx .fc{grid-column:1/-1;display:flex;justify-content:space-between;gap:6px;font-size:10.5px;color:#9aa5b8;border-top:1px solid #232a37;padding-top:6px}
+.wx .fc b{display:block;color:#e8edf4;font-weight:500}
+.sun{width:clamp(20px,24cqh,46px);aspect-ratio:1;border-radius:50%;background:radial-gradient(circle,#ffd25a 45%,transparent 47%),conic-gradient(from 0deg,#ffd25a 0 5%,transparent 5% 12.5%,#ffd25a 12.5% 17.5%,transparent 17.5% 25%,#ffd25a 25% 30%,transparent 30% 37.5%,#ffd25a 37.5% 42.5%,transparent 42.5% 50%,#ffd25a 50% 55%,transparent 55% 62.5%,#ffd25a 62.5% 67.5%,transparent 67.5% 75%,#ffd25a 75% 80%,transparent 80% 87.5%,#ffd25a 87.5% 92.5%,transparent 92.5%)}
+.kp{display:grid;gap:2px}.kp b{font-size:clamp(14px,20cqmin,34px);font-weight:500;color:var(--ok)}.kp span{font-size:10.5px;color:#9aa5b8}
+.gauges{display:flex;gap:8px;width:100%;justify-content:space-around}
+.g{display:grid;justify-items:center;gap:3px;font-size:10px;color:#9aa5b8}
+.g i{width:clamp(18px,30cqh,48px);aspect-ratio:1;border-radius:50%;background:conic-gradient(var(--c) calc(var(--p)*1%),#2a3140 0);-webkit-mask:radial-gradient(circle,transparent 58%,#000 60%);mask:radial-gradient(circle,transparent 58%,#000 60%)}
+  .mini{display:none;font-size:11px;line-height:1.35;color:#c9d2df;text-align:left}
+.mini b{font-weight:600;color:#e8edf4}
+.txt{font-size:clamp(10px,11cqmin,18px);line-height:1.3;color:#c9d2df;overflow-wrap:anywhere;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
+@container (max-height:150px){.wx .fc{display:none}}
+@container (max-height:90px){.clock small,.kp span{display:none}}
+@container (max-width:170px){.wx .sun{display:none}.wx{grid-template-columns:1fr;text-align:center}.gauges{display:none}.gauges+.mini{display:block}}
+@container (max-height:70px){.gauges{display:none}.gauges+.mini{display:block}}
+@container (max-width:110px){.kp span{display:none}.txt{display:none}.txt+.mini{display:block;text-align:center;color:#9aa5b8}}
+.w.off .body{padding-top:26px}
+.stage-foot{display:flex;align-items:center;gap:var(--sp-3);max-width:1100px;margin:10px auto 0;font-size:var(--fs-xs);color:var(--text-3)}
+.stage-foot .fmeta{white-space:nowrap}
+.stage-foot .fhelp{margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.canvas-status{display:flex;align-items:center;gap:8px;max-width:1100px;margin:6px auto 0;font-size:var(--fs-sm);color:var(--text-2)}
+.canvas-status.warn{color:var(--warn)}
+.canvas-status button{border:0;background:none;padding:0;color:var(--accent);font-size:inherit;text-decoration:underline;cursor:pointer}
+.canvas-status:empty{display:none}
+.w.clash{border-color:#f0b54d!important;box-shadow:0 0 0 1px #f0b54d!important}
+.w.grabbed{cursor:grabbing;box-shadow:0 0 0 2px var(--accent),0 8px 24px rgb(0 0 0/.5)!important;z-index:3}
+
+/* widget list */
+.list{max-width:1150px;margin:0 auto;width:100%;padding:0 var(--sp-5) var(--sp-6)}
+.list-head{display:flex;align-items:center;gap:var(--sp-3);margin:var(--sp-3) 0 var(--sp-2)}
+.list-head h2{margin:0;font-size:var(--fs-lg);font-weight:600}
+.list-head .count{color:var(--text-3);font-weight:400}
+.list-head input{margin-left:auto;max-width:220px;height:30px}
+.rows{border:1px solid var(--border-subtle);border-radius:var(--r-lg);background:var(--surface-1)}
+.row{position:relative;display:grid;grid-template-columns:16px 28px minmax(0,1fr) auto auto 32px;align-items:center;gap:10px;min-height:48px;padding:6px 8px 6px 10px;cursor:pointer}
+.row+.row{border-top:1px solid var(--border-subtle)}
+.row:hover{background:var(--surface-hover)}
+.row[aria-selected="true"]{background:var(--accent-soft)}
+.row:first-child{border-radius:var(--r-lg) var(--r-lg) 0 0}.row:last-child{border-radius:0 0 var(--r-lg) var(--r-lg)}
+.grip{color:var(--text-3);cursor:grab;opacity:0}.row:hover .grip,.row:focus-within .grip{opacity:1}
+.ico{width:28px;height:28px;border-radius:7px;display:grid;place-items:center;background:var(--surface-3);color:var(--text-2);border:1px solid var(--border-subtle)}
+.nm{min-width:0}.nm b{display:block;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.nm span{display:block;font-size:var(--fs-xs);color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.size{font-size:var(--fs-xs);color:var(--text-3)}
+.pill{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 8px;border-radius:var(--r-pill);font-size:var(--fs-xs);background:var(--surface-3);color:var(--text-2);border:1px solid var(--border-subtle);white-space:nowrap}
+.pill.sched{background:var(--accent-soft);color:var(--text-1);border-color:transparent}
+.pill.sched::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.menu{position:absolute;z-index:30;min-width:210px;padding:4px;border-radius:var(--r-md);background:var(--surface-3);border:1px solid var(--border-strong);box-shadow:var(--e-3);display:none}
+.menu.open{display:block}
+.menu button{display:flex;align-items:center;gap:10px;width:100%;height:34px;padding:0 10px;border:0;border-radius:6px;background:transparent;font-size:var(--fs-md);text-align:left;cursor:pointer;white-space:nowrap}
+.menu button:hover,.menu button:focus-visible{background:var(--surface-hover);box-shadow:none}
+.menu button kbd{margin-left:auto}
+.menu hr{border:0;border-top:1px solid var(--border-subtle);margin:4px 0}
+.menu .bad{color:var(--danger)}
+.anchor .menu{top:calc(100% + 4px);right:0}
+.row .menu{right:8px;top:44px}
+
+/* inspector: docked, collapsible, pushes the canvas instead of covering it */
+.insp{display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden;border-left:1px solid var(--border-subtle);background:var(--surface-1)}
+.insp-inner{display:flex;flex-direction:column;width:var(--insp-w);height:100%}
+.insp-head{display:flex;align-items:flex-start;gap:10px;padding:var(--sp-4) var(--sp-4) var(--sp-3);border-bottom:1px solid var(--border-subtle)}
+.insp-head .ico{width:34px;height:34px}
+.insp-head h2{margin:0;font-size:var(--fs-lg);font-weight:600;line-height:1.25}
+.insp-head p{margin:2px 0 0;font-size:var(--fs-xs);color:var(--text-3)}
+.insp-head .close{margin-left:auto}
+.insp-body{flex:1;overflow-y:auto;padding:var(--sp-2) var(--sp-4) var(--sp-4)}
+.group{padding:var(--sp-3) 0}
+.group+.group{border-top:1px solid var(--border-subtle)}
+.group>h3{margin:0 0 var(--sp-2);font-size:var(--fs-md);font-weight:600}
+.insp-foot{display:flex;align-items:center;gap:var(--sp-2);padding:var(--sp-3) var(--sp-4);border-top:1px solid var(--border-subtle);font-size:var(--fs-xs);color:var(--text-3)}
+.insp-foot .grow{flex:1}
+.pane{display:none}
+body[data-sel="page"] .pane.page,body[data-sel="widget"] .pane.widget{display:contents}
+.pos{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.pos label{display:grid;gap:3px;font-size:var(--fs-xs);color:var(--text-2)}
+.pos input{text-align:center;padding:0 4px}
+body.insp-closed #v-layout{grid-template-columns:minmax(0,1fr) 0}
+body.insp-closed .insp{border-left:0}
+.insp-toggle[aria-pressed="true"]{background:var(--surface-hover);color:var(--text-1)}
+
+/* ===== settings view ===== */
+#v-settings{overflow-y:auto}
+.sbody{padding:var(--sp-6) var(--sp-5) 96px}
+.sbody .inner{max-width:720px;margin:0 auto}
+.crumb{font-size:var(--fs-sm);color:var(--text-3);margin-bottom:4px}
+.sbody h1{margin:0;font-size:22px;font-weight:600;letter-spacing:-.01em}
+.lede{margin:6px 0 var(--sp-5);color:var(--text-2);max-width:62ch}
+.card{border:1px solid var(--border-subtle);border-radius:var(--r-lg);background:var(--surface-1);margin-bottom:var(--sp-4)}
+.card-h{display:flex;align-items:center;flex-wrap:wrap;gap:var(--sp-3);padding:var(--sp-4) var(--sp-4) 0}
+.card-h>div{flex:1;min-width:200px}
+.card-h h2{margin:0;font-size:var(--fs-lg);font-weight:600}
+.card-h p{margin:2px 0 0;font-size:var(--fs-sm);color:var(--text-3)}
+.card-b{padding:var(--sp-2) var(--sp-4) var(--sp-4)}
+.card-b .sw-row{padding:12px 0}
+.field-row{display:grid;grid-template-columns:minmax(0,1fr) 200px;gap:var(--sp-4);align-items:center;padding:12px 0}
+.field-row+.field-row{border-top:1px solid var(--border-subtle)}
+.field-row .t{font-weight:500}
+.reveal .field-row{padding:8px 0}
+.spane{display:none}.spane.on{display:block}
+
+/* ===== responsive ===== */
+.scrim{display:none}
+@media (max-width:1280px){:root{--insp-w:320px}}
+/* tablet: icon rail with tooltips; labels stay as accessible names */
+@media (max-width:1024px){
+  .app{grid-template-columns:60px minmax(0,1fr)}
+  .rail{align-items:center;padding:var(--sp-3) 6px}
+  .rail h3{width:24px;height:1px;margin:var(--sp-3) auto;background:var(--border-subtle);font-size:0}
+  .nav{width:44px;height:40px;justify-content:center;padding:0}
+  .nav .lbl{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  .nav .badge{position:absolute;top:7px;right:8px;margin:0}
+  .nav::before{content:attr(data-label);position:absolute;left:calc(100% + 10px);top:50%;transform:translateY(-50%);padding:4px 8px;border-radius:6px;background:var(--surface-3);border:1px solid var(--border-strong);box-shadow:var(--e-2);color:var(--text-1);font-size:var(--fs-sm);white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .1s;z-index:50}
+  .nav:hover::before,.nav:focus-visible::before{opacity:1}
+  .search{width:auto}.search span,.search kbd{display:none}
+  .conn .lbl{display:none}
+  .rail{overflow:visible}
+  .stage-foot .fhelp{display:none}
+}
+/* phone: labelled bottom bar, inspector becomes a bottom sheet */
+@media (max-width:760px){
+  :root{--top-h:52px}
+  .app{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) 60px}
+  .rail{grid-row:2;flex-direction:row;align-items:stretch;gap:0;padding:4px;border-right:0;border-top:1px solid var(--border-subtle);overflow:visible}
+  .rail h3,.rail .spacer,.rail .desk{display:none}
+  .rail .more-btn{display:flex}
+  .nav{flex:1;width:auto;height:auto;min-height:48px;flex-direction:column;gap:2px;font-size:10.5px}
+  .nav .lbl{position:static!important;width:auto;height:auto;clip:auto;overflow:visible}
+  .nav::before{display:none}
+  .nav .badge{top:6px;right:calc(50% - 16px)}
+  .pagebar,.toolbar,.stage,.list{padding-left:16px;padding-right:16px}
+  .insp-toggle{display:none}
+  .sbody{padding:var(--sp-5) 16px 96px}
+  .brand b{display:none}
+  .savebar .discard{display:none}
+  .field-row{grid-template-columns:1fr;gap:6px}
+  .row{grid-template-columns:28px minmax(0,1fr) auto 32px}.row .grip,.row .size{display:none}
+  .stage-foot .fhelp,.stage-foot .fmeta{display:none}
+  #v-layout,body.insp-closed #v-layout{grid-template-columns:minmax(0,1fr)}
+  .insp{position:fixed;left:0;right:0;bottom:0;height:78vh;z-index:60;border:0;border-radius:16px 16px 0 0;box-shadow:var(--e-3);transform:translateY(100%);transition:transform .25s var(--ease)}
+  .insp-inner{width:100%}
+  body.sheet .insp{transform:none}
+  body.sheet .scrim{display:block;position:fixed;inset:0;background:var(--scrim);z-index:59}
+  .insp-head::before{content:"";position:absolute;top:6px;left:50%;width:36px;height:4px;border-radius:2px;background:var(--border-strong);transform:translateX(-50%)}
+  .insp-head{position:relative;padding-top:20px}
+  .more-menu{bottom:64px!important;top:auto!important;right:8px!important;left:auto!important}
+}
+
+/* ===== mock harness (not part of the design) ===== */
+.mock{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:100;display:flex;align-items:center;gap:6px;padding:6px 6px 6px 12px;border-radius:var(--r-pill);background:#2b1f4a;color:#e9e1ff;font-size:12px;box-shadow:0 8px 24px rgb(0 0 0/.4);white-space:nowrap;max-width:calc(100vw - 16px);overflow-x:auto}
+.mock b{font-weight:600;margin-right:4px}
+.mock button{height:26px;padding:0 10px;border-radius:var(--r-pill);border:0;background:transparent;color:inherit;font-size:12px;cursor:pointer}
+.mock button[aria-pressed="true"]{background:#e9e1ff;color:#2b1f4a}
+@media (max-width:760px){.mock{bottom:68px}}
+</style>
+</head>
+<body data-view="layout" data-sel="page">
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-layout" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></symbol>
+  <symbol id="i-rotate" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v4h-4"/></symbol>
+  <symbol id="i-scenes" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></symbol>
+  <symbol id="i-paint" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="8" cy="10" r="1.2"/><circle cx="12" cy="7.5" r="1.2"/><circle cx="16" cy="10" r="1.2"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4l2-2zM10 20a2 2 0 0 0 4 0"/></symbol>
+  <symbol id="i-tv" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="14" r="4"/><path d="M11 11l9-9M17 5l2 2M15 7l2 2"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></symbol>
+  <symbol id="i-redo" viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-grip" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></symbol>
+  <symbol id="i-tidy" viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="18" height="8" rx="1"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></symbol>
+  <symbol id="i-text" viewBox="0 0 24 24"><path d="M5 6h14M12 6v13"/></symbol>
+  <symbol id="i-orbit" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><ellipse cx="12" cy="12" rx="10" ry="4"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></symbol>
+  <symbol id="i-left" viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></symbol>
+  <symbol id="i-right" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-off" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/></symbol>
+  <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
+</svg>
+
+<header class="top">
+  <div class="brand">
+    <div class="logo" aria-hidden="true">Pi</div>
+    <b>Pi Dashboard</b>
+    <span class="conn" title="Admin is reachable on your home network without a login. Don't expose port 8081 to the internet."><span class="dot" aria-hidden="true"></span><span class="lbl">Living room display online</span></span>
+  </div>
+  <div class="grow"></div>
+  <button class="search" aria-label="Search settings, widgets and pages (Ctrl+K)"><svg class="i"><use href="#i-search"/></svg><span>Search settings, widgets…</span><kbd>Ctrl K</kbd></button>
+  <div class="savebar">
+    <button class="btn ghost icon" aria-label="Undo" title="Undo (Ctrl+Z)"><svg class="i"><use href="#i-undo"/></svg></button>
+    <button class="btn ghost icon" aria-label="Redo" title="Redo (Ctrl+Shift+Z)" disabled><svg class="i"><use href="#i-redo"/></svg></button>
+    <button class="pending" title="Review what changed"><span class="dot" aria-hidden="true"></span>3 unsaved</button>
+    <button class="btn ghost discard">Discard</button>
+    <button class="btn primary" title="Save to the dashboard (Ctrl+S)">Save</button>
+  </div>
+</header>
+
+<div class="app">
+  <nav class="rail" aria-label="Sections">
+    <button class="nav" data-go="layout" data-label="Layout" aria-current="page"><svg class="i"><use href="#i-layout"/></svg><span class="lbl">Layout</span><span class="badge" title="Unsaved changes"></span></button>
+    <h3>Settings</h3>
+    <button class="nav" data-go="settings" data-pane="rotation" data-label="Slideshow"><svg class="i"><use href="#i-rotate"/></svg><span class="lbl">Slideshow</span></button>
+    <button class="nav desk" data-go="settings" data-pane="scenes" data-label="Scenes"><svg class="i"><use href="#i-scenes"/></svg><span class="lbl">Scenes</span></button>
+    <button class="nav desk" data-go="settings" data-pane="appearance" data-label="Appearance"><svg class="i"><use href="#i-paint"/></svg><span class="lbl">Appearance</span></button>
+    <button class="nav" data-go="settings" data-pane="alerts" data-label="Alerts"><svg class="i"><use href="#i-bell"/></svg><span class="lbl">Alerts</span></button>
+    <button class="nav" data-go="settings" data-pane="displays" data-label="Displays"><svg class="i"><use href="#i-tv"/></svg><span class="lbl">Displays</span></button>
+    <button class="nav desk" data-go="settings" data-pane="keys" data-label="API keys"><svg class="i"><use href="#i-key"/></svg><span class="lbl">API keys</span></button>
+    <div class="spacer"></div>
+    <button class="nav desk" data-go="settings" data-pane="backups" data-label="Backups"><svg class="i"><use href="#i-clock"/></svg><span class="lbl">Backups</span></button>
+    <button class="nav desk" data-go="settings" data-pane="system" data-label="System"><svg class="i"><use href="#i-gear"/></svg><span class="lbl">System</span></button>
+    <button class="nav more-btn" data-menu="moremenu" aria-haspopup="menu" aria-expanded="false"><svg class="i"><use href="#i-more"/></svg><span class="lbl">More</span></button>
+  </nav>
+  <div class="menu more-menu" id="moremenu" role="menu" style="position:fixed">
+    <button role="menuitem" data-go="settings" data-pane="scenes"><svg class="i"><use href="#i-scenes"/></svg>Scenes</button>
+    <button role="menuitem" data-go="settings" data-pane="appearance"><svg class="i"><use href="#i-paint"/></svg>Appearance</button>
+    <button role="menuitem" data-go="settings" data-pane="keys"><svg class="i"><use href="#i-key"/></svg>API keys</button>
+    <button role="menuitem" data-go="settings" data-pane="backups"><svg class="i"><use href="#i-clock"/></svg>Backups</button>
+    <button role="menuitem" data-go="settings" data-pane="system"><svg class="i"><use href="#i-gear"/></svg>System</button>
+  </div>
+
+  <!-- ================= LAYOUT VIEW ================= -->
+  <div class="view" id="v-layout">
+    <main class="work">
+      <div class="workhead">
+        <div class="pagebar">
+          <div class="tabs" role="tablist" aria-label="Pages" id="tabs">
+            <button class="tab" role="tab" aria-selected="true">Home <small>30s</small></button>
+            <button class="tab" role="tab" aria-selected="false" tabindex="-1">Radar <small>20s</small></button>
+            <button class="tab" role="tab" aria-selected="false" tabindex="-1">Space weather <small>45s</small></button>
+            <button class="tab" role="tab" aria-selected="false" tabindex="-1">Evenings <small>6–10 PM</small></button>
+          </div>
+          <button class="btn ghost addpage" aria-label="Add page"><svg class="i"><use href="#i-plus"/></svg><span class="tb-lbl">Page</span></button>
+        </div>
+        <div class="toolbar">
+          <div class="title"><h1>Home</h1><div class="meta">5 widgets, 30 seconds in the slideshow, weekdays 6 AM–10 PM</div></div>
+          <button class="btn ghost tl" aria-label="Preview" title="Open this page full-screen as the display shows it"><svg class="i"><use href="#i-eye"/></svg><span class="tb-lbl" aria-hidden="true">Preview</span></button>
+          <button class="btn ghost tl" data-page-settings aria-label="Page settings" title="Name, time on screen, schedule"><svg class="i"><use href="#i-sliders"/></svg><span class="tb-lbl" aria-hidden="true">Page settings</span></button>
+          <span class="anchor">
+            <button class="btn ghost icon" aria-label="More page actions" title="More page actions" aria-haspopup="menu" aria-expanded="false" data-menu="pagemenu"><svg class="i"><use href="#i-more"/></svg></button>
+            <div class="menu" id="pagemenu" role="menu">
+              <button role="menuitem" title="Arrange widgets with no gaps or overlaps"><svg class="i"><use href="#i-tidy"/></svg>Tidy up layout</button>
+              <hr>
+              <button role="menuitem"><svg class="i"><use href="#i-copy"/></svg>Duplicate page</button>
+              <button role="menuitem" disabled style="opacity:.45"><svg class="i"><use href="#i-left"/></svg>Move left</button>
+              <button role="menuitem"><svg class="i"><use href="#i-right"/></svg>Move right</button>
+              <hr><button role="menuitem" class="bad"><svg class="i"><use href="#i-trash"/></svg>Delete page…</button>
+            </div>
+          </span>
+          <button class="btn ghost icon insp-toggle" aria-label="Show inspector" aria-pressed="true" title="Show or hide the inspector"><svg class="i"><use href="#i-panel"/></svg></button>
+          <button class="btn primary"><svg class="i"><use href="#i-plus"/></svg>Add widget</button>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="bezel">
+          <div class="screen" id="screen" role="group" aria-label="Home page canvas" aria-describedby="canvas-help">
+            <div class="w" role="button" tabindex="0" data-w="clock" aria-pressed="false" style="grid-area:1/1/3/5" aria-label="Clock, column 1 row 1, 4 by 2"><span class="cap">Clock</span><div class="body"><div class="clock">7:42<small>Wednesday, September 30</small></div></div><i class="h e"></i><i class="h s"></i><i class="h se"></i></div>
+            <div class="w" role="button" tabindex="-1" data-w="weather" aria-pressed="false" style="grid-area:1/5/4/10" aria-label="Weather, column 5 row 1, 5 by 3"><span class="cap">Weather</span><div class="body"><div class="wx"><div class="sun"></div><div><div class="t">77°</div><div class="s">Clear, Phoenix</div></div><div class="fc"><span>Thu<b>81°</b></span><span>Fri<b>84°</b></span><span>Sat<b>79°</b></span><span>Sun<b>76°</b></span></div></div></div><i class="h e"></i><i class="h s"></i><i class="h se"></i></div>
+            <div class="w" role="button" tabindex="-1" data-w="space" aria-pressed="false" style="grid-area:1/10/3/13" aria-label="Space weather, column 10 row 1, 3 by 2"><span class="cap">Space weather</span><div class="body"><div class="kp"><b>Kp 2</b><span>Quiet</span></div></div><i class="h e"></i><i class="h s"></i><i class="h se"></i></div>
+            <div class="w" role="button" tabindex="-1" data-w="pistats" aria-pressed="false" style="grid-area:3/1/5/5" aria-label="Pi stats, column 1 row 3, 4 by 2"><span class="cap">Pi stats</span><div class="body"><div class="gauges"><span class="g"><i style="--p:23;--c:var(--ok)"></i>CPU</span><span class="g"><i style="--p:61;--c:var(--accent)"></i>Memory</span><span class="g"><i style="--p:48;--c:var(--warn)"></i>Temp</span></div><div class="mini"><b>23%</b> CPU<br><b>61%</b> memory<br><b>48°C</b></div></div><i class="h e"></i><i class="h s"></i><i class="h se"></i></div>
+            <div class="w off" role="button" tabindex="-1" data-w="welcome" aria-pressed="false" style="grid-area:3/10/5/13" aria-label="Welcome, column 10 row 3, 3 by 2, turned off"><span class="cap">Welcome</span><span class="offtag">Off</span><div class="body"><div class="txt">Edit me in the admin at pi.local:8081</div><div class="mini">Welcome text</div></div><i class="h e"></i><i class="h s"></i><i class="h se"></i></div>
+          </div>
+        </div>
+        <div class="stage-foot">
+          <div class="seg" role="group" aria-label="Canvas mode">
+            <button aria-pressed="true" data-mode="live" title="Show real widget content">Live</button><button aria-pressed="false" data-mode="boxes" title="Show outlines only">Boxes</button>
+          </div>
+          <span class="fmeta">Living room TV, 1920×1080, 12 columns</span>
+          <span id="canvas-help" class="fhelp">Keyboard: Enter picks up, Esc cancels</span>
+        </div>
+        <div id="canvas-status" class="canvas-status" role="status" aria-live="polite"></div>
+      </div>
+
+      <section class="list" aria-labelledby="lh">
+        <div class="list-head"><h2 id="lh">Widgets <span class="count">5</span></h2><input class="in" type="search" placeholder="Filter widgets" aria-label="Filter widgets"></div>
+        <div class="rows" role="list" id="rows">
+          <div class="row" role="listitem" data-w="clock" tabindex="0" aria-label="Clock"><svg class="i grip"><use href="#i-grip"/></svg><span class="ico"><svg class="i"><use href="#i-clock"/></svg></span><span class="nm"><b>Clock</b><span>12-hour, with date</span></span><span class="pillc"></span><span class="size">4×2</span><button class="btn ghost icon" aria-label="Actions for Clock" aria-haspopup="menu" aria-expanded="false" data-menu="m1"><svg class="i"><use href="#i-more"/></svg></button>
+            <div class="menu" id="m1" role="menu"></div></div>
+          <div class="row" role="listitem" data-w="weather" tabindex="0" aria-label="Weather"><svg class="i grip"><use href="#i-grip"/></svg><span class="ico"><svg class="i"><use href="#i-sun"/></svg></span><span class="nm"><b>Weather</b><span>Phoenix, with forecast</span></span><span class="pillc"></span><span class="size">5×3</span><button class="btn ghost icon" aria-label="Actions for Weather" aria-haspopup="menu" aria-expanded="false" data-menu="m2"><svg class="i"><use href="#i-more"/></svg></button>
+            <div class="menu" id="m2" role="menu"></div></div>
+          <div class="row" role="listitem" data-w="space" tabindex="0" aria-label="Space weather, nights only"><svg class="i grip"><use href="#i-grip"/></svg><span class="ico"><svg class="i"><use href="#i-orbit"/></svg></span><span class="nm"><b>Space weather</b><span>Kp index</span></span><span class="pillc"><span class="pill sched">Nights only</span></span><span class="size">3×2</span><button class="btn ghost icon" aria-label="Actions for Space weather" aria-haspopup="menu" aria-expanded="false" data-menu="m3"><svg class="i"><use href="#i-more"/></svg></button>
+            <div class="menu" id="m3" role="menu"></div></div>
+          <div class="row" role="listitem" data-w="pistats" tabindex="0" aria-label="Pi stats"><svg class="i grip"><use href="#i-grip"/></svg><span class="ico"><svg class="i"><use href="#i-cpu"/></svg></span><span class="nm"><b>Pi stats</b><span>CPU, memory, temperature</span></span><span class="pillc"></span><span class="size">4×2</span><button class="btn ghost icon" aria-label="Actions for Pi stats" aria-haspopup="menu" aria-expanded="false" data-menu="m4"><svg class="i"><use href="#i-more"/></svg></button>
+            <div class="menu" id="m4" role="menu"></div></div>
+          <div class="row" role="listitem" data-w="welcome" tabindex="0" aria-label="Welcome, turned off"><svg class="i grip"><use href="#i-grip"/></svg><span class="ico"><svg class="i"><use href="#i-text"/></svg></span><span class="nm"><b>Welcome</b><span>Text</span></span><span class="pillc"><span class="pill">Off</span></span><span class="size">3×2</span><button class="btn ghost icon" aria-label="Actions for Welcome" aria-haspopup="menu" aria-expanded="false" data-menu="m5"><svg class="i"><use href="#i-more"/></svg></button>
+            <div class="menu" id="m5" role="menu"></div></div>
+        </div>
+      </section>
+    </main>
+
+    <div class="scrim" id="scrim"></div>
+    <aside class="insp" id="insp" aria-label="Inspector">
+     <div class="insp-inner">
+      <!-- page pane -->
+      <div class="pane page">
+        <div class="insp-head"><span class="ico"><svg class="i"><use href="#i-sliders"/></svg></span><div><h2 id="ptitle">Page settings</h2><p>1 of 4 in the slideshow</p></div><button class="btn ghost icon close" aria-label="Close inspector"><svg class="i"><use href="#i-x"/></svg></button></div>
+        <div class="insp-body">
+          <div class="group">
+            <div class="field"><label for="pn">Name<span class="req" aria-hidden="true">*</span></label><input class="in" id="pn" value="Home" required></div>
+            <div class="field"><label for="pd">Time on screen</label><div class="suffix"><input class="in" id="pd" type="number" placeholder="30" aria-describedby="pd-h"><span>sec</span></div><p class="help" id="pd-h">Leave blank to use the slideshow default of 30 seconds.</p></div>
+          </div>
+          <div class="group">
+            <h3>When to show this page</h3>
+            <label class="sw-row"><span><span class="t">Only during set hours</span><span class="help" id="h-sched">Outside these hours the slideshow skips this page.</span></span><span class="switch"><input type="checkbox" aria-describedby="h-sched" checked></span></label>
+            <div class="reveal">
+              <div class="field"><span class="flabel" id="days-l">Days</span><div class="chips" role="group" aria-labelledby="days-l">
+                <button class="chip" aria-pressed="true">Mon</button><button class="chip" aria-pressed="true">Tue</button><button class="chip" aria-pressed="true">Wed</button><button class="chip" aria-pressed="true">Thu</button><button class="chip" aria-pressed="true">Fri</button><button class="chip" aria-pressed="false">Sat</button><button class="chip" aria-pressed="false">Sun</button></div></div>
+              <div class="cols"><div class="field" style="margin:0"><label for="t1">From</label><input class="in" id="t1" type="time" value="06:00"></div><div class="field" style="margin:0"><label for="t2">Until</label><input class="in" id="t2" type="time" value="22:00"></div></div>
+            </div>
+            <label class="sw-row"><span><span class="t">Only when a condition is true</span><span class="help" id="h-cond">For example, only while a print is running or when rain is forecast.</span></span><span class="switch"><input type="checkbox" aria-describedby="h-cond"></span></label>
+            <div class="reveal"><div class="field"><label for="c1">Condition</label><select class="in" id="c1"><option>Rain in the forecast</option><option>3D printer is printing</option></select></div></div>
+          </div>
+        </div>
+        <div class="insp-foot"><span class="grow">Changes are staged until you save.</span><button class="btn ghost">Revert page</button></div>
+      </div>
+      <!-- widget pane -->
+      <div class="pane widget">
+        <div class="insp-head"><span class="ico" id="wicon"><svg class="i"><use href="#i-sun"/></svg></span><div><h2 id="wtitle">Weather</h2><p id="wsub">Weather widget on Home</p></div><button class="btn ghost icon close" aria-label="Close inspector"><svg class="i"><use href="#i-x"/></svg></button></div>
+        <div class="insp-body">
+          <div class="group">
+            <div class="field"><label for="wn">Title</label><input class="in" id="wn" value="Weather" aria-describedby="wn-h"><p class="help" id="wn-h">Shown in the admin only. The display shows the city name.</p></div>
+            <div class="field" style="margin-bottom:var(--sp-2)"><span class="flabel" id="units-l">Units</span><div class="seg" role="group" aria-labelledby="units-l"><button aria-pressed="true">°F, mph</button><button aria-pressed="false">°C, km/h</button></div></div>
+            <label class="sw-row"><span><span class="t">Use home location</span><span class="help" id="h-home">Phoenix, AZ. Change it in Appearance.</span></span><span class="switch"><input type="checkbox" aria-describedby="h-home" checked></span></label>
+            <label class="sw-row"><span><span class="t">Show 4-day forecast</span><span class="help" id="h-fc">Hidden automatically when the widget is under 3 rows tall.</span></span><span class="switch"><input type="checkbox" aria-describedby="h-fc" checked></span></label>
+            <label class="sw-row"><span><span class="t">Animated icons</span></span><span class="switch"><input type="checkbox" checked></span></label>
+          </div>
+          <div class="group">
+            <h3>Position and size</h3>
+            <div class="pos"><label>Column<input class="in" id="px" value="5" inputmode="numeric"></label><label>Row<input class="in" id="py" value="1" inputmode="numeric"></label><label>Width<input class="in" id="pw" value="5" inputmode="numeric"></label><label>Height<input class="in" id="ph" value="3" inputmode="numeric"></label></div>
+          </div>
+          <div class="group">
+            <h3>When to show it</h3>
+            <label class="sw-row"><span><span class="t">Only during set hours</span></span><span class="switch"><input type="checkbox"></span></label>
+            <div class="reveal"><p class="help">Same day and time controls as page schedules.</p></div>
+            <label class="sw-row"><span><span class="t">Only when a condition is true</span></span><span class="switch"><input type="checkbox"></span></label>
+          </div>
+        </div>
+        <div class="insp-foot"><button class="btn danger-text"><svg class="i"><use href="#i-trash"/></svg>Delete widget</button><span class="grow"></span><button class="btn ghost">Revert</button></div>
+      </div>
+     </div>
+    </aside>
+  </div>
+
+  <!-- ================= SETTINGS VIEW ================= -->
+  <div class="view" id="v-settings">
+    <div class="sbody">
+      <div class="inner">
+        <section class="spane" data-pane="alerts">
+          <h1>Alerts</h1>
+          <p class="lede">Alerts appear as a banner on every display. Choose what can raise one and how long it stays up.</p>
+
+          <div class="card"><div class="card-h"><div><h2>Sources</h2><p>Each source raises an alert when something changes.</p></div></div>
+            <div class="card-b">
+              <label class="sw-row"><span><span class="t">3D printer</span><span class="help" id="a1h">When a print starts, finishes or fails on OctoPrint.</span></span><span class="switch"><input type="checkbox" aria-describedby="a1h" checked></span></label>
+              <label class="sw-row"><span><span class="t">Severe weather</span><span class="help" id="a2h">National Weather Service warnings for Phoenix, AZ.</span></span><span class="switch"><input type="checkbox" aria-describedby="a2h" checked></span></label>
+              <div class="reveal"><div class="field-row"><div><label class="t" for="sev">Minimum severity</label><p class="help">Lower-severity notices are ignored.</p></div><select class="in" id="sev"><option>Info and above</option><option selected>Warnings and above</option><option>Danger only</option></select></div></div>
+              <label class="sw-row"><span><span class="t">Geomagnetic storm</span><span class="help" id="a3h">When the Kp index reaches your threshold. Good for aurora watching.</span></span><span class="switch"><input type="checkbox" aria-describedby="a3h" checked></span></label>
+              <div class="reveal">
+                <div class="field-row"><div><label class="t" for="kp">Kp threshold</label><p class="help">Clears once Kp drops below 5.</p></div><input class="in" id="kp" type="number" value="6" min="1" max="9"></div>
+                <div class="field-row"><div><label class="t" for="kpl">Keep banner up for</label><p class="help">Set to 0 to use the warning default.</p></div><div class="suffix"><input class="in" id="kpl" type="number" value="60"><span>min</span></div></div>
+              </div>
+            </div></div>
+
+          <div class="card"><div class="card-h"><div><h2>Auto-dismiss</h2><p>How long a banner stays before it hides itself. Use 0 to keep it until someone taps it.</p></div></div>
+            <div class="card-b">
+              <div class="field-row"><label class="t" for="d1">Info</label><div class="suffix"><input class="in" id="d1" type="number" value="90"><span>sec</span></div></div>
+              <div class="field-row"><label class="t" for="d2">Warning</label><div class="suffix"><input class="in" id="d2" type="number" value="0"><span>sec</span></div></div>
+              <div class="field-row"><label class="t" for="d3">Danger</label><div class="suffix"><input class="in" id="d3" type="number" value="0"><span>sec</span></div></div>
+            </div></div>
+
+          <div class="card"><div class="card-h" style="padding-bottom:var(--sp-4)"><div><h2>Test it</h2><p>Sends a sample banner to every display right now. Nothing is saved.</p></div><button class="btn">Send test alert</button></div></div>
+        </section>
+
+        <section class="spane" data-pane="displays">
+          <h1>Displays</h1>
+          <p class="lede">Every screen that has opened the dashboard. Scale and page choices apply to that screen only.</p>
+          <div class="card"><div class="card-h"><div><h2>Living room TV</h2><p><span class="dot" style="display:inline-block;margin-right:6px"></span>Online, 1920×1080, last seen just now</p></div><button class="btn">Identify</button></div>
+            <div class="card-b">
+              <div class="field-row"><div><label class="t" for="sc1">Interface scale</label><p class="help">Bigger makes everything readable from the couch.</p></div><div class="suffix"><input class="in" id="sc1" type="number" value="100"><span>%</span></div></div>
+              <div class="field-row"><div><label class="t" for="pg1">Pages to show</label><p class="help">All pages follows the slideshow.</p></div><select class="in" id="pg1"><option>All pages</option><option>Home only</option></select></div>
+            </div></div>
+          <div class="card"><div class="card-h"><div><h2>Kitchen tablet</h2><p>Offline since 6:14 PM yesterday</p></div><button class="btn ghost">Forget</button></div>
+            <div class="card-b"><div class="field-row"><label class="t" for="sc2">Interface scale</label><div class="suffix"><input class="in" id="sc2" type="number" value="125"><span>%</span></div></div></div></div>
+        </section>
+
+        <section class="spane" data-pane="other">
+          <h1 id="other-title">Settings</h1>
+          <p class="lede">This section uses the same layout as Alerts and Displays: a heading, one line about what it controls, then grouped cards. It is not drawn in this mock.</p>
+        </section>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="mock" role="toolbar" aria-label="Mock controls">
+  <b>Mock</b>
+  <button data-state="page" aria-pressed="true">Page selected</button>
+  <button data-state="widget">Widget selected</button>
+  <button data-state="menu">Row menu</button>
+  <button data-state="alerts">Settings: Alerts</button>
+  <button data-state="displays">Settings: Displays</button>
+  <span style="opacity:.4">|</span>
+  <button data-theme-t>Light / dark</button>
+</div>
+
+<script>
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const B=document.body, phone=()=>innerWidth<=760;
+const rowMenu=`<button role="menuitem"><svg class="i"><use href="#i-edit"/></svg>Edit settings<kbd>Enter</kbd></button>
+<button role="menuitem"><svg class="i"><use href="#i-copy"/></svg>Duplicate<kbd>Ctrl D</kbd></button>
+<button role="menuitem"><svg class="i"><use href="#i-right"/></svg>Copy to another page…</button>
+<button role="menuitem"><svg class="i"><use href="#i-off"/></svg>Turn off</button>
+<hr><button role="menuitem" class="bad"><svg class="i"><use href="#i-trash"/></svg>Delete<kbd>Del</kbd></button>`;
+$$('.row .menu').forEach(m=>m.innerHTML=rowMenu);
+
+const W={clock:["Clock","i-clock"],weather:["Weather","i-sun"],space:["Space weather","i-orbit"],pistats:["Pi stats","i-cpu"],welcome:["Welcome","i-text"]};
+
+/* menus */
+function closeMenus(){$$('.menu.open').forEach(m=>m.classList.remove('open'));$$('[data-menu]').forEach(b=>b.setAttribute('aria-expanded','false'))}
+$$('[data-menu]').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const m=$('#'+b.dataset.menu),was=m.classList.contains('open');closeMenus();if(!was){m.classList.add('open');b.setAttribute('aria-expanded','true');
+    if(!m.classList.contains('more-menu')){m.style.left='';m.style.right='';
+      const box=(m.closest('.work,.view')||document.body).getBoundingClientRect(),r=m.getBoundingClientRect();
+      if(r.left<box.left+8){m.style.right='auto';m.style.left='0'}}
+    m.querySelector('button:not([disabled])')?.focus()}}));
+document.addEventListener('click',e=>{if(!e.target.closest('.menu,[data-menu]'))closeMenus()});
+$$('.menu').forEach(m=>m.addEventListener('keydown',e=>{const items=$$('button:not([disabled])',m),i=items.indexOf(document.activeElement);
+  if(e.key==="ArrowDown"){e.preventDefault();items[(i+1)%items.length].focus()}
+  if(e.key==="ArrowUp"){e.preventDefault();items[(i-1+items.length)%items.length].focus()}}));
+
+/* inspector open/closed: docked + collapsible on desktop/tablet, bottom sheet on phone */
+const insp=$('#insp');let lastFocus=null;
+function syncInert(){const shown=phone()?B.classList.contains('sheet'):!B.classList.contains('insp-closed');insp.inert=!shown;
+  const modal=phone()&&shown;
+  ['.top','.work','.rail','.mock'].forEach(sel=>{const el=$(sel);if(el)el.inert=modal});
+  if(modal){insp.setAttribute('role','dialog');insp.setAttribute('aria-modal','true');insp.removeAttribute('aria-label');
+    insp.setAttribute('aria-labelledby',B.dataset.sel==="widget"?'wtitle':'ptitle')}
+  else{insp.removeAttribute('role');insp.removeAttribute('aria-modal');insp.removeAttribute('aria-labelledby');insp.setAttribute('aria-label','Inspector')}}
+function openInspector(){
+  if(phone()){lastFocus=document.activeElement;B.classList.add('sheet');syncInert();setTimeout(()=>[...insp.querySelectorAll('.close')].find(c=>c.offsetParent)?.focus(),30)}
+  else{B.classList.remove('insp-closed');$('.insp-toggle').setAttribute('aria-pressed','true');syncInert()}}
+function closeInspector(){const wasSheet=B.classList.contains('sheet');B.classList.remove('sheet');
+  if(!phone()){B.classList.add('insp-closed');$('.insp-toggle').setAttribute('aria-pressed','false')}
+  syncInert();if(wasSheet&&lastFocus)lastFocus.focus()}
+addEventListener('resize',syncInert);
+$('.insp-toggle').onclick=()=>B.classList.contains('insp-closed')?openInspector():closeInspector();
+$$('.close').forEach(b=>b.onclick=closeInspector);
+$('#scrim').onclick=closeInspector;
+
+/* selection */
+function selectWidget(id,{open=true}={}){
+  $$('.row[data-w]').forEach(e=>e.setAttribute('aria-selected',String(e.dataset.w===id)));
+  $$('#screen .w').forEach(e=>e.setAttribute('aria-pressed',String(e.dataset.w===id)));
+  if(grabbed&&grabbed.dataset.w!==id)drop();
+  $$('#screen .w').forEach(e=>e.tabIndex=(e.dataset.w===(id||'clock'))?0:-1);
+  if(id){B.dataset.sel="widget";$('#wtitle').textContent=W[id][0];$('#wn').value=W[id][0];$('#wsub').textContent=W[id][0]+" widget on Home";$('#wicon use').setAttribute('href','#'+W[id][1]);syncPos(id)}
+  else B.dataset.sel="page";
+  if(open)openInspector();
+}
+function area(el){const [r,c,r2,c2]=el.style.gridArea.split('/').map(s=>parseInt(s));return {r,c,w:c2-c,h:r2-r}}
+function syncPos(id){const a=area($(`#screen [data-w="${id}"]`));$('#px').value=a.c;$('#py').value=a.r;$('#pw').value=a.w;$('#ph').value=a.h}
+
+let grabbed=null;const status=$('#canvas-status');
+let sayTimer;
+function say(t){clearTimeout(sayTimer);const hit=clashes();
+  if(hit.length){const names=[...new Set(hit.flat())].map(w=>W[w.dataset.w][0]);
+    status.className='canvas-status warn';status.innerHTML=(t&&t.includes('overlaps')?t:names.join(', ')+' overlap.')+' <button type="button" id="tidy-now">Tidy up layout</button>';
+    $('#tidy-now').onclick=()=>{location.reload()};return}
+  status.className='canvas-status';status.textContent=t||'';if(t)sayTimer=setTimeout(()=>{if(!clashes().length)status.textContent=''},4000)}
+let start=null;
+function drop(){if(!grabbed)return;grabbed.classList.remove('grabbed');grabbed=null;start=null}
+function rect(el){const a=area(el);return {x1:a.c,x2:a.c+a.w,y1:a.r,y2:a.r+a.h}}
+function clashes(){const ws=$$('#screen .w');ws.forEach(w=>w.classList.remove('clash'));const out=[];
+  for(let i=0;i<ws.length;i++)for(let j=i+1;j<ws.length;j++){const a=rect(ws[i]),b=rect(ws[j]);
+    if(a.x1<b.x2&&b.x1<a.x2&&a.y1<b.y2&&b.y1<a.y2){ws[i].classList.add('clash');ws[j].classList.add('clash');out.push([ws[i],ws[j]])}}
+  return out}
+$$('#screen .w').forEach(w=>{
+  w.onclick=()=>selectWidget(w.dataset.w);
+  w.onkeydown=e=>{
+    const ws=$$('#screen .w'),i=ws.indexOf(w),name=W[w.dataset.w][0];
+    if(e.key==="Enter"||e.key===" "){e.preventDefault();
+      if(grabbed===w){drop();say(name+' dropped.');return}
+      selectWidget(w.dataset.w);grabbed=w;start=w.style.gridArea;w.classList.add('grabbed');say(name+' picked up. Arrows move, Shift+arrows resize, Enter drops, Esc cancels.');return}
+    if(e.key==="Escape"&&grabbed===w){e.stopPropagation();const a0=start;w.style.gridArea=a0;drop();syncPos(w.dataset.w);
+      const a=area(w);$(`.row[data-w="${w.dataset.w}"] .size`).textContent=`${a.w}×${a.h}`;
+      w.setAttribute('aria-label',`${name}, column ${a.c} row ${a.r}, ${a.w} by ${a.h}`);say(name+' move cancelled.');return}
+    if(!e.key.startsWith("Arrow"))return;
+    e.preventDefault();
+    if(grabbed!==w){ // not picked up: arrows move focus between widgets
+      const n=ws[(i+(e.key==="ArrowRight"||e.key==="ArrowDown"?1:-1)+ws.length)%ws.length];ws.forEach(x=>x.tabIndex=x===n?0:-1);n.focus();return}
+    let {r,c,w:ww,h}=area(w);const dx=e.key==="ArrowRight"?1:e.key==="ArrowLeft"?-1:0,dy=e.key==="ArrowDown"?1:e.key==="ArrowUp"?-1:0;
+    if(e.shiftKey){ww=Math.max(1,Math.min(13-c,ww+dx));h=Math.max(1,Math.min(7-r,h+dy))}
+    else{c=Math.max(1,Math.min(13-ww,c+dx));r=Math.max(1,Math.min(7-h,r+dy))}
+    w.style.gridArea=`${r}/${c}/${r+h}/${c+ww}`;
+    w.setAttribute('aria-label',`${W[w.dataset.w][0]}, column ${c} row ${r}, ${ww} by ${h}`);
+    syncPos(w.dataset.w);
+    $(`.row[data-w="${w.dataset.w}"] .size`).textContent=`${ww}×${h}`;
+    const hit=clashes().filter(p=>p.includes(w)).map(p=>W[(p[0]===w?p[1]:p[0]).dataset.w][0]);
+    say(hit.length?`${name} overlaps ${hit.join(' and ')}.`:`${name}: column ${c}, row ${r}, ${ww} by ${h}.`);
+  };
+});
+$$('.row').forEach(r=>{r.onclick=e=>{if(!e.target.closest('[data-menu],.menu'))selectWidget(r.dataset.w)};r.onkeydown=e=>{if(e.key==="Enter"&&e.target===r)selectWidget(r.dataset.w)}});
+$('#screen').addEventListener('click',e=>{if(e.target.id==="screen")selectWidget(null,{open:false})});
+$('[data-page-settings]').onclick=()=>selectWidget(null);
+
+/* tabs */
+$$('.tab').forEach(t=>t.onclick=()=>{$$('.tab').forEach(x=>{x.setAttribute('aria-selected',String(x===t));x.tabIndex=x===t?0:-1});$('.toolbar h1').textContent=t.firstChild.textContent.trim()});
+$('#tabs').addEventListener('keydown',e=>{const ts=$$('.tab'),i=ts.indexOf(document.activeElement);if(i<0)return;
+  if(e.key==="ArrowRight"||e.key==="ArrowLeft"){e.preventDefault();const n=ts[(i+(e.key==="ArrowRight"?1:-1)+ts.length)%ts.length];n.focus();n.click()}});
+const fade=()=>{const t=$('#tabs');t.classList.toggle('overflow',t.scrollWidth>t.clientWidth+1&&t.scrollLeft+t.clientWidth<t.scrollWidth-1)};
+$('#tabs').addEventListener('scroll',fade);addEventListener('resize',fade);fade();
+
+/* views */
+function view(v,pane){
+  B.dataset.view=v;closeMenus();B.classList.remove('sheet');
+  $$('.rail .nav').forEach(n=>{const on=v==="layout"?n.dataset.go==="layout":n.dataset.pane===pane;
+    if(on)n.setAttribute('aria-current','page');else n.removeAttribute('aria-current')});
+  const more=$('.more-btn'),inMore=v==="settings"&&$$('#moremenu [data-pane]').some(b=>b.dataset.pane===pane);
+  if(inMore)more.setAttribute('aria-current','page');
+  if(v==="settings"){
+    const known=["alerts","displays"].includes(pane);
+    $$('.spane').forEach(s=>s.classList.toggle('on',s.dataset.pane===(known?pane:"other")));
+    if(!known)$('#other-title').textContent=$(`.rail [data-pane="${pane}"]`).dataset.label;
+    $('#v-settings').scrollTop=0;
+  }
+}
+$$('.rail .nav[data-go], #moremenu [data-go]').forEach(n=>n.addEventListener('click',()=>view(n.dataset.go,n.dataset.pane)));
+
+/* misc */
+document.addEventListener('keydown',e=>{if(e.key==="Escape"){const open=$('.menu.open');closeMenus();if(open)return;if(B.classList.contains('sheet'))closeInspector()}});
+$$('.seg').forEach(s=>s.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;$$('button',s).forEach(x=>x.setAttribute('aria-pressed',String(x===b)));if(b.dataset.mode)B.classList.toggle('boxes',b.dataset.mode==="boxes")}));
+$$('.chip').forEach(c=>c.onclick=()=>c.setAttribute('aria-pressed',String(c.getAttribute('aria-pressed')!=="true")));
+
+$$('.mock [data-state]').forEach(b=>b.onclick=()=>{
+  $$('.mock [data-state]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
+  const s=b.dataset.state;
+  if(s==="page"){view("layout");selectWidget(null,{open:!phone()})}
+  if(s==="widget"){view("layout");selectWidget("weather")}
+  if(s==="menu"){view("layout");selectWidget("weather",{open:false});B.classList.remove('sheet');setTimeout(()=>{const btn=$('[data-menu="m2"]');btn.closest('.row').scrollIntoView({block:"center"});btn.click()},0)}
+  if(s==="alerts"||s==="displays")view("settings",s);
+});
+syncInert();
+$('[data-theme-t]').onclick=()=>{const r=document.documentElement;r.dataset.theme=r.dataset.theme==="dark"?"light":"dark"};
+</script>
+</body>
+</html>

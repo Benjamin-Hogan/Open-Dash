@@ -145,7 +145,7 @@
   margin-bottom: var(--sp-1);
   font-size: var(--fs-sm);
   font-weight: var(--fw-medium);
-  color: var(--text-2);
+  color: var(--text-1);
 }
 .field-help {
   margin-top: var(--sp-1);
@@ -182,12 +182,15 @@
   padding: 0 var(--control-px);
   background: var(--bg-sunken);
   color: var(--text-1);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--input-border);
   border-radius: var(--r-md);
   font-size: var(--fs-md);
   font-family: inherit;
   transition: border-color var(--dur-fast) var(--ease);
 }
+.field input:focus,
+.field select:focus,
+.field textarea:focus { border-color: var(--accent); }
 .field textarea {
   height: auto;
   min-height: 80px;
@@ -200,7 +203,7 @@
 .input:hover,
 .field input:hover,
 .field select:hover,
-.field textarea:hover { border-color: var(--border-strong); }
+.field textarea:hover { border-color: var(--text-3); }
 
 .field input::placeholder, .field textarea::placeholder { color: var(--text-3); }
 
@@ -209,7 +212,7 @@
   height: var(--control-h);
   padding: 3px;
   background: var(--bg-sunken);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--input-border);
   border-radius: var(--r-md);
   cursor: pointer;
 }
@@ -224,32 +227,57 @@
 
 /* ---- switch (replaces bare checkbox rows) -------------------------------- */
 
+/* The whole row is the <label>, so the text is a tap target too. The text
+ * column takes the space and wraps on its own; the switch sits beside it. The
+ * old form engine put the label text *inside* the 34px switch, which is why
+ * "Enable schedule" wrapped one word per line over the knob. */
 .switch-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: var(--sp-3);
   padding: var(--sp-2) 0;
   cursor: pointer;
 }
-.switch-row .switch-label { font-size: var(--fs-md); color: var(--text-1); }
-.switch-row .field-help { margin-top: 2px; }
+/* The row is a <label> straight inside .field, so it must beat the generic
+ * `.field > label` (display:block; small muted text) on specificity. */
+.field > label.switch-row {
+  display: grid;
+  margin-bottom: 0;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-normal);
+  color: var(--text-1);
+}
+.switch-row .switch { margin-top: 1px; }
+.switch-text { display: block; min-width: 0; }
+.switch-row .switch-label {
+  display: block;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+.switch-row .switch-help { display: block; margin-top: 2px; font-size: var(--fs-xs); color: var(--text-3); line-height: var(--lh-body); }
+.field + .field > .switch-row,
+.field:has(> .switch-row) + .field:has(> .switch-row) { border-top: 1px solid var(--border-subtle); }
+.field:has(> .switch-row) { margin-bottom: 0; }
+.field:has(> .switch-row) + .field:not(:has(> .switch-row)) { margin-top: var(--sp-2); }
 
 .switch {
   position: relative;
   flex: 0 0 auto;
-  width: 34px;
-  height: 20px;
-  background: var(--border-strong);
+  width: 40px;
+  height: 22px;
+  background: var(--switch-off);
   border-radius: var(--r-pill);
   transition: background var(--dur-fast) var(--ease);
 }
 .switch::after {
   content: "";
   position: absolute;
-  top: 2px; left: 2px;
+  top: 3px; left: 3px;
   width: 16px; height: 16px;
-  background: var(--surface-1);
+  background: #fff;
   border-radius: 50%;
   box-shadow: var(--e-1);
   transition: transform var(--dur-fast) var(--ease);
@@ -262,7 +290,7 @@
   cursor: pointer;
 }
 .switch:has(input:checked) { background: var(--accent); }
-.switch:has(input:checked)::after { transform: translateX(14px); }
+.switch:has(input:checked)::after { transform: translateX(18px); }
 .switch:has(input:focus-visible) { box-shadow: var(--focus-ring); }
 
 /* ---- number stepper ------------------------------------------------------ */
@@ -297,10 +325,8 @@
   background: none;
   border: 0;
   color: var(--text-1);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-md);
   font-weight: var(--fw-bold);
-  letter-spacing: .04em;
-  text-transform: uppercase;
   cursor: pointer;
 }
 .section-head .caret { color: var(--text-3); transition: transform var(--dur-fast) var(--ease); }
@@ -310,13 +336,14 @@
 
 /* Standalone label above a group of fields, no collapse behaviour. */
 .section-title {
-  margin: var(--sp-4) 0 var(--sp-2);
-  font-size: var(--fs-xs);
+  margin: var(--sp-5) 0 var(--sp-2);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--fs-md);
   font-weight: var(--fw-bold);
-  letter-spacing: .06em;
-  text-transform: uppercase;
-  color: var(--text-3);
+  color: var(--text-1);
 }
+.settings-body .section-title { font-size: var(--fs-lg); }
 
 fieldset.field-group {
   margin: var(--sp-3) 0;
@@ -326,11 +353,9 @@ fieldset.field-group {
 }
 fieldset.field-group > legend {
   padding: 0 var(--sp-2);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-sm);
   font-weight: var(--fw-bold);
-  letter-spacing: .06em;
-  text-transform: uppercase;
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 /* ---- list rows ----------------------------------------------------------- */
@@ -387,7 +412,7 @@ fieldset.field-group > legend {
   height: var(--control-h);
   padding: 0 var(--control-px);
   background: var(--bg-sunken);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--input-border);
   border-radius: var(--r-md);
 }
 .search:focus-within { border-color: var(--accent); }
@@ -652,6 +677,7 @@ kbd {
   border: 1px solid var(--border-subtle);
   border-radius: var(--r-md);
 }
+.type-row { margin-bottom: var(--sp-3); }
 .type-text { min-width: 0; }
 .type-name { font-size: var(--fs-md); font-weight: var(--fw-bold); }
 .type-desc { font-size: var(--fs-sm); color: var(--text-2); }
@@ -660,17 +686,20 @@ kbd {
 /* Undo / redo / change count / discard / Save. The change count is a button
  * because it opens the list of what you actually did. */
 
-.savebar {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-1);
-  padding-right: var(--sp-2);
-  margin-right: var(--sp-1);
-  border-right: 1px solid var(--border-subtle);
+.savebar { display: flex; align-items: center; gap: var(--sp-1); }
+.savebar .badge { height: 28px; padding: 0 10px; cursor: pointer; }
+.savebar .badge:disabled { cursor: default; opacity: .8; }
+.savebar .changes-pill.accent {
+  background: var(--warn-soft);
+  border-color: transparent;
+  color: var(--warn);
 }
-.savebar .badge { cursor: pointer; }
-.savebar .badge:disabled { cursor: default; opacity: .7; }
-.savebar .badge.accent { border-color: transparent; }
+.savebar .changes-pill.accent::before {
+  content: "";
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
 /* Only pull for attention once there is something to lose. */
 .savebar.dirty .btn.primary { box-shadow: 0 0 0 3px var(--accent-soft); }
 
@@ -714,3 +743,16 @@ kbd {
 }
 .banner .banner-body { flex: 1 1 auto; }
 .banner.info { background: var(--accent-soft); color: var(--accent); border-bottom-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+
+/* ---- settings pages ------------------------------------------------------ */
+/* Full-width pages read best with a measure: labels and help span the page,
+ * single-line controls stay a sensible width. */
+.settings-body .field input[type="text"],
+.settings-body .field input[type="number"],
+.settings-body .field input[type="password"],
+.settings-body .field input[type="color"],
+.settings-body .field input[type="time"],
+.settings-body .field input[type="date"],
+.settings-body .field select { max-width: 360px; }
+.settings-body .editor-actions { justify-content: flex-start; }
+.autosave-note { margin-top: var(--sp-5); font-size: var(--fs-xs); color: var(--text-3); }

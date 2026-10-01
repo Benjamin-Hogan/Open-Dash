@@ -7,8 +7,11 @@
 // see. Two facts make that affordable:
 //
 //   · widget CSS is container-query based (container-type: size, sizing in
-//     cqi/cqh), so a widget self-scales to whatever box it's given. No
-//     transform tricks, no separate small-size styling.
+//     cqi/cqh). The canvas gives each widget a box at the display's own pixel
+//     size and scales the box down as a whole (--canvas-scale, panels.css), so
+//     it lays out exactly as it will on the wall rather than reflowing to fit
+//     a thumbnail. When that scale would be too small to read, the canvas
+//     switches to posters instead (see renderCanvas in admin.js).
 //   · providers are cached server-side, so N clocks and a weather tile are
 //     cheap. The expensive ones are embeds, and those are handled below.
 //
@@ -36,8 +39,12 @@ let wokenHeavy = null;     // the one heavy widget the user asked to run
 
 export const isLive = () => liveMode;
 
-export function setLive(on) {
+let offReason = "Live preview is off";
+
+/** @param reason  what a poster says while live mode is off */
+export function setLive(on, reason = "Live preview is off") {
   liveMode = !!on;
+  offReason = reason;
   if (!liveMode) unmountAll();
 }
 
@@ -75,12 +82,15 @@ function renderPoster(host, widget, reason) {
   const card = document.createElement("div");
   card.className = "live-poster";
 
+  const typeLabel = plugin?.meta?.label || widget.type;
   const label = document.createElement("div");
   label.className = "live-poster-type";
-  label.textContent = plugin?.meta?.label || widget.type;
+  label.textContent = widget.title || typeLabel;
   card.appendChild(label);
 
-  const detail = widget.settings?.url || widget.settings?.source || widget.settings?.folder;
+  const sameName = String(widget.title || "").trim().toLowerCase() === String(typeLabel).toLowerCase();
+  const detail = widget.settings?.url || widget.settings?.source || widget.settings?.folder
+    || (sameName ? null : typeLabel);
   if (detail) {
     const d = document.createElement("div");
     d.className = "live-poster-detail";
@@ -88,10 +98,12 @@ function renderPoster(host, widget, reason) {
     card.appendChild(d);
   }
 
-  const note = document.createElement("div");
-  note.className = "live-poster-note";
-  note.textContent = reason;
-  card.appendChild(note);
+  if (reason) {
+    const note = document.createElement("div");
+    note.className = "live-poster-note";
+    note.textContent = reason;
+    card.appendChild(note);
+  }
 
   if (HEAVY.has(widget.type) && liveMode) {
     const go = document.createElement("button");
@@ -126,8 +138,8 @@ export async function mount(host, widget, { force = false } = {}) {
   const plugin = registry.get(widget.type);
   if (!plugin?.mount) { renderPoster(host, widget, "No renderer for this type"); return; }
 
-  if (!liveMode) { renderPoster(host, widget, "Static mode"); return; }
-  if (widget.enabled === false) { renderPoster(host, widget, "Disabled — hidden on displays"); return; }
+  if (!liveMode) { renderPoster(host, widget, offReason); return; }
+  if (widget.enabled === false) { renderPoster(host, widget, "Turned off, hidden on displays"); return; }
   if (HEAVY.has(widget.type) && !force && wokenHeavy !== widget.id) {
     renderPoster(host, widget, "Heavy embed — not run in the editor");
     return;

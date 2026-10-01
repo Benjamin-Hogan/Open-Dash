@@ -8,6 +8,12 @@
       "port": 8081
     },
     {
+      "name": "mocks",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8090", "--directory", "mocks"],
+      "port": 8090
+    },
+    {
       "name": "dashboard",
       "runtimeExecutable": "powershell",
       "runtimeArgs": ["-NoProfile", "-Command", "Write-Host 'attaching to server.run on 8082'"],

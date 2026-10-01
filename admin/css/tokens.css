@@ -9,7 +9,7 @@
 
 :root {
   /* ---- type: 1.2-ish ratio, 13px base. Denser than a content page on purpose. */
-  --fs-xs: 11px;
+  --fs-xs: 11.5px;
   --fs-sm: 12px;
   --fs-md: 13px;
   --fs-lg: 15px;
@@ -63,6 +63,8 @@
   --bg-app: #0b0d11;
   --bg-sunken: #07090c;
   --surface-1: #12151b;
+  --bezel: #050608;     /* the frame around the canvas: the wall display itself */
+  --wall: #0a0c10;
   --surface-2: #181c24;
   --surface-3: #1f242e;
   --surface-hover: #202631;
@@ -71,8 +73,13 @@
   --border-strong: #333b4a;
 
   --text-1: #e8edf4;
-  --text-2: #97a3b6;
-  --text-3: #6b7688;
+  --text-2: #a8b3c4;
+  --text-3: #8792a5;   /* 5.7:1 on surface-1 — help text must pass AA */
+
+  /* Form chrome needs 3:1 against its surface (WCAG 1.4.11); --border-strong
+   * is decorative and doesn't reach it. */
+  --input-border: #5e687c;
+  --switch-off: #626d81;
 
   --accent: #4aa3ff;
   --accent-fg: #06121f;
@@ -103,6 +110,8 @@
   --bg-app: #f5f6f8;
   --bg-sunken: #eaecf0;
   --surface-1: #ffffff;
+  --bezel: #1b1f27;
+  --wall: #0d1015;
   --surface-2: #f7f8fa;
   --surface-3: #ffffff;
   --surface-hover: #eef0f4;
@@ -111,8 +120,11 @@
   --border-strong: #c7ced8;
 
   --text-1: #10151c;
-  --text-2: #57616f;
-  --text-3: #838d9c;
+  --text-2: #4a5463;
+  --text-3: #5d6878;
+
+  --input-border: #8b95a4;
+  --switch-off: #808a99;
 
   --accent: #0b6fdc;
   --accent-fg: #ffffff;
@@ -143,6 +155,8 @@
     --bg-app: #f5f6f8;
     --bg-sunken: #eaecf0;
     --surface-1: #ffffff;
+    --bezel: #1b1f27;
+    --wall: #0d1015;
     --surface-2: #f7f8fa;
     --surface-3: #ffffff;
     --surface-hover: #eef0f4;
@@ -151,8 +165,11 @@
     --border-strong: #c7ced8;
 
     --text-1: #10151c;
-    --text-2: #57616f;
-    --text-3: #838d9c;
+    --text-2: #4a5463;
+    --text-3: #5d6878;
+
+    --input-border: #8b95a4;
+    --switch-off: #808a99;
 
     --accent: #0b6fdc;
     --accent-fg: #ffffff;

@@ -21,10 +21,10 @@ define("air-quality", {
   meta: { label: "Air quality", description: "US AQI + pollutants", category: "data" },
   schema: {
     fields: [
-      { key: "lat", label: "Latitude (blank = home/auto)", type: "number" },
-      { key: "lon", label: "Longitude (blank = home/auto)", type: "number" },
+      { key: "lat", label: "Latitude (leave blank for home)", type: "number" },
+      { key: "lon", label: "Longitude (leave blank for home)", type: "number" },
       { key: "showNo2", label: "Show NO₂", type: "boolean", default: false },
-      { key: "cacheTtlSeconds", label: "Server cache TTL seconds (blank = default)", type: "number" },
+      { key: "cacheTtlSeconds", label: "Fetch new data at most every (seconds)", type: "number" },
     ],
   },
   async mount(root, widget) {

@@ -15,7 +15,7 @@ define("rss", {
       { key: "showImages", label: "Show images", type: "boolean", default: true },
       { key: "showDescription", label: "Show descriptions", type: "boolean", default: true },
       { key: "showTitle", label: "Show feed name", type: "boolean", default: true },
-      { key: "cacheTtlSeconds", label: "Server cache TTL seconds (blank = default)", type: "number" },
+      { key: "cacheTtlSeconds", label: "Fetch new data at most every (seconds)", type: "number" },
     ],
   },
   async mount(root, widget) {

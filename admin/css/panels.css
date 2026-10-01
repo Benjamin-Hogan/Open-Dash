@@ -2,38 +2,53 @@
  * panels. Shell structure lives in shell.css; components in components.css. */
 
 /* ---- page bar ------------------------------------------------------------ */
+/* Pure tabs. Page actions moved to the toolbar (Page settings + a menu), so
+ * the bar never wraps and the tabs scroll sideways when there are many. */
 
 .page-bar {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-1);
   align-items: center;
-  padding: var(--sp-2) var(--sp-4) 0;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-5) 0;
+  background: var(--surface-1);
   border-bottom: 1px solid var(--border-subtle);
 }
+.page-tabs {
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.page-tabs::-webkit-scrollbar { display: none; }
+.page-tabs.overflow { mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); }
 .page-tab {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
-  height: var(--control-h);
-  padding: 0 var(--sp-4);
-  background: transparent;
+  height: 40px;
+  padding: 0 var(--sp-3);
+  background: none;
+  border: 0;
   color: var(--text-2);
-  border: 1px solid transparent;
-  border-bottom: 0;
-  border-radius: var(--r-md) var(--r-md) 0 0;
   font-size: var(--fs-md);
-  cursor: pointer;
-  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
-}
-.page-tab:hover { background: var(--surface-2); color: var(--text-1); }
-.page-tab.active {
-  background: var(--surface-1);
-  border-color: var(--border-subtle);
-  color: var(--text-1);
   font-weight: var(--fw-medium);
-  box-shadow: inset 0 2px 0 var(--accent);
+  white-space: nowrap;
+  cursor: pointer;
 }
+.page-tab:hover { color: var(--text-1); }
+.page-tab[aria-selected="true"] { color: var(--text-1); }
+.page-tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: var(--sp-2); right: var(--sp-2); bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.page-tab:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.page-tab-meta { font-size: var(--fs-xs); font-weight: var(--fw-normal); color: var(--text-3); }
 .page-tab-badge {
   width: 6px;
   height: 6px;
@@ -42,57 +57,123 @@
   background: var(--accent);
 }
 .page-tab-badge.condition { background: var(--warn); }
-
-.page-add {
-  height: var(--control-h);
-  padding: 0 var(--sp-3);
-  background: none;
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--r-md);
-  color: var(--text-2);
-  font-size: var(--fs-md);
-  cursor: pointer;
-}
-.page-add:hover { color: var(--text-1); border-color: var(--accent); }
-.page-actions { display: flex; gap: var(--sp-1); margin-left: auto; }
+.page-add { flex: none; color: var(--text-2); }
 
 /* ---- layout canvas ------------------------------------------------------- */
 
+/* The canvas is drawn as the screen on the wall: a bezel around a dark panel,
+ * with rows scaled to the display's real proportions (see renderCanvas). */
+.stage { padding: var(--sp-4) var(--sp-5) var(--sp-3); }
+.bezel {
+  position: relative;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 10px;
+  border-radius: 14px;
+  background: var(--bezel);
+  box-shadow: var(--e-3), inset 0 0 0 1px rgb(255 255 255 / .04);
+}
 .layout-canvas {
   position: relative;
   display: grid;
   grid-template-columns: repeat(var(--cols, 12), 1fr);
   grid-auto-rows: var(--editor-row, 26px);
   gap: var(--canvas-gap, 4px);
-  min-height: 260px;
+  min-height: 220px;
   padding: 0;
-  background:
-    repeating-linear-gradient(0deg, transparent, transparent calc(var(--editor-row) - 1px), var(--border-subtle) var(--editor-row));
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--r-md);
+  background-color: var(--bg);
+  background-image: repeating-linear-gradient(0deg,
+    transparent 0 calc(var(--editor-row) + var(--canvas-gap) - 1px),
+    rgb(255 255 255 / .035) calc(var(--editor-row) + var(--canvas-gap) - 1px) calc(var(--editor-row) + var(--canvas-gap)));
+  border-radius: 6px;
   user-select: none;
   touch-action: none;
+  /* The canvas shows the *display's* theme (settings.theme.mode, mirrored to
+   * data-theme by renderCanvas), not the admin's. These are the dashboard's
+   * own variables, so the live widgets pick them up. */
+  --bg: #0c0e12; --card-bg: #161a22; --card-border: #232936;
+  --text: #e8edf4; --muted: #8b97a8;
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: dark;
+}
+.layout-canvas[data-theme="light"] { color-scheme: light; }
+.stage-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  max-width: 1200px;
+  margin: var(--sp-3) auto 0;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+/* Up to two lines rather than an ellipsis that cuts off the instruction. */
+.stage-hint {
+  min-width: 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+/* In outline mode the poster already names the widget; the strip keeps only
+ * its badges and tools so the name isn't drawn twice. */
+.live-off .box-title, .live-off .box-type { visibility: hidden; }
+.live-off .box-label { background: none; border-bottom: 0; }
+
+/* Segmented control (Live / Boxes and similar two-way choices). */
+.seg {
+  display: inline-flex;
+  flex: none;
+  padding: 2px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+}
+.seg button {
+  height: 24px;
+  padding: 0 10px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+}
+.seg button[aria-pressed="true"] {
+  background: var(--surface-3);
+  color: var(--text-1);
+  box-shadow: var(--e-1), inset 0 0 0 1px var(--border-strong);
 }
 .canvas-box {
   position: relative;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--surface-2);
-  border: 1px solid var(--border-strong);
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
   border-radius: var(--r-sm);
+  color: var(--text);
   cursor: grab;
 }
+.canvas-box:hover { border-color: #3a4558; }
 
 /* ---- live widget rendering ----------------------------------------------- */
 /* The canvas mounts real widgets. The dashboard stylesheet is loaded globally,
  * so everything it styles is confined to this subtree — the admin's own chrome
  * must never pick up dashboard rules. */
 
+/* Rendered at display size, then scaled to the box (--canvas-scale is canvas
+ * px per display px, set by renderCanvas). Container queries inside the widget
+ * therefore see the size the widget really has on the wall. */
 .canvas-box-live {
-  position: relative;
-  flex: 1 1 auto;
-  min-height: 0;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: calc(100% / var(--canvas-scale, 1));
+  height: calc(100% / var(--canvas-scale, 1));
+  transform: scale(var(--canvas-scale, 1));
+  transform-origin: 0 0;
   overflow: hidden;
   container-type: size;   /* what widget CSS sizes itself against */
   /* Never let a drag land inside an embedded iframe or select widget text. */
@@ -112,17 +193,31 @@
   text-align: center;
   background: var(--bg-sunken);
 }
-.live-poster-type { font-size: var(--fs-sm); font-weight: var(--fw-bold); color: var(--text-2); }
+/* The poster sits inside the scaled render, so its type is sized against the
+ * scale to stay readable at admin size. */
+.canvas-box-live .live-poster {
+  font-size: calc(12px / var(--canvas-scale, 1));
+  padding: calc(8px / var(--canvas-scale, 1));
+  gap: .25em;
+  background: #0d1015;
+}
+.live-poster-type { font-size: 1.05em; font-weight: var(--fw-bold); color: #a8b3c4; }
 .live-poster-detail {
   max-width: 100%;
-  font-size: var(--fs-xs);
-  color: var(--text-3);
+  font-size: .95em;
+  color: #8792a5;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.live-poster-note { font-size: var(--fs-xs); color: var(--text-3); }
-.live-poster-go { pointer-events: auto; margin-top: var(--sp-1); }
+.live-poster-note { font-size: .95em; color: #8792a5; }
+.live-poster-go {
+  pointer-events: auto;
+  margin-top: .3em;
+  height: auto;
+  padding: .3em .8em;
+  font-size: 1em;
+}
 
 .live-error {
   display: grid;
@@ -177,11 +272,21 @@
   z-index: 5;
   box-shadow: var(--e-3);
 }
-.canvas-box.disabled { opacity: .45; border-style: dashed; }
+.canvas-box.disabled { border-style: dashed; }
+.canvas-box.disabled .canvas-box-live { opacity: .35; }
+.box-off {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  background: #2a3140;
+  color: #c9d2df;
+  font-size: 10px;
+  font-weight: var(--fw-medium);
+}
 /* Selection is what the inspector is currently showing. */
 .canvas-box.selected {
-  background: var(--accent-soft);
-  box-shadow: 0 0 0 2px var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 .canvas-box.overlap {
   border-color: var(--danger);
@@ -189,20 +294,27 @@
 }
 /* A compact chrome strip above the live render, so the widget itself gets the
  * room. It fades back when the box isn't hovered or selected. */
+/* Name strip over the render. Hidden at rest so the canvas looks like the
+ * wall; it appears on hover, focus and selection, and always in Boxes mode. */
 .box-label {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
   gap: var(--sp-1);
-  flex: 0 0 auto;
   min-width: 0;
   padding: 2px var(--sp-2);
-  background: color-mix(in srgb, var(--surface-3) 80%, transparent);
-  border-bottom: 1px solid var(--border-subtle);
+  background: rgb(20 24 33 / .9);
+  border-bottom: 1px solid #262e3c;
   pointer-events: none;
-  opacity: .75;
+  opacity: 0;
   transition: opacity var(--dur-fast) var(--ease);
 }
-.canvas-box:hover .box-label, .canvas-box.selected .box-label { opacity: 1; }
+.canvas-box:hover .box-label,
+.canvas-box:focus-visible .box-label,
+.canvas-box.selected .box-label,
+.canvas-box.disabled .box-label { opacity: 1; }
 .box-title {
   flex: 0 1 auto;
   font-size: var(--fs-xs);
@@ -212,10 +324,13 @@
   text-overflow: ellipsis;
 }
 .box-type {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
   font-size: 10px;
-  color: var(--text-3);
+  color: #8792a5;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .box-variant {
   flex: 0 0 auto;
@@ -235,13 +350,17 @@
   opacity: 0;
   transition: opacity var(--dur-fast) var(--ease);
 }
-.canvas-box:hover .box-tools, .canvas-box.selected .box-tools { opacity: 1; }
+.canvas-box:hover .box-tools,
+.canvas-box:focus-within .box-tools,
+.canvas-box.selected .box-tools { opacity: 1; }
+.box-btn svg.i { width: 13px; height: 13px; display: block; }
+.box-tools { z-index: 3; }
 .box-btn {
   padding: 3px var(--sp-1);
-  background: color-mix(in srgb, var(--bg-app) 55%, transparent);
+  background: rgb(8 9 12 / .6);
   border: 0;
   border-radius: var(--r-sm);
-  color: var(--text-1);
+  color: #e8edf4;
   font-size: var(--fs-xs);
   line-height: 1;
   cursor: pointer;
@@ -284,35 +403,84 @@
 }
 .canvas-empty {
   grid-column: 1 / -1;
+  grid-row: 2 / span 3;
   align-self: center;
   padding: var(--sp-5);
   text-align: center;
-  color: var(--text-2);
+  color: #a8b3c4;
   font-size: var(--fs-md);
 }
-#canvas-hint.warn { color: var(--danger); font-weight: var(--fw-bold); }
+#canvas-hint.warn { color: var(--warn); font-weight: var(--fw-medium); }
 
 /* ---- widget list --------------------------------------------------------- */
+/* One row per widget, one menu per row. Five inline buttons per row was most
+ * of the clutter on this screen. */
 
-.widget-list { margin-top: var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-2); }
-.wrow {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  padding: var(--sp-2) var(--sp-3);
-  background: var(--surface-2);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--r-md);
+.widget-strip {
+  width: 100%;
+  max-width: 1250px;
+  margin: 0 auto;
+  padding: var(--sp-2) var(--sp-5) var(--sp-6);
 }
-.wrow:hover { border-color: var(--border-strong); }
-.wrow .grip, .wrow .drag-grip { color: var(--text-3); cursor: grab; user-select: none; }
-.wrow .winfo { flex: 1 1 auto; min-width: 0; }
-.wrow .wtitle { font-weight: var(--fw-medium); }
-.wrow .wtype { font-size: var(--fs-sm); color: var(--text-2); }
-.wrow.disabled { opacity: .5; }
-.wrow.selected { border-color: var(--accent); background: var(--accent-soft); }
+.strip-head { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-2); }
+.strip-head h2 { font-size: var(--fs-lg); font-weight: var(--fw-bold); }
+.strip-head .count { color: var(--text-3); font-weight: var(--fw-normal); }
+.strip-search { width: 220px; max-width: 45%; height: 30px; margin-left: auto; }
+
+.widget-list {
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+}
+.wrow {
+  position: relative;
+  display: grid;
+  grid-template-columns: 16px 28px minmax(0, 1fr) auto auto var(--control-h);
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 6px var(--sp-2) 6px 10px;
+  cursor: pointer;
+}
+.wrow + .wrow { border-top: 1px solid var(--border-subtle); }
+.wrow:first-child { border-radius: var(--r-lg) var(--r-lg) 0 0; }
+.wrow:last-child { border-radius: 0 0 var(--r-lg) var(--r-lg); }
+.wrow:only-child { border-radius: var(--r-lg); }
+.wrow:hover { background: var(--surface-hover); }
+.wrow:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.wrow .drag-grip { color: var(--text-3); cursor: grab; user-select: none; opacity: 0; }
+.wrow:hover .drag-grip, .wrow:focus-within .drag-grip { opacity: 1; }
+.wicon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: var(--surface-3);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
+}
+.wrow .winfo { min-width: 0; }
+.wrow .wtitle { font-weight: var(--fw-medium); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wrow .wtype { font-size: var(--fs-xs); color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wrow .wpills { display: flex; gap: var(--sp-1); }
+.wrow .wsize { font-size: var(--fs-xs); color: var(--text-3); font-variant-numeric: tabular-nums; }
+.wrow.disabled .winfo, .wrow.disabled .wicon { opacity: .55; }
+.wrow.selected { background: var(--accent-soft); }
 .wrow.row-dragging { opacity: .4; }
-.wrow.row-over { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.wrow.row-over { box-shadow: inset 0 2px 0 var(--accent); }
+.wrow .menu { top: 44px; right: var(--sp-2); }
+.pill-sched { background: var(--accent-soft); color: var(--text-1); border-color: transparent; }
+.pill-sched::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.pill-warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+
+@media (max-width: 760px) {
+  .wrow { grid-template-columns: 28px minmax(0, 1fr) auto var(--control-h); }
+  .wrow .drag-grip, .wrow .wsize { display: none; }
+  .stage { padding-top: var(--sp-3); }
+}
 
 /* ---- repeatable cards (variants, slides, schedule windows) --------------- */
 
@@ -357,14 +525,17 @@
 
 /* ---- day picker ---------------------------------------------------------- */
 
-.day-picker { display: flex; gap: var(--sp-1); flex-wrap: wrap; }
+.day-picker { display: flex; gap: 3px; flex-wrap: wrap; }
+.day-picker.days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.day-picker.days .day-chip { min-width: 0; padding: 0; }
 .day-chip {
-  height: var(--control-h-sm);
-  padding: 0 var(--sp-3);
-  background: var(--surface-2);
+  height: 30px;
+  min-width: 34px;
+  padding: 0 var(--sp-1);
+  background: transparent;
   color: var(--text-2);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--r-pill);
+  border: 1px solid var(--input-border);
+  border-radius: var(--r-sm);
   font-size: var(--fs-sm);
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
@@ -372,9 +543,9 @@
 .day-chip:hover { border-color: var(--border-strong); color: var(--text-1); }
 .day-chip.on,
 .day-chip[aria-pressed="true"] {
-  background: var(--accent);
+  background: var(--accent-soft);
   border-color: var(--accent);
-  color: var(--accent-fg);
+  color: var(--text-1);
   font-weight: var(--fw-medium);
 }
 .btn.scheduled { border-color: var(--accent); color: var(--accent); }
@@ -463,6 +634,9 @@
 .preview-wrap {
   position: relative;
   width: 100%;
+  max-width: 1200px;
+  margin-left: auto;
+  margin-right: auto;
   aspect-ratio: 16 / 9;
   margin-top: var(--sp-3);
   overflow: hidden;

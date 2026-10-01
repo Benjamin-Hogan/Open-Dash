@@ -16,66 +16,154 @@
   <!-- Blocking on purpose: sets [data-theme] before first paint. -->
   <script src="/js/theme.js"></script>
 </head>
-<body>
+<body data-view="layout">
+  <!-- One icon sprite for the whole admin. Stroke icons inherit currentColor. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="i-layout" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></symbol>
+    <symbol id="i-rotate" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v4h-4"/></symbol>
+    <symbol id="i-scenes" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></symbol>
+    <symbol id="i-paint" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="8" cy="10" r="1.2"/><circle cx="12" cy="7.5" r="1.2"/><circle cx="16" cy="10" r="1.2"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4l2-2zM10 20a2 2 0 0 0 4 0"/></symbol>
+    <symbol id="i-tv" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="14" r="4"/><path d="M11 11l9-9M17 5l2 2M15 7l2 2"/></symbol>
+    <symbol id="i-history" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></symbol>
+    <symbol id="i-redo" viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/></symbol>
+    <symbol id="i-more"viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-grip" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></symbol>
+    <symbol id="i-tidy" viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="18" height="8" rx="1"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></symbol>
+    <symbol id="i-left" viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></symbol>
+    <symbol id="i-right" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+    <symbol id="i-off" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></symbol>
+    <symbol id="i-on" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/></symbol>
+    <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
+    <symbol id="i-widget" viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/></symbol>
+    <symbol id="i-stack" viewBox="0 0 24 24"><rect x="4" y="4" width="12" height="12" rx="2"/><rect x="8" y="8" width="12" height="12" rx="2"/></symbol>
+  </svg>
+
   <header class="topbar">
     <div class="brand">
-      <h1>Pi Dashboard <span class="muted">admin</span></h1>
-      <span id="version" class="badge tnum">v?</span>
-      <span class="badge warn-pill" id="lan-pill" tabindex="0"
-            title="Admin is open on the LAN with no login — trusted home network only. Do not expose this port beyond your network.">LAN · no login</span>
+      <span class="logo" aria-hidden="true">Pi</span>
+      <h1>Pi Dashboard</h1>
+      <span class="lan-note" id="lan-pill" tabindex="0"
+            title="The admin is open on your home network with no login. Don't expose port 8081 beyond your network.">
+        <span class="dot warn" aria-hidden="true"></span><span class="lbl">Home network, no login</span>
+      </span>
     </div>
     <div class="actions">
-      <button id="btn-palette" class="btn ghost small" title="Search everything (Ctrl+K)">
-        <span aria-hidden="true">⌕</span> Search <kbd>Ctrl K</kbd>
+      <button id="btn-palette" class="search-btn" aria-label="Search settings, widgets and pages (Ctrl+K)">
+        <svg class="i" aria-hidden="true"><use href="#i-search"/></svg>
+        <span class="lbl">Search settings, widgets…</span><kbd>Ctrl K</kbd>
       </button>
-      <!-- js/savebar.js prepends Undo / Redo / edits / Discard / Save here -->
+      <!-- js/savebar.js appends Undo / Redo / changes / Discard / Save here -->
     </div>
   </header>
 
   <div class="app">
     <nav class="rail" id="rail" aria-label="Sections"></nav>
 
-    <main class="workspace">
-      <nav id="page-bar" class="page-bar" aria-label="Pages"></nav>
-
-      <section class="canvas-area">
-        <div class="canvas-head">
-          <h2>Layout</h2>
-          <div class="canvas-head-actions">
-            <span class="muted small" id="canvas-hint">Drag to move · drag an edge to resize</span>
-            <button id="btn-live" class="btn small ghost" aria-pressed="true"
-                    title="Render real widgets on the canvas">Live</button>
-            <button id="btn-tidy" class="btn small ghost" title="Auto-arrange widgets with no gaps or overlaps">Tidy up</button>
-            <button id="btn-preview" class="btn small ghost">Preview</button>
-            <button id="btn-add" class="btn primary small">+ Add widget</button>
+    <!-- ================= layout view: pages, canvas, inspector ================= -->
+    <div class="view view-layout" id="view-layout">
+      <main class="workspace" id="workspace">
+        <div class="workhead">
+          <nav id="page-bar" class="page-bar" aria-label="Pages"></nav>
+          <div class="toolbar">
+            <div class="toolbar-title">
+              <h2 id="page-title">Page</h2>
+              <div class="toolbar-meta" id="page-meta"></div>
+            </div>
+            <button id="btn-preview" class="btn ghost tl" aria-label="Preview" title="Show this page as the display renders it">
+              <svg class="i" aria-hidden="true"><use href="#i-eye"/></svg><span class="tb-lbl" aria-hidden="true">Preview</span>
+            </button>
+            <button id="btn-page-settings" class="btn ghost tl" aria-label="Page settings" title="Name, time on screen, schedule and conditions">
+              <svg class="i" aria-hidden="true"><use href="#i-sliders"/></svg><span class="tb-lbl" aria-hidden="true">Page settings</span>
+            </button>
+            <span class="menu-anchor">
+              <button id="btn-page-more" class="btn ghost icon" aria-label="More page actions" title="More page actions"
+                      aria-haspopup="menu" aria-expanded="false" aria-controls="page-menu">
+                <svg class="i" aria-hidden="true"><use href="#i-more"/></svg>
+              </button>
+              <div class="menu" id="page-menu" role="menu" hidden></div>
+            </span>
+            <button id="btn-inspector" class="btn ghost icon insp-toggle" aria-pressed="true"
+                    aria-label="Show inspector" title="Show or hide the inspector">
+              <svg class="i" aria-hidden="true"><use href="#i-panel"/></svg>
+            </button>
+            <button id="btn-add" class="btn primary">
+              <svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>Add widget
+            </button>
           </div>
         </div>
+
         <div id="bulk-bar" class="bulk-bar hidden"></div>
-        <div class="canvas-scroll">
-          <div id="canvas" class="layout-canvas"></div>
+
+        <section class="stage canvas-scroll" aria-label="Layout">
+          <div class="bezel">
+            <div id="canvas" class="layout-canvas" role="list" aria-label="Widgets on this page"></div>
+          </div>
           <div id="preview-wrap" class="preview-wrap hidden"><iframe id="preview-frame" title="Live page preview"></iframe></div>
-        </div>
-      </section>
+          <div class="stage-foot">
+            <div class="seg" role="group" aria-label="Canvas mode">
+              <button type="button" id="btn-live" aria-pressed="true" title="Render real widgets on the canvas">Live</button>
+              <button type="button" id="btn-static" aria-pressed="false" title="Show outlines only">Boxes</button>
+            </div>
+            <span class="stage-hint" id="canvas-hint" role="status" aria-live="polite"></span>
+          </div>
+        </section>
 
-      <section class="widget-strip">
-        <div class="strip-head">
-          <h2>Widgets on this page</h2>
-          <label class="search strip-search">
-            <span class="visually-hidden">Filter widgets</span>
-            <input type="search" id="widget-filter" placeholder="Filter…" />
-          </label>
-        </div>
-        <div id="widget-list" class="widget-list"></div>
-      </section>
-    </main>
+        <section class="widget-strip" aria-labelledby="widgets-heading">
+          <div class="strip-head">
+            <h2 id="widgets-heading">Widgets <span class="count" id="widget-count"></span></h2>
+            <label class="search strip-search">
+              <span class="visually-hidden">Filter widgets</span>
+              <input type="search" id="widget-filter" placeholder="Filter widgets" />
+            </label>
+          </div>
+          <div id="widget-list" class="widget-list" role="list"></div>
+        </section>
+      </main>
 
-    <aside class="inspector" id="inspector" aria-label="Inspector">
-      <div class="inspector-head">
-        <div class="inspector-title" id="inspector-title">Page</div>
-        <span class="badge scope-pill staged" id="inspector-scope">Staged</span>
+      <div class="scrim" id="scrim"></div>
+      <aside class="inspector" id="inspector" aria-label="Inspector">
+        <div class="inspector-inner">
+          <div class="inspector-head">
+            <span class="inspector-icon" id="inspector-icon" aria-hidden="true"><svg class="i"><use href="#i-sliders"/></svg></span>
+            <div class="inspector-heading">
+              <h2 class="inspector-title" id="inspector-title">Page</h2>
+              <p class="inspector-sub" id="inspector-sub"></p>
+            </div>
+            <span class="badge scope-pill hidden" id="inspector-scope"></span>
+            <button class="btn ghost icon" id="inspector-close" aria-label="Close inspector" title="Close inspector">
+              <svg class="i" aria-hidden="true"><use href="#i-x"/></svg>
+            </button>
+          </div>
+          <div id="editor" class="inspector-body"></div>
+          <div class="inspector-foot" id="inspector-foot"></div>
+        </div>
+      </aside>
+    </div>
+
+    <!-- ================= settings view: one full page per section ============== -->
+    <div class="view view-settings" id="view-settings">
+      <div class="settings-scroll">
+        <div class="settings-page">
+          <header class="settings-head">
+            <h2 id="settings-title">Settings</h2>
+            <span class="badge scope-pill hidden" id="settings-scope"></span>
+          </header>
+          <div id="settings-body" class="settings-body"></div>
+        </div>
       </div>
-      <div id="editor" class="inspector-body"></div>
-    </aside>
+    </div>
   </div>
 
   <div id="toast-stack" class="toast-stack" role="status" aria-live="polite"></div>

@@ -11,6 +11,18 @@ import { getPath, setPath } from "../core/clone.js";
 import { visible, byGroup, groupLabel, VALUELESS, CUSTOM_WIDGET_TYPES } from "./schema.js";
 import { validate, byPath } from "./validate.js";
 
+/**
+ * A label for a bare option value: "slide-left" → "Slide left". Only touches
+ * lowercase code-like values; anything with capitals, spaces or symbols is
+ * already meant for people and is shown as-is.
+ */
+export function humanize(v) {
+  const s = String(v ?? "");
+  if (!/^[a-z][a-z0-9]*([-_][a-z0-9]+)*$/.test(s)) return s;
+  const words = s.split(/[-_]/).join(" ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
@@ -60,6 +72,7 @@ export function renderForm(host, defs, draft, opts = {}) {
     if (f.help) wrap.appendChild(el("div", "note", f.help));
     const err = el("div", "field-error");
     err.hidden = true;
+    err.id = `err_${f.key.replace(/[^a-z0-9]+/gi, "_")}`;
     wrap.appendChild(err);
     // Custom field types (url-presets, embed-presets, stock-picker) hand back a
     // wrapper, so aim the a11y state and focus at the control inside it.
@@ -74,7 +87,15 @@ export function renderForm(host, defs, draft, opts = {}) {
         err.textContent = has ? msgs[0] : "";
         wrap.classList.toggle("invalid", !!has);
         focusable.setAttribute?.("aria-invalid", has ? "true" : "false");
-        if (has) focusable.setAttribute?.("aria-errormessage", err.id || "");
+        // aria-errormessage has patchy screen-reader support; describedby is
+        // what actually gets the message read out.
+        const described = (focusable.getAttribute?.("aria-describedby") || "").split(" ").filter((x) => x && x !== err.id);
+        if (has) {
+          focusable.setAttribute?.("aria-errormessage", err.id);
+          described.push(err.id);
+        }
+        if (described.length) focusable.setAttribute?.("aria-describedby", described.join(" "));
+        else focusable.removeAttribute?.("aria-describedby");
       },
     });
     return wrap;
@@ -90,14 +111,27 @@ export function renderForm(host, defs, draft, opts = {}) {
 
       case "boolean": {
         // A switch, but still a real checkbox underneath for a11y and forms.
-        const wrap = el("label", "switch");
+        // The whole row is the <label>: text on the left, switch on the right.
+        // The label text used to sit *inside* the 34px switch, so anything
+        // longer than a word wrapped over the knob.
+        const row = el("label", "switch-row");
+        const text = el("span", "switch-text");
+        text.appendChild(el("span", "switch-label", f.label));
         const input = document.createElement("input");
         input.type = "checkbox";
         input.id = id;
         input.checked = value === true || value === "true";
         input.onchange = () => { setPath(draft, f.key, input.checked); change(f.key, { gating: true }); };
-        wrap.append(input, el("span", "switch-track"), el("span", "switch-label", f.label));
-        return wrap;
+        if (f.help) {
+          const help = el("span", "switch-help", f.help);
+          help.id = `${id}_help`;
+          input.setAttribute("aria-describedby", help.id);
+          text.appendChild(help);
+        }
+        const sw = el("span", "switch");
+        sw.appendChild(input);
+        row.append(text, sw);
+        return row;
       }
 
       case "textarea": {
@@ -115,7 +149,7 @@ export function renderForm(host, defs, draft, opts = {}) {
         for (const o of f.options || []) {
           const opt = document.createElement("option");
           opt.value = typeof o === "object" ? o.value : o;
-          opt.textContent = typeof o === "object" ? o.label : o;
+          opt.textContent = typeof o === "object" ? o.label : humanize(o);
           input.appendChild(opt);
         }
         input.value = value ?? f.default ?? "";
@@ -183,7 +217,9 @@ export function renderForm(host, defs, draft, opts = {}) {
           .map((label, i) => ({ value: i, label }))
       : (f.options || []).map((o) => (typeof o === "object" ? o : { value: o, label: o }));
 
-    const wrap = el("div", "day-picker");
+    // Days are always seven, so they get a 7-column row that fits any width
+    // instead of wrapping "Sun" onto a line of its own.
+    const wrap = el("div", "day-picker" + (f.type === "days" ? " days" : ""));
     wrap.setAttribute("role", "group");
     if (f.label) wrap.setAttribute("aria-label", f.label);
 
@@ -224,17 +260,21 @@ export function renderForm(host, defs, draft, opts = {}) {
   function gridControl(f, id) {
     const wrap = el("div", "grid-fields");
     const g = getPath(draft, f.key) || {};
-    for (const [k, label, min] of [["x", "X", 0], ["y", "Y", 0], ["w", "W", 1], ["h", "H", 1]]) {
+    // Shown 1-based, as people count columns (and as the canvas announces
+    // them); stored 0-based, as the config has always been.
+    for (const [k, label, min, offset] of [
+      ["x", "Column", 0, 1], ["y", "Row", 0, 1], ["w", "Width", 1, 0], ["h", "Height", 1, 0],
+    ]) {
       const cell = el("div", "grid-cell");
       const lab = el("label", null, label);
       const input = document.createElement("input");
       input.type = "number";
       input.id = `${id}_${k}`;
-      input.min = min;
-      input.value = g[k] ?? min;
+      input.min = min + offset;
+      input.value = (g[k] ?? min) + offset;
       lab.htmlFor = input.id;
       input.oninput = () => {
-        const n = Math.max(min, Math.round(Number(input.value) || min));
+        const n = Math.max(min, Math.round(Number(input.value) || (min + offset)) - offset);
         setPath(draft, `${f.key}.${k}`, n);
         change(f.key);
       };
@@ -319,7 +359,8 @@ export function renderForm(host, defs, draft, opts = {}) {
     }
     const control = makeControl(f);
     if (VALUELESS.has(f.type)) return fieldWrap({ ...f, label: null }, control);
-    if (f.type === "boolean") return fieldWrap({ ...f, label: null }, control);
+    // The row carries its own label and help; fieldWrap only adds the error slot.
+    if (f.type === "boolean") return fieldWrap({ ...f, label: null, help: null }, control);
     return fieldWrap(f, control);
   }
 
