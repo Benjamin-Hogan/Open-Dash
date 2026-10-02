@@ -157,6 +157,8 @@
   cursor: grab;
 }
 .canvas-box:hover { border-color: #3a4558; }
+/* Mid-drag, the boxes under the pointer mustn't flicker hover chrome. */
+.layout-canvas.is-dragging .canvas-box:not(.dragging) { pointer-events: none; }
 
 /* ---- live widget rendering ----------------------------------------------- */
 /* The canvas mounts real widgets. The dashboard stylesheet is loaded globally,
@@ -259,17 +261,20 @@
   z-index: 7;
 }
 
-/* A drop that would overlap is refused, not merely flagged afterwards. */
-.canvas-box.blocked {
-  border-color: var(--danger);
-  background:
-    repeating-linear-gradient(45deg,
-      var(--danger-soft) 0 6px, transparent 6px 12px);
+/* Where a dragged widget will land. The box itself follows the pointer; its
+ * neighbours swap or make room around this. */
+.drop-ghost {
+  border: 2px dashed var(--accent);
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  pointer-events: none;
+  z-index: 1;
 }
 .canvas-box.dragging {
   cursor: grabbing;
-  opacity: .9;
+  opacity: .85;
   z-index: 5;
+  will-change: transform;
   box-shadow: var(--e-3);
 }
 .canvas-box.disabled { border-style: dashed; }

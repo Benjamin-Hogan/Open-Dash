@@ -12,6 +12,7 @@ import * as api from "/js/core/api.js";
 import * as savebar from "/js/savebar.js";
 import { clone, deepEqual } from "/js/core/clone.js";
 import { rotationPages, hasCustomOrder, syncRotationOrder } from "/js/model/order.js";
+import { resolve as resolveLayout } from "/js/model/layout.js";
 import * as liveHost from "/js/view/live-host.js";
 import { catalog, grouped, search, defaultSettings } from "/js/model/catalog.js";
 import { renderForm as renderFormEngine, humanize } from "/js/form/render.js";
@@ -462,7 +463,7 @@ function updateHint(badCount) {
       : "Showing outlines: hide the inspector or widen the window for a live preview.";
     hint.classList.remove("warn");
   } else {
-    hint.textContent = "Drag to move or resize. Arrow keys nudge the selected widget.";
+    hint.textContent = "Drag to move or resize; drop on a widget to swap, Esc cancels. Arrow keys nudge the selected widget.";
     hint.classList.remove("warn");
   }
 }
@@ -616,53 +617,37 @@ function rectsOverlap(a, b) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
-/** Would this rect collide with any widget other than the ones being moved? */
-function collides(rect, ignoreIds) {
-  return currentWidgets().some((o) =>
-    !ignoreIds.has(o.id) && o.grid && rectsOverlap(rect, o.grid));
+/** Every widget's rect as it stands, for the layout resolver. */
+function layoutItems() {
+  return currentWidgets().filter((o) => o.grid).map((o) => ({ id: o.id, ...o.grid }));
+}
+
+/** Write a resolved layout back onto the widgets. Returns the ids that changed. */
+function applyLayout(out) {
+  const changed = [];
+  for (const o of currentWidgets()) {
+    const r = out.get(o.id);
+    if (!r || !o.grid) continue;
+    if (r.x !== o.grid.x || r.y !== o.grid.y || r.w !== o.grid.w || r.h !== o.grid.h) changed.push(o.id);
+    Object.assign(o.grid, r);
+  }
+  return changed;
 }
 
 /**
- * Snap an edge to a neighbour's edge when it's within one cell, and report the
- * lines to draw. Guides are what make a layout feel deliberate rather than
- * approximately-dragged.
+ * Alignment guides: a line wherever the dragged rect's edges meet a
+ * neighbour's. The grid already snaps to whole cells, so this only shows,
+ * never pulls. (It used to pull any edge within a cell onto a neighbour's,
+ * which made "one cell away" unreachable and the drag jump under the pointer.)
  */
-function snapAndGuide(rect, ignoreIds, cols) {
+function alignGuides(rect, ignoreIds, cols) {
   const guides = { v: new Set(), h: new Set() };
   const others = currentWidgets().filter((o) => !ignoreIds.has(o.id) && o.grid);
-
-  const vEdges = [0, cols];
-  const hEdges = [0];
+  const v = [rect.x, rect.x + rect.w], h = [rect.y, rect.y + rect.h];
+  for (const e of v) if (e === 0 || e === cols) guides.v.add(e);
   for (const o of others) {
-    vEdges.push(o.grid.x, o.grid.x + o.grid.w);
-    hEdges.push(o.grid.y, o.grid.y + o.grid.h);
-  }
-
-  // Snap whichever of the two edges is closest, at most one cell away.
-  const snapAxis = (lo, size, edges, max) => {
-    let best = null;
-    for (const e of edges) {
-      for (const [edge, isStart] of [[lo, true], [lo + size, false]]) {
-        const d = Math.abs(edge - e);
-        if (d > 0 && d <= 1 && (!best || d < best.d)) best = { d, delta: e - edge, isStart, line: e };
-      }
-    }
-    if (!best) return { lo, lines: [] };
-    const next = clamp(lo + best.delta, 0, Math.max(0, max - size));
-    return { lo: next, lines: [best.line] };
-  };
-
-  const sx = snapAxis(rect.x, rect.w, vEdges, cols);
-  const sy = snapAxis(rect.y, rect.h, hEdges, Infinity);
-  rect.x = sx.lo;
-  rect.y = sy.lo;
-  for (const l of sx.lines) guides.v.add(l);
-  for (const l of sy.lines) guides.h.add(l);
-
-  // Alignment (not snapping): show a line when edges already coincide.
-  for (const o of others) {
-    if (o.grid.x === rect.x || o.grid.x + o.grid.w === rect.x + rect.w) guides.v.add(o.grid.x === rect.x ? rect.x : rect.x + rect.w);
-    if (o.grid.y === rect.y || o.grid.y + o.grid.h === rect.y + rect.h) guides.h.add(o.grid.y === rect.y ? rect.y : rect.y + rect.h);
+    for (const e of [o.grid.x, o.grid.x + o.grid.w]) if (v.includes(e)) guides.v.add(e);
+    for (const e of [o.grid.y, o.grid.y + o.grid.h]) if (h.includes(e)) guides.h.add(e);
   }
   return guides;
 }
@@ -701,51 +686,56 @@ function startDrag(e, w, box, cols, mode, dir = "se") {
   if (e.button !== 0) return;
   e.preventDefault();
   const canvas = $("#canvas");
-  const cellW = canvas.getBoundingClientRect().width / cols;
+  // One column's pitch includes its gap; dividing the bare width by cols
+  // drifted a little further from the pointer with every column.
+  const cellW = (canvas.clientWidth + CANVAS_GAP) / cols;
   const cellH = EDITOR_ROW + CANVAS_GAP;
   const start = { x: e.clientX, y: e.clientY };
-  const orig = { ...w.grid };
   // Moving a multi-selection drags the whole group by the same delta.
   const group = mode === "move" && isSelected(w.id) && selectedWidgets().length > 1
     ? selectedWidgets() : [w];
-  const groupOrig = new Map(group.map((g) => [g.id, { ...g.grid }]));
   const ignore = new Set(group.map((g) => g.id));
+  // Every gesture resolves from the layout as it was when it started, so
+  // dragging across a neighbour and back puts it back where it was.
+  const before = layoutItems();
+  const beforeById = new Map(before.map((it) => [it.id, it]));
+  const orig = { ...beforeById.get(w.id) };
+  const boxOf = (id) => canvas.querySelector(`[data-widget-id="${CSS.escape(id)}"]`);
 
-  box.setPointerCapture(e.pointerId);
+  try { box.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
   box.classList.add("dragging");
-  let lastGood = new Map(group.map((g) => [g.id, { ...g.grid }]));
+  canvas.classList.add("is-dragging");
+  // The drop target, drawn where the widget will land while the box itself
+  // follows the pointer.
+  const ghost = document.createElement("div");
+  ghost.className = "drop-ghost";
+  canvas.appendChild(ghost);
+  let moved = false;
+  let lastKey = "";
 
   const onMove = (ev) => {
-    let dx = Math.round((ev.clientX - start.x) / cellW);
-    let dy = Math.round((ev.clientY - start.y) / cellH);
-    const freeform = ev.altKey; // Alt suspends snapping for a deliberate nudge
+    const px = ev.clientX - start.x, py = ev.clientY - start.y;
+    // A click with a wobble isn't a drag.
+    if (!moved && Math.hypot(px, py) < 4) return;
+    moved = true;
+    const dx = Math.round(px / cellW);
+    const dy = Math.round(py / cellH);
 
-    let guides = null;
+    const next = new Map();
     if (mode === "move") {
-      const lead = { ...groupOrig.get(w.id) };
-      lead.x = clamp(lead.x + dx, 0, cols - lead.w);
-      lead.y = Math.max(0, lead.y + dy);
-      if (!freeform) guides = snapAndGuide(lead, ignore, cols);
-      dx = lead.x - groupOrig.get(w.id).x;
-      dy = lead.y - groupOrig.get(w.id).y;
-
-      const next = group.map((g) => {
-        const o = groupOrig.get(g.id);
-        return { id: g.id, x: clamp(o.x + dx, 0, cols - o.w), y: Math.max(0, o.y + dy), w: o.w, h: o.h };
-      });
-      // Overlaps are blocked outright rather than flagged after the drop.
-      const blocked = next.some((r) => collides(r, ignore));
-      box.classList.toggle("blocked", blocked);
-      if (!blocked) {
-        for (const r of next) {
-          const g = group.find((x) => x.id === r.id);
-          g.grid.x = r.x; g.grid.y = r.y;
-        }
-        lastGood = new Map(group.map((g) => [g.id, { ...g.grid }]));
+      // Clamp the group as one so it keeps its shape against the edges.
+      const minX = Math.min(...group.map((g) => beforeById.get(g.id).x));
+      const maxX = Math.max(...group.map((g) => { const o = beforeById.get(g.id); return o.x + o.w; }));
+      const minY = Math.min(...group.map((g) => beforeById.get(g.id).y));
+      const gx = clamp(dx, -minX, cols - maxX);
+      const gy = Math.max(dy, -minY);
+      for (const g of group) {
+        const o = beforeById.get(g.id);
+        next.set(g.id, { x: o.x + gx, y: o.y + gy, w: o.w, h: o.h });
       }
     } else {
-      const o = groupOrig.get(w.id);
-      const rect = { ...o };
+      const o = orig;
+      const rect = { x: o.x, y: o.y, w: o.w, h: o.h };
       if (dir.includes("e")) rect.w = clamp(o.w + dx, 1, cols - o.x);
       if (dir.includes("s")) rect.h = Math.max(1, o.h + dy);
       if (dir.includes("w")) {
@@ -756,45 +746,82 @@ function startDrag(e, w, box, cols, mode, dir = "se") {
         const ny = clamp(o.y + dy, 0, o.y + o.h - 1);
         rect.h = o.y + o.h - ny; rect.y = ny;
       }
-      if (!freeform) guides = snapAndGuide(rect, ignore, cols);
-      const blocked = collides(rect, ignore);
-      box.classList.toggle("blocked", blocked);
-      if (!blocked) {
-        Object.assign(w.grid, rect);
-        lastGood = new Map([[w.id, { ...w.grid }]]);
-      }
+      next.set(w.id, rect);
     }
 
-    for (const g of group) placeBox(canvas.querySelector(`[data-widget-id="${g.id}"]`) || box, g);
-    drawGuides(guides, cols);
-    showDragBadge(box, w.grid);
+    const lead = next.get(w.id);
+    // Only re-lay the canvas when the snapped target actually changed.
+    const key = JSON.stringify([...next.entries()]);
+    if (key !== lastKey) {
+      lastKey = key;
+      const out = resolveLayout(before, next, cols, { mode, dir });
+      applyLayout(out);
+      for (const o of currentWidgets()) {
+        const b = boxOf(o.id);
+        if (b && o.grid) placeBox(b, o);
+      }
+      placeBox(ghost, { grid: lead });
+      drawGuides(alignGuides(lead, ignore, cols), cols);
+      showDragBadge(box, lead);
+    }
+
+    // The box rides the pointer; the ghost shows the cell it snaps to.
+    if (mode === "move") {
+      const ox = (lead.x - orig.x) * cellW, oy = (lead.y - orig.y) * cellH;
+      const t = `translate(${px - ox}px, ${py - oy}px)`;
+      for (const g of group) { const b = boxOf(g.id); if (b) b.style.transform = t; }
+    }
   };
 
-  const onUp = () => {
-    box.releasePointerCapture(e.pointerId);
-    box.classList.remove("dragging", "blocked");
+  let done = false;
+  const finish = (commit) => {
+    if (done) return;
+    done = true;
     box.removeEventListener("pointermove", onMove);
     box.removeEventListener("pointerup", onUp);
+    box.removeEventListener("pointercancel", onCancel);
+    box.removeEventListener("lostpointercapture", onCancel);
+    document.removeEventListener("keydown", onKey, true);
+    try { box.releasePointerCapture(e.pointerId); } catch { /* already released */ }
+    box.classList.remove("dragging");
+    canvas.classList.remove("is-dragging");
+    ghost.remove();
+    for (const g of group) { const b = boxOf(g.id); if (b) b.style.transform = ""; }
     drawGuides(null, cols);
-    // Land on the last position that didn't collide.
-    for (const g of group) if (lastGood.has(g.id)) Object.assign(g.grid, lastGood.get(g.id));
-
-    const changed = group.some((g) => {
-      const o = groupOrig.get(g.id);
-      return o.x !== g.grid.x || o.y !== g.grid.y || o.w !== g.grid.w || o.h !== g.grid.h;
+    box.querySelector(".drag-badge")?.remove();
+    if (!moved) return;
+    if (!commit) {
+      // Cancelled (Escape, a lost pointer): put everything back.
+      applyLayout(new Map(before.map((it) => [it.id, it])));
+      renderCanvas();
+      return;
+    }
+    const changed = before.some((it) => {
+      const g = currentWidgets().find((o) => o.id === it.id)?.grid;
+      return g && (g.x !== it.x || g.y !== it.y || g.w !== it.w || g.h !== it.h);
     });
+    renderCanvas(); // re-render to grow (or shrink) the canvas to fit
     if (changed) {
-      renderCanvas(); // re-render to grow the canvas if needed
       const resized = orig.w !== w.grid.w || orig.h !== w.grid.h;
       const what = group.length > 1 ? `${group.length} widgets` : (w.title || w.type);
       // One undo step per drag, not one per pointermove: the whole gesture
-      // already mutated w.grid live, and this is the commit at the end of it.
+      // already mutated the grids live, and this is the commit at the end of it.
       save(`${resized ? "resized" : "moved"} ${what}`);
       syncDraftGrid();
     }
   };
+  const onUp = () => finish(true);
+  const onCancel = () => finish(false);
+  const onKey = (ev) => {
+    if (ev.key !== "Escape") return;
+    ev.preventDefault(); ev.stopPropagation();
+    finish(false);
+  };
   box.addEventListener("pointermove", onMove);
   box.addEventListener("pointerup", onUp);
+  box.addEventListener("pointercancel", onCancel);
+  box.addEventListener("lostpointercapture", onCancel);
+  document.addEventListener("keydown", onKey, true);
 }
 
 // ---- widget list (compact, under the canvas) --------------------------------
@@ -3885,7 +3912,7 @@ document.addEventListener("keydown", (e) => {
   e.preventDefault();
   const [dx, dy] = d;
   const ids = new Set(ws.map((w) => w.id));
-  const next = ws.map((w) => {
+  const next = new Map(ws.map((w) => {
     const g = { ...w.grid };
     if (e.shiftKey) {
       g.w = clamp(g.w + dx, 1, cols - g.x);
@@ -3894,10 +3921,11 @@ document.addEventListener("keydown", (e) => {
       g.x = clamp(g.x + dx, 0, cols - g.w);
       g.y = Math.max(0, g.y + dy);
     }
-    return { id: w.id, g };
-  });
-  if (next.some((n) => collides(n.g, ids))) { toast("Blocked — something's in the way"); return; }
-  for (const n of next) Object.assign(ws.find((w) => w.id === n.id).grid, n.g);
+    return [w.id, g];
+  }));
+  // Same rules as dragging: neighbours swap or make room rather than block.
+  const dir = e.shiftKey ? (dx ? "e" : "s") : undefined;
+  if (!applyLayout(resolveLayout(layoutItems(), next, cols, { mode: e.shiftKey ? "resize" : "move", dir })).length) return;
   renderCanvas();
   const what = ws.length > 1 ? `${ws.length} widgets` : (ws[0].title || ws[0].type);
   save(`${e.shiftKey ? "resized" : "moved"} ${what}`, { coalesce: `nudge:${[...ids].join(",")}:${e.shiftKey}` });
