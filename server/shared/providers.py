@@ -48,15 +48,21 @@ def load_builtin() -> None:
     """Import provider modules so their `register(...)` calls run."""
     from ..providers import (  # noqa: F401
         air_quality,
+        earthquakes,
         heads_up,
         ical,
+        launches,
         location,
         octoprint,
+        on_this_day,
         photos,
         pi_stats,
         rss,
+        service_status,
         space_weather,
         stocks,
+        tides,
+        uv,
         weather,
         youtube,
     )

@@ -6,7 +6,13 @@ export function el(tag, attrs = {}, children = []) {
   for (const [k, v] of Object.entries(attrs)) {
     if (v == null) continue;
     if (k === "class") node.className = v;
-    else if (k === "style" && typeof v === "object") Object.assign(node.style, v);
+    else if (k === "style" && typeof v === "object") {
+      // Custom properties ("--cal") only take effect through setProperty.
+      for (const [prop, val] of Object.entries(v)) {
+        if (prop.startsWith("--")) node.style.setProperty(prop, val);
+        else node.style[prop] = val;
+      }
+    }
     else if (k.startsWith("on") && typeof v === "function") node.addEventListener(k.slice(2), v);
     else if (k === "html") node.innerHTML = v;
     else node.setAttribute(k, v);

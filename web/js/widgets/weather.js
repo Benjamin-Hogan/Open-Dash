@@ -90,7 +90,7 @@ function render(handle, d, s) {
       el("span", { class: "wx-h-rain" }, wet(h.rain) ? `${h.rain}%` : ""),
     ])));
 
-  const days = el("div", { class: "wx-days" }, (d.forecast || []).map((day) =>
+  const days = el("div", { class: "wx-days" }, (d.forecast || []).slice(0, 5).map((day) =>
     el("div", { class: "wx-day" + (day.date === d.today ? " today" : ""), title: day.summary || "" }, [
       el("div", { class: "wx-dow" }, day.date === d.today ? "Today" : dow(day.date)),
       wxIcon(day.code, true, "wx-icon-mini"),

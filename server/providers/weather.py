@@ -2,8 +2,8 @@
 degradation than a key-gated API). Uses resolved geolocation unless the widget
 passes lat/lon/units in its settings.
 
-Feeds two widgets: Weather (current + days + a few hours) and Next 24 hours
-(hourly temperature and chance of rain). Times are the location's local wall
+Feeds Weather (current + days + a few hours), Next 24 hours (hourly
+temperature and chance of rain), Wind (direction, gusts) and Week ahead. Times are the location's local wall
 clock ("2026-10-01T18:00"), with `today` and `now` in the same terms, so the
 display never has to guess a timezone to label "Today" or "9 PM".
 """
@@ -52,15 +52,16 @@ class WeatherProvider(Provider):
                     "latitude": lat,
                     "longitude": lon,
                     "current": "temperature_2m,apparent_temperature,relative_humidity_2m,"
-                               "weather_code,wind_speed_10m,is_day",
+                               "weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m,is_day",
                     "daily": "weather_code,temperature_2m_max,temperature_2m_min,"
                              "precipitation_probability_max,sunrise,sunset",
-                    "hourly": "temperature_2m,precipitation_probability,weather_code,is_day",
+                    "hourly": "temperature_2m,precipitation_probability,weather_code,is_day,"
+                              "wind_speed_10m,wind_direction_10m,wind_gusts_10m",
                     "forecast_hours": HOURS,
                     "temperature_unit": temp_unit,
                     "wind_speed_unit": wind_unit,
                     "timezone": "auto",
-                    "forecast_days": 5,
+                    "forecast_days": 7,  # Weather shows five; Week ahead shows seven
                 },
             )
             r.raise_for_status()
@@ -91,6 +92,9 @@ class WeatherProvider(Provider):
                 "rain": _at(hourly.get("precipitation_probability"), i),
                 "code": _at(hourly.get("weather_code"), i),
                 "isDay": bool(_at(hourly.get("is_day"), i)),
+                "wind": _at(hourly.get("wind_speed_10m"), i),
+                "windDir": _at(hourly.get("wind_direction_10m"), i),
+                "gust": _at(hourly.get("wind_gusts_10m"), i),
             })
 
         code = cur.get("weather_code")
@@ -106,6 +110,8 @@ class WeatherProvider(Provider):
                 "humidity": cur.get("relative_humidity_2m"),
                 "wind": cur.get("wind_speed_10m"),
                 "windUnit": wind_unit,
+                "windDir": cur.get("wind_direction_10m"),  # degrees the wind comes FROM
+                "gust": cur.get("wind_gusts_10m"),
                 "code": code,
                 "isDay": bool(cur.get("is_day", 1)),
                 "summary": _WMO.get(code, "—"),

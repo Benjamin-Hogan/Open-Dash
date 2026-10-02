@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ten New Widgets</title>
+<style>
+/* Tokens as in web/css/dashboard.css, plus two new shared scales:
+   --tag-*   six owner-pickable colours (calendars, reminder icons)
+   --lvl-*   one severity scale (UV bands, quake magnitudes)            */
+:root{
+  --bg:#0c0e12;--card-bg:#161a22;--card-border:#232936;--text:#e8edf4;--muted:#a3aec0;--past:#4a5263;
+  --accent:#4aa3ff;--accent-ink:#4aa3ff;--ok:#3fc77a;--warn:#e7b25a;--bad:#f26d78;--rain:#58a6ff;--sun:#ffd158;--cloud:#9fb0c8;--sea:#3cc4c9;
+  --fs-meta:.9375rem;--fs-label:1rem;--fs-2nd:1.125rem;--fs-item:1.25rem;--fs-head:1.5rem;
+  --tag-blue:#5aaeff;--tag-pink:#f08bd0;--tag-green:#4fd08a;--tag-amber:#ffb454;--tag-purple:#b49cff;--tag-grey:#8d97a8;
+  --tag-ink:#0c0e12;
+  --lvl-low:#3fc77a;--lvl-mod:#e8d44d;--lvl-high:#f5a25d;--lvl-vhigh:#f26d78;--lvl-ext:#b48cf2;
+  font-size:16px;
+}
+[data-theme="light"]{
+  --bg:#f1f3f7;--card-bg:#fff;--card-border:#d8dee9;--text:#1a2230;--muted:#4f596a;--past:#c3cad6;
+  --accent:#0b62c4;--accent-ink:#0b62c4;--ok:#157f45;--warn:#8a5a04;--bad:#c22f3c;--rain:#1f62c0;--sun:#a86f00;--cloud:#6b7c96;--sea:#0b7f84;
+  --tag-blue:#1d67c4;--tag-pink:#b0388f;--tag-green:#157f45;--tag-amber:#a35c00;--tag-purple:#6a4bc4;--tag-grey:#5d6778;
+  --tag-ink:#fff;
+  --lvl-low:#157f45;--lvl-mod:#8a6d00;--lvl-high:#b35500;--lvl-vhigh:#c22f3c;--lvl-ext:#6c35b8;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:24px 24px 96px}
+.page-head{max-width:1600px;margin:0 auto 12px;display:flex;justify-content:space-between;gap:24px;align-items:flex-end}
+.page-head h1{margin:0;font-size:1.375rem}
+.page-head p{margin:6px 0 0;color:var(--muted);max-width:96ch;line-height:1.5}
+.mock{display:flex;gap:6px}
+.mock button{font:inherit;font-size:14px;padding:6px 12px;border-radius:8px;border:1px solid var(--card-border);background:var(--card-bg);color:var(--text);cursor:pointer}
+.mock button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent-ink)}
+section{max-width:1600px;margin:34px auto 0}
+section>h2{margin:0 0 4px;font-size:1.125rem}
+section>p{margin:0 0 14px;color:var(--muted);font-size:15px;max-width:110ch;line-height:1.5}
+.rules{max-width:1600px;margin:0 auto;display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.rules div{border:1px solid var(--card-border);border-radius:10px;padding:10px 14px;font-size:14px;color:var(--muted);line-height:1.5}
+.rules b{color:var(--text)}
+.row{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start}
+.spec{display:grid;gap:6px}
+.spec>span{font-size:13px;color:var(--muted)}
+.spec>span b{color:var(--text);font-weight:600}
+.num{font-variant-numeric:tabular-nums}
+
+/* card shell, as on the display; size set from data-size (cols x rows) */
+.card{position:relative;background:var(--card-bg);border:1px solid var(--card-border);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;width:var(--w);height:var(--h)}
+.body{flex:1;min-height:0;position:relative;padding:14px 18px;container-type:size}
+.i{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+/* shared states */
+.state{--tone:var(--accent-ink);height:100%;display:grid;place-content:center;justify-items:center;gap:6px;text-align:center;padding:0 8px}
+.state.error{--tone:var(--bad)}
+.state .ico{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;margin-bottom:4px;background:color-mix(in srgb,var(--tone) 16%,transparent);color:var(--tone)}
+.state .t{font-size:1.125rem;font-weight:650}
+.state .d{font-size:var(--fs-label);color:var(--muted);max-width:34ch;line-height:1.45}
+.state .where{margin-top:4px;font-size:var(--fs-meta);padding:3px 12px;border-radius:999px;border:1px solid var(--card-border)}
+.stale{position:relative;padding-top:34px;height:100%}
+.stale>:not(.stale-badge){opacity:.5;filter:saturate(.4)}
+.stale-badge{position:absolute;top:0;left:0;z-index:2;display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-meta);font-weight:600;color:var(--warn);padding:2px 10px;border-radius:999px;background:var(--card-bg);border:1px solid color-mix(in srgb,var(--warn) 45%,transparent)}
+.stale-badge::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--warn)}
+
+.eyebrow{font-size:var(--fs-meta);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.pill{display:inline-flex;align-items:center;gap:8px;font-size:var(--fs-2nd);font-weight:700;padding:4px 14px;border-radius:999px;background:color-mix(in srgb,var(--tone) 18%,transparent);color:var(--tone);white-space:nowrap}
+.pill::before{content:"";width:9px;height:9px;border-radius:50%;background:currentColor}
+.go{--tone:var(--ok)}.tbd{--tone:var(--muted)}.hold{--tone:var(--warn)}
+.tag{display:grid;place-items:center;border-radius:50%;background:var(--tc);color:var(--tag-ink);flex:0 0 auto}
+.tag svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.dot{display:inline-block;width:12px;height:12px;border-radius:50%;background:var(--cal);flex:0 0 auto}
+
+/* ======================================================================= */
+/* 1. Up next                                                              */
+.un{height:100%;display:grid;grid-template-rows:auto auto auto;align-content:space-between}
+.un-now{display:grid;grid-template-columns:5px minmax(0,1fr);column-gap:14px;padding-bottom:14px}
+.un-now .bar{grid-row:span 4;border-radius:3px;background:var(--cal)}
+.un-now .what{font-size:var(--fs-item);font-weight:650;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.un-now .when{font-size:var(--fs-2nd);color:var(--muted);margin-top:2px}
+.un-prog{height:6px;border-radius:999px;background:color-mix(in srgb,var(--muted) 22%,transparent);overflow:hidden;margin-top:8px}
+.un-prog i{display:block;height:100%;background:var(--cal)}
+.un-next{border-top:1px solid var(--card-border);padding-top:14px;display:grid;gap:6px;align-content:start}
+.un-in{font-size:min(19cqh,4.5rem);font-weight:750;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums;white-space:nowrap}
+.un-next .what{display:flex;align-items:center;gap:10px;font-size:1.75rem;font-weight:700;min-width:0}
+.un-next .what span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.un-next .sub{font-size:var(--fs-2nd);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:22px}
+.un-next .sub b{color:var(--text);font-weight:650}
+.un-later{border-top:1px solid var(--card-border);padding-top:8px;display:grid;gap:2px}
+.un-later div{display:grid;grid-template-columns:5.2em minmax(0,1fr);gap:10px;font-size:var(--fs-2nd);align-items:center}
+.un-later div span:first-child{color:var(--muted);font-variant-numeric:tabular-nums;text-align:right}
+.un-later div span:last-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;gap:10px;align-items:center}
+.un-later .free span:last-child{color:var(--muted)}
+/* small */
+.un-s{height:100%;display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:16px;align-items:center}
+.un-s .un-in{font-size:min(40cqh,2.5rem)}
+.un-s.long .un-in{font-size:2rem}
+.un-s.long .what span{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.15}
+.un-s .what{font-size:var(--fs-item);font-weight:700;display:flex;gap:10px;align-items:center;min-width:0}
+.un-s .what span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.un-s .sub{font-size:var(--fs-label);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.un-free{height:100%;display:grid;align-content:center;gap:6px}
+.un-free .big{font-size:2rem;font-weight:750;line-height:1.1}
+.un-free .sub{font-size:var(--fs-2nd);color:var(--muted);line-height:1.45}
+.un-free .sub b{color:var(--text);font-weight:650}
+
+/* ======================================================================= */
+/* 2. Week ahead                                                           */
+/* One grid: headers, weather, all-day lanes (events span their days), then
+   each day's timed events. A layer of column cells draws dividers and tints. */
+.wk{height:100%;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));grid-template-rows:auto auto minmax(0,1fr);column-gap:0;row-gap:0;position:relative}
+.wk-col{grid-row:1/-1;border-left:1px solid var(--card-border)}
+.wk-col:first-child{border-left:0}
+.wk-col.weekend{background:color-mix(in srgb,var(--text) 5%,transparent)}
+.wk-h,.wk-wx,.wk-evs{padding:0 8px;min-width:0;position:relative}
+.wk-h{grid-row:1;display:flex;align-items:center;gap:8px;padding-top:2px;padding-bottom:6px}
+.wk-h .dw{font-size:var(--fs-2nd);font-weight:650;color:var(--muted)}
+.wk-h .dn{font-size:1.375rem;font-weight:750;font-variant-numeric:tabular-nums}
+.wk-h.today .dw{color:var(--accent-ink)}
+.wk-h.today .dn{color:var(--card-bg);background:var(--accent);border-radius:8px;padding:0 8px}
+.wk-wx{grid-row:2;display:grid;grid-template-columns:28px auto 1fr;align-items:center;column-gap:6px;font-size:var(--fs-2nd);font-variant-numeric:tabular-nums;padding-bottom:8px;border-bottom:1px solid var(--card-border);white-space:nowrap;overflow:hidden}
+.wk-wx svg{width:28px;height:28px}
+.wk-wx b{font-weight:700}
+.wk-wx span{color:var(--muted);font-size:var(--fs-label)}
+.wk-wx .wet{color:var(--rain);font-weight:700;font-size:var(--fs-label)}
+/* Each column flows on its own: its all-day chips, then its timed events. A chip
+   spanning days is drawn in its first column, as wide as its days; the later
+   columns hold an empty slot of the same height, so nothing overlaps. */
+.wk-allday{display:grid;gap:5px;margin:0 -8px 2px}
+.wk-slot{height:28px}
+.wk-chip{position:relative;z-index:1;height:28px;margin:0 5px;padding:3px 8px;border-radius:7px;background:color-mix(in srgb,var(--cal) 24%,transparent);font-size:var(--fs-label);font-weight:650;line-height:22px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wk-chip.more{background:transparent;color:var(--muted);padding-left:3px}
+.wk-chip.holiday{background:transparent;box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--muted) 60%,transparent);color:var(--muted)}
+.wk-chip .days{font-weight:500;color:var(--muted);margin-left:6px}
+.wk-evs{grid-row:3;display:flex;flex-direction:column;gap:8px;padding-top:8px;overflow:visible;min-height:0}
+.wk-evs>.wk-ev,.wk-evs>.wk-more{flex:0 0 auto}
+.wk-ev{border-left:4px solid var(--cal);padding-left:8px;min-width:0}
+.wk-ev .t{font-size:var(--fs-label);color:var(--muted);font-variant-numeric:tabular-nums}
+.wk-ev .n{font-size:var(--fs-2nd);font-weight:600;line-height:1.2;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.wk-more{font-size:var(--fs-label);color:var(--muted);font-weight:650}
+.wk-none{font-size:var(--fs-label);color:var(--muted)}
+
+/* ======================================================================= */
+/* 3. Reminders                                                            */
+.rm{height:100%;display:grid;grid-template-rows:auto 1fr;gap:6px}
+.rm-hero{display:grid;grid-template-columns:auto minmax(0,1fr);gap:16px;align-items:center;padding:14px 16px;margin:-14px -18px 4px;background:color-mix(in srgb,var(--warn) 15%,transparent);border-bottom:1px solid color-mix(in srgb,var(--warn) 35%,transparent)}
+.rm-hero .icons{display:flex;gap:6px}
+
+.rm-hero .when{font-size:var(--fs-label);font-weight:750;letter-spacing:.06em;text-transform:uppercase;color:var(--warn)}
+.rm-hero .what{font-size:var(--fs-head);font-weight:750;line-height:1.15;margin-top:2px}
+.tag.lg{width:52px;height:52px}.tag.lg svg{width:28px;height:28px}
+.tag.md{width:38px;height:38px}.tag.md svg{width:22px;height:22px}
+.rm-list{display:grid;align-content:space-evenly}
+.rm-row{display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:14px;align-items:center;padding:6px 0}
+.rm-row+.rm-row{border-top:1px solid var(--card-border)}
+.rm-row .n{font-size:var(--fs-item);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rm-row .d{font-size:var(--fs-2nd);color:var(--muted);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.rm-row .d.soon{color:var(--text);font-weight:650}
+.rm-calm{display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:center;padding:0 0 12px;border-bottom:1px solid var(--card-border)}
+.rm-calm .ok{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
+.rm-calm .ok svg{width:28px;height:28px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.rm-calm .what{font-size:var(--fs-head);font-weight:700}
+.rm-calm .sub{font-size:var(--fs-2nd);color:var(--muted)}
+.card.amber{background:color-mix(in srgb,var(--warn) 15%,var(--card-bg));border-color:color-mix(in srgb,var(--warn) 40%,var(--card-border))}
+.rm-small{height:100%;display:grid;grid-template-columns:auto minmax(0,1fr);gap:16px;align-items:center}
+
+/* ======================================================================= */
+/* 4. UV index                                                             */
+.uv{height:100%;display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);column-gap:18px;row-gap:8px}
+.uv-num{font-size:min(36cqh,4.5rem);font-weight:750;line-height:.85;letter-spacing:-.03em;color:var(--uvc);font-variant-numeric:tabular-nums}
+.uv-head{align-self:center}
+.uv-head .cat{font-size:var(--fs-head);font-weight:750;color:var(--uvc);line-height:1.1}
+.uv-head .msg{font-size:var(--fs-2nd);color:var(--muted);margin-top:4px}
+.uv-head .msg b{color:var(--text);font-weight:650}
+.uv-plot{grid-column:1/-1;position:relative;min-height:0}
+.uv-plot svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.uv-plot text{font-size:15px;fill:var(--muted);font-variant-numeric:tabular-nums}
+.uv-s{height:100%;display:grid;grid-template-columns:auto minmax(0,1fr);gap:18px;align-items:center}
+.uv-s .uv-num{font-size:min(70cqh,4rem)}
+.uv-s .cat{font-size:var(--fs-item);font-weight:750;color:var(--uvc)}
+.uv-s .msg{font-size:var(--fs-label);color:var(--muted);margin-top:2px}
+
+/* ======================================================================= */
+/* 5. Wind                                                                 */
+.wd{height:100%;display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-rows:minmax(0,1fr) auto;column-gap:22px;row-gap:8px;align-items:center}
+.wd-dial{height:100%;aspect-ratio:1;max-height:184px}
+.wd-dial svg{width:100%;height:100%;display:block;overflow:visible}
+.wd-dial .ring{fill:none;stroke:var(--card-border);stroke-width:2.5}
+.wd-dial .tick{stroke:var(--muted);stroke-opacity:.55;stroke-width:1.5}
+.wd-dial .cp{font-size:12px;font-weight:700;fill:var(--muted);text-anchor:middle;dominant-baseline:central}
+.wd-dial .cp.n{fill:var(--text)}
+.wd-dial .vane{fill:var(--accent)}
+.wd-dial .vl{font-size:11px;font-weight:750;fill:var(--accent-ink);text-anchor:middle;dominant-baseline:central}
+.wd-dial .spd{font-size:32px;font-weight:750;fill:var(--text);text-anchor:middle;font-variant-numeric:tabular-nums}
+.wd-dial .unit{font-size:12px;font-weight:650;fill:var(--muted);text-anchor:middle}
+.wd-text .bf{font-size:2.5rem;font-weight:750;line-height:1.1}
+.wd-text .from{font-size:1.375rem;margin-top:4px}
+.wd-gust{text-align:center;padding-left:18px;border-left:1px solid var(--card-border)}
+.wd-gust b{display:block;font-size:2.75rem;font-weight:750;line-height:1;font-variant-numeric:tabular-nums}
+.wd-gust.strong b{color:var(--warn)}
+.wd-gust span{display:block;margin-top:6px;font-size:var(--fs-2nd);color:var(--muted)}
+.wd-text .gust{font-size:var(--fs-2nd);color:var(--muted);margin-top:6px}
+.wd-text .gust b{color:var(--warn);font-weight:700}
+.wd-hours{grid-column:1/-1;display:grid;grid-template-columns:repeat(6,1fr);border-top:1px solid var(--card-border);padding-top:8px}
+.wd-hours div{display:grid;grid-template-columns:auto auto;justify-content:center;align-items:center;column-gap:6px;font-variant-numeric:tabular-nums}
+.wd-hours b{font-size:var(--fs-2nd);font-weight:700}
+.wd-hours em{font-style:normal;font-size:var(--fs-label);font-weight:650;color:var(--muted)}
+.wd-hours span{grid-column:1/-1;text-align:center;font-size:var(--fs-meta);color:var(--muted)}
+.wd-s{height:100%;display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:18px}
+.wd-s .wd-dial{height:93px}
+.wd-s .bf{font-size:var(--fs-head)}
+.wd-s .from{font-size:var(--fs-label);color:var(--muted);margin-top:2px}
+
+/* ======================================================================= */
+/* 6. Earthquakes                                                          */
+.eq{height:100%;display:grid;grid-template-columns:auto minmax(0,1fr);gap:24px}
+.eq-map{height:100%;aspect-ratio:1}
+.eq-map svg{width:100%;height:100%;display:block;overflow:visible}
+.eq-map .rng{fill:none;stroke:var(--card-border);stroke-width:1.5}
+.eq-map .rngl{font-size:15px;fill:var(--muted)}
+.eq-map .home{fill:var(--text)}
+.eq-map text.rngl[fill]{fill:var(--text);font-weight:650}
+.eq-map .q{fill:var(--qc);stroke:var(--card-bg);stroke-width:2}
+.eq-map .q.old{fill:none;stroke:var(--qc);stroke-width:3}
+.eq-map .ping{fill:none;stroke:var(--qc);stroke-width:2.5;animation:ping 2.4s ease-out 4;transform-box:fill-box;transform-origin:center;opacity:0}
+@keyframes ping{from{transform:scale(1);opacity:.9}to{transform:scale(2.2);opacity:0}}
+@media (prefers-reduced-motion:reduce){.eq-map .ping{animation:none}}
+.eq-side{min-width:0;display:grid;grid-template-rows:auto 1fr;gap:6px}
+.eq-head .big{font-size:var(--fs-head);font-weight:700;line-height:1.2}
+.eq-head .sub{font-size:var(--fs-2nd);color:var(--muted);margin-top:2px}
+.eq-list{display:grid;align-content:space-evenly}
+.eq-row{display:grid;grid-template-columns:62px minmax(0,1fr);gap:14px;align-items:center;padding:7px 0}
+.eq-row+.eq-row{border-top:1px solid var(--card-border)}
+.mag{font-size:var(--fs-item);font-weight:750;text-align:center;border-radius:8px;padding:5px 0;color:var(--qc);background:color-mix(in srgb,var(--qc) 16%,transparent);font-variant-numeric:tabular-nums}
+.eq-row .p{font-size:var(--fs-item);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.eq-row .m{font-size:var(--fs-label);color:var(--muted);font-variant-numeric:tabular-nums}
+.m2{--qc:var(--muted)}.m3{--qc:var(--lvl-mod)}.m4{--qc:var(--lvl-high)}.m5{--qc:var(--lvl-vhigh)}.m6{--qc:var(--lvl-ext)}
+.eq-quiet{height:100%;display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:center}
+.eq-quiet .ok{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
+.eq-quiet .ok svg{width:28px;height:28px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round}
+
+/* ======================================================================= */
+/* 7. Tides                                                                */
+.td{height:100%;display:grid;grid-template-rows:auto minmax(0,1fr);gap:6px}
+.td-head{display:flex;justify-content:space-between;gap:16px;align-items:center}
+.td-head .big{display:flex;align-items:center;gap:10px;font-size:var(--fs-head);font-weight:700;line-height:1.2}
+.td-head .big svg{width:28px;height:28px;color:var(--sea);flex:0 0 auto}
+.td-head .sub{font-size:var(--fs-2nd);color:var(--muted);margin-top:2px;padding-left:38px}
+.td-now{text-align:right;white-space:nowrap}
+.td-now b{display:block;font-size:2.25rem;font-weight:750;line-height:1;font-variant-numeric:tabular-nums}
+.td-now span{font-size:var(--fs-label);color:var(--muted)}
+.td-plot{position:relative;min-height:0}
+.td-plot svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.td-plot .water{fill:color-mix(in srgb,var(--sea) 20%,transparent)}
+.td-plot .line{fill:none;stroke:var(--sea);stroke-width:3.5;stroke-linecap:round}
+.td-plot .line.past{stroke:var(--past)}
+.td-plot .water.past{fill:color-mix(in srgb,var(--past) 22%,transparent)}
+.td-plot .nowl{stroke:var(--text);stroke-width:1.5;stroke-dasharray:3 4}
+.td-plot .nowd{fill:var(--text);stroke:var(--card-bg);stroke-width:3}
+.td-plot .hl{font-size:16px;font-weight:700;fill:var(--text);text-anchor:middle;font-variant-numeric:tabular-nums}
+.td-plot .hlt{font-size:15px;fill:var(--muted);text-anchor:middle;font-variant-numeric:tabular-nums}
+.td-plot .hlt.past{opacity:.75}
+.td-plot .ax{font-size:15px;fill:var(--muted)}
+.td-plot .axl{stroke:var(--card-border)}
+
+/* ======================================================================= */
+/* 8. Next launch                                                          */
+.ln{height:100%;display:grid;grid-template-rows:auto auto 1fr;gap:8px}
+.ln-top{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.ln-t{font-size:min(26cqh,3.25rem);font-weight:750;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums;white-space:nowrap}
+.ln-t small{font-size:1em;color:var(--muted);font-weight:650;letter-spacing:0;margin:0 .3em 0 .15em}
+.ln-t.frozen{color:var(--muted)}
+.ln-hold{font-size:var(--fs-label);font-weight:700;color:var(--warn);letter-spacing:.06em;text-transform:uppercase;margin-bottom:2px}
+.ln-what .n{font-size:var(--fs-head);font-weight:700;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ln-what .r{font-size:var(--fs-2nd);color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ln-what .r b{color:var(--text);font-weight:650}
+.ln-list{align-self:end;border-top:1px solid var(--card-border);padding-top:8px;display:grid;gap:2px}
+.ln-row{display:flex;justify-content:space-between;gap:12px;font-size:var(--fs-2nd);white-space:nowrap}
+.ln-row b{font-weight:600;overflow:hidden;text-overflow:ellipsis}
+.ln-row span{color:var(--muted);font-variant-numeric:tabular-nums}
+
+/* ======================================================================= */
+/* 9. Service status                                                       */
+.sv{height:100%;display:grid;grid-template-rows:auto 1fr;gap:10px}
+.sv-head{display:flex;align-items:center;gap:14px}
+.sv-head .badge{width:48px;height:48px;border-radius:14px;display:grid;place-items:center;background:color-mix(in srgb,var(--tone) 18%,transparent);color:var(--tone);flex:0 0 auto}
+.sv-head .badge svg{width:28px;height:28px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.sv-head .big{font-size:var(--fs-head);font-weight:700;line-height:1.2}
+.sv-head .sub{font-size:var(--fs-2nd);color:var(--muted)}
+.sv-list{display:grid;align-content:space-evenly}
+.sv-row{display:grid;grid-template-columns:14px minmax(0,1fr) auto 108px;gap:14px;align-items:center;padding:5px 0}
+.sv-row+.sv-row{border-top:1px solid var(--card-border)}
+.sv-row .s{width:14px;height:14px;border-radius:50%;background:var(--ok)}
+.sv-row.down .s{background:var(--bad)}
+.sv-row.slow .s{background:var(--warn)}
+.sv-row .n{font-size:var(--fs-item);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sv-row .ms{font-size:var(--fs-2nd);color:var(--muted);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.sv-row.down .ms{color:var(--bad);font-weight:700}
+.sv-row.slow .ms{color:var(--warn);font-weight:650}
+.sv-hist{display:grid;grid-template-columns:repeat(12,1fr);gap:3px;height:22px}
+.sv-hist i{border-radius:2px;background:color-mix(in srgb,var(--ok) 50%,transparent)}
+.sv-hist i.x{background:var(--bad)}
+.sv-hist i.w{background:var(--warn)}
+.sv-row.down{background:color-mix(in srgb,var(--bad) 10%,transparent);margin:0 -10px;padding:5px 10px;border-radius:8px}
+.sv-row.down+.sv-row{border-top-color:transparent}
+.sv-more{font-size:var(--fs-2nd);color:var(--muted);padding-top:6px;border-top:1px solid var(--card-border)}
+
+/* ======================================================================= */
+/* 10. On this day                                                         */
+.ot{height:100%;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:22px}
+.ot-text{display:grid;grid-template-rows:auto 1fr auto;min-width:0}
+.ot-year{display:flex;align-items:baseline;gap:14px}
+.ot-year b{font-size:min(24cqh,3.25rem);font-weight:750;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.ot-year span{font-size:var(--fs-2nd);color:var(--muted)}
+.ot-story{align-self:center;font-size:var(--fs-head);line-height:1.35;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
+.ot-foot{font-size:var(--fs-label);color:var(--muted);display:flex;align-items:center;gap:12px}
+.ot-prog{flex:0 0 72px;height:3px;border-radius:2px;background:color-mix(in srgb,var(--muted) 25%,transparent);overflow:hidden}
+.ot-prog i{display:block;height:100%;width:40%;background:var(--muted)}
+.ot-img{width:min(36cqw,260px);height:100%;border-radius:10px;background-size:cover;background-position:center}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-bin" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></symbol>
+    <symbol id="i-recycle" viewBox="0 0 24 24"><path d="M7 19H4.5a1.5 1.5 0 0 1-1.3-2.3L5.5 13M17 19h2.5a1.5 1.5 0 0 0 1.3-2.3L18.5 13M10 5.5l1.2-2a1 1 0 0 1 1.6 0l2.4 4M14 19H9M6 13l-1 1.7M18 13l-3.5-6M8.5 9 11 5"/></symbol>
+    <symbol id="i-drop" viewBox="0 0 24 24"><path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/></symbol>
+    <symbol id="i-filter" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h10M7 16h10"/></symbol>
+    <symbol id="i-pill" viewBox="0 0 24 24"><rect x="3" y="9" width="18" height="6" rx="3" transform="rotate(-35 12 12)"/><path d="m9.5 8.5 5 7"/></symbol>
+    <symbol id="i-paw" viewBox="0 0 24 24"><circle cx="7" cy="9" r="1.8"/><circle cx="11" cy="6" r="1.8"/><circle cx="15" cy="6.5" r="1.8"/><circle cx="18" cy="10" r="1.8"/><path d="M8 17c0-3 2-5 4.5-5S17 14 17 17c0 2-2 2.5-4.5 2S8 19 8 17z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+    <symbol id="i-xc" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7 7 17"/></symbol>
+    <symbol id="i-cal" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></symbol>
+    <symbol id="i-off" viewBox="0 0 24 24"><path d="M3 9a14 14 0 0 1 18 0M6.5 12.5a9 9 0 0 1 11 0M10 16a4 4 0 0 1 4 0"/><path d="M4 4l16 16"/></symbol>
+    <symbol id="up" viewBox="0 0 24 24"><path d="M12 4v16M5 11l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5" fill="var(--sun)"/><g stroke="var(--sun)" stroke-width="2" stroke-linecap="round"><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></g></symbol>
+    <symbol id="psun" viewBox="0 0 24 24"><circle cx="9" cy="9" r="4" fill="var(--sun)"/><path d="M8 19h10a4 4 0 0 0 0-8 5.5 5.5 0 0 0-10.4 1.6A3.2 3.2 0 0 0 8 19z" fill="var(--cloud)"/></symbol>
+    <symbol id="rainy" viewBox="0 0 24 24"><path d="M7 15h10a4 4 0 0 0 0-8 5.5 5.5 0 0 0-10.4 1.6A3.2 3.2 0 0 0 7 15z" fill="var(--cloud)"/><path d="M9 18l-1 3M13 18l-1 3M17 18l-1 3" stroke="var(--rain)" stroke-width="2" stroke-linecap="round"/></symbol>
+  </defs>
+</svg>
+
+<header class="page-head">
+  <div>
+    <h1>Ten new widgets: mock, round 4 (approved at 8/10)</h1>
+    <p>Every card is drawn at its true size on a 1920 × 1080 wall (12 × 8 cells, 147 × 121 px plus 12 px gaps). Scene: Phoenix, Friday 2 October 2026, 3:50 PM.
+      Every chart and the words above it come from one data series in the script.</p>
+  </div>
+  <div class="mock" role="group" aria-label="Theme"><button data-t="dark" aria-pressed="true">Dark</button><button data-t="light" aria-pressed="false">Light</button></div>
+</header>
+<div class="rules">
+  <div><b>Times:</b> "4:55 PM", ":00" dropped ("1 PM"), never split across lines. <b>Days:</b> Today, Tomorrow, the weekday within six days ("Sunday"), then "Wed 14 Oct". <b>Spans:</b> "25 min", "1 h 5 min", "3 days".</div>
+  <div><b>Colour:</b> hero numbers are text colour. Accent marks only today and now. Six shared tag colours (calendars, reminders) and one severity scale (UV bands, quake magnitudes), all with light-theme values. Past data is drawn grey, not dimmed.</div>
+  <div><b>Overflow:</b> problems and family-affecting things stay visible; holidays and healthy services collapse first. <b>Cards:</b> none of the ten has a title strip; each card names itself in its first line, states included. <b>Motion:</b> none, except a quake ping that runs four times when a new quake arrives (off under reduced motion). Rotations are minutes, not seconds.</div>
+</div>
+
+<section>
+  <h2>1. Up next</h2>
+  <p>Now and next from one or more calendars (a colour per person). The countdown to the next event is the hero. The rest of today is listed with times, ending in "Free after …".
+    When nothing's left today it names tomorrow's first thing.</p>
+  <div class="row">
+    <div class="spec"><span><b>4×3</b></span><div class="card" data-size="4x3"><div class="body" id="un"></div></div></div>
+    <div class="spec"><span><b>3×1</b></span><div class="card" data-size="3x1"><div class="body" id="un-s"></div></div></div>
+    <div class="spec"><span><b>3×2</b>, nothing left today</span>
+      <div class="card" data-size="3x2"><div class="body"><div class="un-free">
+        <div class="eyebrow">Rest of today</div>
+        <div class="big">Nothing else on the calendar</div>
+        <div class="sub num">Tomorrow starts with <b>Farmers market</b> at 8&nbsp;AM.</div>
+      </div></div></div></div>
+  </div>
+</section>
+
+<section>
+  <h2>2. Week ahead</h2>
+  <p>Seven columns, today first. Each day carries its weather; rain chance replaces the low when it's 30% or more. All-day events are one-line chips in up to two lanes,
+    spanning their days; each column's timed events start right under its own chips. When lanes overflow, holidays (outlined) give way first and become "+1 all-day". Timed events show time and name (two lines) in their calendar colour.</p>
+  <div class="row"><div class="spec"><span><b>8×3</b></span><div class="card" data-size="8x3"><div class="body" id="wk"></div></div></div></div>
+</section>
+
+<section>
+  <h2>3. Reminders</h2>
+  <p>The household's rhythm: "every Friday", "every other Friday from 2 Oct", "the 15th of every month". From 5 PM the evening before (and all of the day itself) a reminder takes
+    the amber band at the top; anything due within two days is in bold. No network.</p>
+  <div class="row">
+    <div class="spec"><span><b>4×3</b>, Friday 3:50 PM: Saturday is pickup</span><div class="card" data-size="4x3"><div class="body" id="rm1"></div></div></div>
+    <div class="spec"><span><b>4×3</b>, Sunday morning: plants due today</span><div class="card" data-size="4x3"><div class="body" id="rm2"></div></div></div>
+    <div class="spec"><span><b>3×1</b></span><div class="card amber" data-size="3x1"><div class="body"><div class="rm-small">
+      <div class="icons" style="display:flex"><span class="tag lg" style="--tc:var(--tag-grey)"><svg><use href="#i-bin"/></svg></span><span class="tag lg" style="--tc:var(--tag-blue);margin-left:6px"><svg><use href="#i-recycle"/></svg></span></div>
+      <div><div class="eyebrow" style="color:var(--warn)">Tonight</div><div style="font-size:var(--fs-head);font-weight:750;line-height:1.15">Trash &amp; recycling out</div></div>
+    </div></div></div></div>
+  </div>
+</section>
+
+<section>
+  <h2>4. UV index</h2>
+  <p>The number and its band, in the band's colour; then when sunscreen stops mattering (UV under 3). Hourly bars for 7 AM–7 PM: past hours grey, this hour outlined, the rest in band colours.</p>
+  <div class="row">
+    <div class="spec"><span><b>4×2</b></span><div class="card" data-size="4x2"><div class="body" id="uv"></div></div></div>
+    <div class="spec"><span><b>3×1</b></span><div class="card" data-size="3x1"><div class="body" id="uv-s"></div></div></div>
+    <div class="spec"><span><b>3×1</b>, after dark</span><div class="card" data-size="3x1"><div class="body"><div class="uv-s" style="--uvc:var(--lvl-vhigh)">
+      <div class="uv-num" style="color:var(--muted)">0</div>
+      <div><div class="eyebrow">Tomorrow</div><div class="cat">Very high</div><div class="msg num">Peaks at 9 around 1 PM</div></div>
+    </div></div></div></div>
+  </div>
+</section>
+
+<section>
+  <h2>5. Wind</h2>
+  <p>A vane: the wedge sits inside the ring on the side the wind comes from, labelled with that side, and points in, matching "From the southwest". Speed in the middle, the Beaufort word as the headline, gusts as a second number that turns amber
+    only when they're 10 mph over the wind. The next hours as compass letters.</p>
+  <div class="row">
+    <div class="spec"><span><b>4×2</b></span><div class="card" data-size="4x2"><div class="body" id="wd"></div></div></div>
+    <div class="spec"><span><b>3×1</b></span><div class="card" data-size="3x1"><div class="body" id="wd-s"></div></div></div>
+  </div>
+</section>
+
+<section>
+  <h2>6. Earthquakes</h2>
+  <p>USGS, past 7 days, M2.5+ within 500 mi by default. The headline sums up; the list gives the three largest. Distance is linear (rings at 250 / 500 mi); quakes older than a day are rings, not dots; a quake very close to home is nudged outward along its true bearing so it doesn't sit on the house;
+    dot area grows with magnitude, so an M4.3 looks much bigger than an M2.7. A new quake pings four times, then stays still.</p>
+  <div class="row">
+    <div class="spec"><span><b>5×3</b></span><div class="card" data-size="5x3"><div class="body" id="eq"></div></div></div>
+    <div class="spec"><span><b>4×1</b>, quiet (the usual view)</span><div class="card" data-size="4x1"><div class="body"><div class="eq-quiet">
+      <span class="ok"><svg><use href="#i-check"/></svg></span>
+      <div><div style="font-size:var(--fs-head);font-weight:700">No earthquakes nearby</div><div style="font-size:var(--fs-2nd);color:var(--muted)">M2.5 or more, 500 mi, past 7 days</div></div>
+    </div></div></div></div>
+  </div>
+</section>
+
+<section>
+  <h2>7. Tides</h2>
+  <p>NOAA predictions for the nearest station to home (or a chosen one). Which way the water's moving and when it turns, today's curve with each high and low, the past in grey. Predictions don't go out of date: once fetched, the days they cover keep drawing normally.</p>
+  <div class="row">
+    <div class="spec"><span><b>6×2</b></span><div class="card" data-size="6x2"><div class="body" id="td"></div></div></div>
+  </div>
+</section>
+
+<section>
+  <h2>8. Next launch</h2>
+  <p>Launch Library 2. The countdown, rocket and mission, provider and pad, and the time here. During a hold the clock freezes and greys, and the pill says Holding. Units are written out at full size ("T−1 day 2 h", "T−38 min").</p>
+  <div class="row">
+    <div class="spec"><span><b>4×2</b></span><div class="card" data-size="4x2"><div class="body"><div class="ln">
+      <div class="ln-top"><div class="ln-t num">T−1<small>day</small>2<small>h</small></div><span class="pill go">Go</span></div>
+      <div class="ln-what"><div class="n">Falcon 9 · Starlink 10‑28</div><div class="r num"><b>Tomorrow 6:41&nbsp;PM</b> · weather 90% favourable</div><div class="r">SpaceX · Cape Canaveral SFS</div></div>
+      <div class="ln-list">
+        <div class="ln-row"><b>Electron · Owl for You</b><span>Monday</span></div>
+        <div class="ln-row"><b>New Glenn · EscaPADE</b><span>Sun 11 Oct</span></div>
+      </div>
+    </div></div></div></div>
+    <div class="spec"><span><b>4×2</b>, holding</span><div class="card" data-size="4x2"><div class="body"><div class="ln">
+      <div class="ln-top"><div class="ln-t num frozen">T−38<small>min</small></div><span class="pill hold">Holding</span></div>
+      <div class="ln-what"><div class="n">Falcon 9 · Starlink 10‑28</div><div class="r num">Was <b>6:41&nbsp;PM</b> · weather 70% favourable</div><div class="r">SpaceX · Cape Canaveral SFS</div></div>
+      <div class="ln-list"><div class="ln-row"><b>Electron · Owl for You</b><span>Monday</span></div></div>
+    </div></div></div></div>
+  </div>
+</section>
+
+<section>
+  <h2>9. Service status</h2>
+  <p>Home-lab checks from the Pi every minute (HTTP, or host:port). The headline is the answer. Down rows sort first and are tinted; slow ones (over 1 s) are amber.
+    The last hour as twelve 5-minute blocks. More than fit: "+4 more, all up".</p>
+  <div class="row">
+    <div class="spec"><span><b>4×3</b>, one down, ten services</span><div class="card" data-size="4x3"><div class="body" id="sv1"></div></div></div>
+    <div class="spec"><span><b>4×3</b>, all up</span><div class="card" data-size="4x3"><div class="body" id="sv2"></div></div></div>
+    <div class="spec"><span><b>3×1</b></span><div class="card" data-size="3x1"><div class="body"><div class="sv-head" style="height:100%;--tone:var(--bad)">
+      <span class="badge"><svg><use href="#i-xc"/></svg></span>
+      <div><div class="big">NAS is down</div><div class="sub num">For 12 min · 9 others up</div></div>
+    </div></div></div></div>
+  </div>
+</section>
+
+<section>
+  <h2>10. On this day</h2>
+  <p>Wikipedia's selected anniversaries, one at a time, changing every 3 minutes (a thin line shows the time left). The year, how long ago, the sentence at reading size, the article's picture when it has one.</p>
+  <div class="row">
+    <div class="spec"><span><b>6×2</b></span><div class="card" data-size="6x2"><div class="body"><div class="ot">
+      <div class="ot-text">
+        <div class="ot-year"><b>1958</b><span class="num">68 years ago</span></div>
+        <div class="ot-story">Guinea declares its independence from France, with Ahmed Sékou Touré as its first president.</div>
+        <div class="ot-foot"><span>On this day · Wikipedia</span><span class="ot-prog"><i></i></span></div>
+      </div>
+      <div class="ot-img" style="background-image:linear-gradient(90deg,#ce1126 0 33.3%,#fcd116 33.3% 66.6%,#009460 66.6%)"></div>
+    </div></div></div></div>
+    <div class="spec"><span><b>4×2</b>, no picture, long sentence (three lines, then …)</span><div class="card" data-size="4x2"><div class="body"><div class="ot" style="grid-template-columns:1fr">
+      <div class="ot-text">
+        <div class="ot-year"><b>1950</b><span class="num">76 years ago</span></div>
+        <div class="ot-story">The first <i>Peanuts</i> comic strip by Charles M. Schulz is published in seven U.S. newspapers, introducing Charlie Brown and his dog Snoopy to readers across the country.</div>
+        <div class="ot-foot"><span>On this day · Wikipedia</span><span class="ot-prog"><i style="width:75%"></i></span></div>
+      </div>
+    </div></div></div></div>
+  </div>
+</section>
+
+<section>
+  <h2>States and edge cases</h2>
+  <p>The shared setup / error / out-of-date designs on the new widgets, and the long-text cases.</p>
+  <div class="row">
+    <div class="spec"><span><b>Up next</b>, needs setup</span><div class="card" data-size="3x2"><div class="body"><div class="state">
+      <div class="ico"><svg class="i"><use href="#i-cal"/></svg></div><div class="t">Up next: add a calendar</div>
+      <div class="d">Paste a calendar's iCal link in this widget's settings.</div><div class="where">Admin › Layout › Up next</div></div></div></div></div>
+    <div class="spec"><span><b>Up next</b>, long names</span><div class="card" data-size="3x1"><div class="body" id="un-long"></div></div></div>
+    <div class="spec"><span><b>Tides</b>, home is inland (Phoenix, no station chosen)</span><div class="card" data-size="3x2"><div class="body"><div class="state">
+      <div class="ico"><svg class="i"><use href="#i-drop"/></svg></div><div class="t">Tides: no station near home</div>
+      <div class="d">The nearest is 300 mi away. Choose a station in this widget's settings.</div><div class="where">Admin › Layout › Tides</div></div></div></div></div>
+    <div class="spec"><span><b>Next launch</b>, can't connect, nothing saved</span><div class="card" data-size="3x2"><div class="body"><div class="state error">
+      <div class="ico"><svg class="i"><use href="#i-off"/></svg></div><div class="t">Can't reach the launch schedule</div>
+      <div class="d">Trying again in 5 minutes.</div></div></div></div></div>
+    <div class="spec"><span><b>Reminders</b>, nothing due (Monday)</span><div class="card" data-size="3x2"><div class="body"><div class="rm-calm" style="border:0;height:100%">
+      <span class="ok"><svg><use href="#i-check"/></svg></span><div><div class="what">Nothing due today</div><div class="sub">Next: refill Pepper's medicine, Wednesday</div></div></div></div></div></div>
+    <div class="spec"><span><b>Reminders</b>, needs setup</span><div class="card" data-size="3x2"><div class="body"><div class="state">
+      <div class="ico"><svg class="i"><use href="#i-bin"/></svg></div><div class="t">Reminders: nothing set up yet</div>
+      <div class="d">Bin night, plants, filters: add them in this widget's settings.</div><div class="where">Admin › Layout › Reminders</div></div></div></div></div>
+  </div>
+</section>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const NS = "http://www.w3.org/2000/svg";
+const svgEl = (tag, attrs = {}, text) => { const n = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); if (text != null) n.textContent = text; return n; };
+
+// True cell size on a 1920×1080 wall: 12×8 cells, 12px gaps and padding.
+const CW = (1920 - 24 - 11 * 12) / 12, RH = (1080 - 24 - 7 * 12) / 8;
+document.querySelectorAll("[data-size]").forEach((c) => {
+  const [w, h] = c.dataset.size.split("x").map(Number);
+  c.style.setProperty("--w", Math.round(CW * w + 12 * (w - 1)) + "px");
+  c.style.setProperty("--h", Math.round(RH * h + 12 * (h - 1)) + "px");
+});
+
+// ---- the shared formatter rules ----------------------------------------------
+const NOW = new Date(2026, 9, 2, 15, 50);
+const T = (h, m = 0) => new Date(2026, 9, 2, h, m);
+// A no-break space keeps "8 AM" on one line; names get no-break hyphens ("drop‑off").
+const time = (d) => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }).replace(":00", "").replace(/\s/, "\u00a0");
+const nb = (t) => t.replace(/-/g, "\u2011");
+const span = (ms) => { const m = Math.round(ms / 60000); if (m < 60) return `${m} min`; const h = Math.floor(m / 60), r = m % 60; return r ? `${h} h ${r} min` : `${h} h`; };
+
+// ---- 1. up next ------------------------------------------------------------------
+const CAL = { maya: "--tag-pink", sam: "--tag-blue", home: "--tag-amber", kids: "--tag-green" };
+const TODAY = [
+  { cal: "maya", who: "Maya", what: "Piano lesson", start: T(15, 30), end: T(16, 15) },
+  { cal: "sam", who: "Sam", what: "Soccer practice", where: "Riverside Park, field 3", start: T(16, 55), end: T(18, 0) },
+  { cal: "home", what: "Dinner at the Hendersons", start: T(18, 30), end: T(20, 0) },
+];
+function upNext(host, events) {
+  const now = events.find((e) => e.start <= NOW && e.end > NOW);
+  const next = events.find((e) => e.start > NOW);
+  const later = events.filter((e) => e.start > next.start);
+  const lastEnd = Math.max(...events.map((e) => e.end));
+  const pct = Math.round((NOW - now.start) / (now.end - now.start) * 100);
+  host.innerHTML = `<div class="un">
+    <div class="un-now" style="--cal:var(${CAL[now.cal]})"><span class="bar"></span>
+      <div class="eyebrow">Now · ${now.who}</div><div class="what">${now.what}</div>
+      <div class="when num">Ends in ${span(now.end - NOW)} · ${time(now.end)}</div>
+      <div class="un-prog" role="img" aria-label="${pct}% done"><i style="width:${pct}%"></i></div></div>
+    <div class="un-next" style="--cal:var(${CAL[next.cal]})">
+      <div class="eyebrow">Next</div>
+      <div class="un-in num">${span(next.start - NOW)}</div>
+      <div class="what"><span class="dot"></span><span>${next.what}</span></div>
+      <div class="sub num"><b>${time(next.start)}</b> · ${next.where}</div></div>
+    <div class="un-later num">${later.map((e) => `<div><span>${time(e.start)}</span><span><span class="dot" style="--cal:var(${CAL[e.cal]})"></span>${e.what}</span></div>`).join("")}
+      <div class="free"><span>${time(new Date(lastEnd))}</span><span>Free for the rest of the day</span></div></div>
+  </div>`;
+}
+upNext($("#un"), TODAY);
+// Truncation order: the place goes first, then a long name wraps to two lines.
+const small = (host, e) => { const long = e.what.length > 24;
+  host.innerHTML = `<div class="un-s${long ? " long" : ""}" style="--cal:var(${CAL[e.cal]})"><div class="un-in num">${span(e.start - NOW)}</div>
+  <div style="min-width:0"><div class="what"><span class="dot"></span><span>${nb(e.what)}</span></div><div class="sub num">${time(e.start)}${e.where && !long ? " · " + e.where.split(",")[0] : ""}</div></div></div>`; };
+small($("#un-s"), TODAY[1]);
+small($("#un-long"), { cal: "kids", what: "Parent–teacher conference with Ms. Abernathy-Whitfield", where: "Desert Willow Elementary, room 14B", start: T(16, 55) });
+
+// ---- 2. week ahead ---------------------------------------------------------------
+const DAYS = [
+  { dw: "Today", dn: 2, today: true, wx: "sun", hi: 94, lo: 71 },
+  { dw: "Sat", dn: 3, weekend: true, wx: "psun", hi: 91, lo: 70 },
+  { dw: "Sun", dn: 4, weekend: true, wx: "rainy", hi: 84, lo: 68, rain: 40 },
+  { dw: "Mon", dn: 5, wx: "psun", hi: 87, lo: 66 },
+  { dw: "Tue", dn: 6, wx: "sun", hi: 89, lo: 67 },
+  { dw: "Wed", dn: 7, wx: "sun", hi: 91, lo: 69 },
+  { dw: "Thu", dn: 8, wx: "sun", hi: 93, lo: 70 },
+];
+// All-day events: [colour, first day index, last day index, name, holiday?]
+const ALLDAY = [["purple", 2, 3, "Grandma & Grandpa visiting"], ["amber", 3, 3, "Indigenous Peoples' Day", true], ["green", 3, 3, "No school"]];
+const TIMED = [
+  [0, "pink", "3:30 PM", "Piano lesson"], [0, "blue", "4:55 PM", "Soccer practice"], [0, "amber", "6:30 PM", "Dinner at the Hendersons"],
+  [1, "green", "8 AM", "Farmers market"], [1, "blue", "10 AM", "Soccer game vs Tigers"], [1, "amber", "1 PM", "Picnic at Encanto Park"],
+  [2, "pink", "11 AM", "Leo's birthday party"],
+  [3, "green", "9 AM", "Dentist, Dr. Ortiz"], [3, "pink", "3:30 PM", "Swim"], [3, "blue", "6 PM", "PTA meeting"],
+  [4, "green", "7:45 AM", "School drop-off"], [4, "blue", "Noon", "Lunch with Sam"],
+  [6, "green", "7:45 AM", "School drop-off"], [6, "pink", "5 PM", "Recital rehearsal"],
+];
+function weekAhead(host) {
+  // Lanes, at most two. Priority when they overflow: events that change the
+  // family's day first, holidays last; whatever doesn't fit becomes "+1 all-day".
+  const order = [...ALLDAY].sort((p, q) => (p[4] ? 1 : 0) - (q[4] ? 1 : 0) || (q[2] - q[1]) - (p[2] - p[1]));
+  const lanes = [[], []], extra = Array(7).fill(0);
+  for (const ev of order) {
+    const lane = lanes.find((l) => l.every((o) => o[2] < ev[1] || o[1] > ev[2]));
+    if (lane) lane.push(ev); else for (let d = ev[1]; d <= ev[2]; d++) extra[d]++;
+  }
+  const colW = host.clientWidth / 7;
+  const allday = (i) => {
+    const used = lanes.map((l) => l.find((e) => e[1] <= i && e[2] >= i));
+    const last = used.map(Boolean).lastIndexOf(true);
+    const cells = used.slice(0, last + 1).map((e) => {
+      if (!e) return `<div class="wk-slot"></div>`;
+      if (e[1] !== i) return `<div class="wk-slot"></div>`;
+      const days = e[2] - e[1] + 1;
+      return `<div class="wk-chip${e[4] ? " holiday" : ""}" style="--cal:var(--tag-${e[0]});width:calc(${days * 100}% + ${(days - 1)}px - 10px)">${nb(e[3])}</div>`;
+    });
+    if (extra[i]) cells.push(`<div class="wk-chip more">+${extra[i]} all-day</div>`);
+    return cells.length ? `<div class="wk-allday">${cells.join("")}</div>` : "";
+  };
+  host.innerHTML = `<div class="wk">${DAYS.map((d, i) => `<div class="wk-col${d.weekend ? " weekend" : ""}" style="grid-column:${i + 1}"></div>`).join("")}
+    ${DAYS.map((d, i) => `<div class="wk-h${d.today ? " today" : ""}" style="grid-column:${i + 1}"><span class="dw">${d.dw}</span><span class="dn num">${d.dn}</span></div>
+      <div class="wk-wx" style="grid-column:${i + 1}"><svg><use href="#${d.wx}"/></svg><b>${d.hi}°</b>${d.rain >= 30 ? `<span class="wet">${d.rain}% rain</span>` : `<span>${d.lo}°</span>`}</div>`).join("")}
+    ${DAYS.map((d, i) => { const evs = TIMED.filter((e) => e[0] === i);
+      return `<div class="wk-evs" style="grid-column:${i + 1}">${allday(i)}${evs.map(([, c, t, n]) => `<div class="wk-ev" style="--cal:var(--tag-${c})"><div class="t num">${t.replace(" ", "\u00a0")}</div><div class="n">${nb(n)}</div></div>`).join("")}
+        ${!evs.length && !ALLDAY.some((e) => e[1] <= i && e[2] >= i) ? `<div class="wk-none">Nothing planned</div>` : ""}</div>`; }).join("")}
+  </div>`;
+}
+weekAhead($("#wk"));
+// Fit: drop timed events that don't fit whole, and count them in "+N more".
+for (const col of document.querySelectorAll("#wk .wk-evs")) {
+  let hidden = 0;
+  const bottom = col.closest(".body").getBoundingClientRect().bottom - 14;
+  const over = () => { const l = col.lastElementChild; return l && l.getBoundingClientRect().bottom > bottom; };
+  while (over() && col.querySelector(".wk-ev")) {
+    [...col.querySelectorAll(".wk-ev")].pop().remove(); hidden++;
+    let m = col.querySelector(".wk-more:last-child");
+    if (!m || !m.classList.contains("wk-more")) { m = Object.assign(document.createElement("div"), { className: "wk-more" }); col.append(m); }
+    m.textContent = `+${hidden} more`;
+  }
+}
+
+// ---- 3. reminders ----------------------------------------------------------------
+const tag = (c, i, s = "md") => `<span class="tag ${s}" style="--tc:var(--tag-${c})"><svg><use href="#i-${i}"/></svg></span>`;
+const REST = [["green", "drop", "Water the plants", "Sunday", true], ["pink", "pill", "Refill Pepper's medicine", "Wednesday", false], ["purple", "paw", "Pepper's flea treatment", "Thu 15 Oct", false], ["amber", "filter", "Change the AC filter", "Thu 15 Oct", false]];
+const rows = (list) => `<div class="rm-list">${list.map(([c, i, n, d, soon]) => `<div class="rm-row">${tag(c, i)}<span class="n">${n}</span><span class="d${soon ? " soon" : ""}">${d}</span></div>`).join("")}</div>`;
+$("#rm1").innerHTML = `<div class="rm"><div class="rm-hero"><div class="icons">${tag("grey", "bin", "lg")}${tag("blue", "recycle", "lg")}</div>
+  <div><div class="when">Tonight</div><div class="what">Trash &amp; recycling out</div></div></div>${rows(REST)}</div>`;
+$("#rm2").innerHTML = `<div class="rm"><div class="rm-hero"><div class="icons">${tag("green", "drop", "lg")}</div>
+  <div><div class="when">Today</div><div class="what">Water the plants</div></div></div>${rows([["pink", "pill", "Refill Pepper's medicine", "Wednesday", false], ["grey", "bin", "Trash & recycling out", "Friday", false], ["purple", "paw", "Pepper's flea treatment", "Thu 15 Oct", false], ["amber", "filter", "Change the AC filter", "Thu 15 Oct", false]])}</div>`;
+// Nothing due: the calm header (shown in the 3×2 below).
+
+// ---- 4. UV -------------------------------------------------------------------------
+// One series: the hourly forecast. "Now" is interpolated from it; so is the end of the window.
+const UV = [[7, .3], [8, 1.1], [9, 2.4], [10, 4.0], [11, 5.7], [12, 7.2], [13, 8.1], [14, 7.8], [15, 7.0], [16, 6.1], [17, 3.4], [18, 1.4], [19, .2]];
+const uvAt = (h) => { for (let i = 0; i < UV.length - 1; i++) if (h >= UV[i][0] && h <= UV[i + 1][0]) return UV[i][1] + (UV[i + 1][1] - UV[i][1]) * (h - UV[i][0]); return 0; };
+const BANDS = [[3, "Low", "--lvl-low"], [6, "Moderate", "--lvl-mod"], [8, "High", "--lvl-high"], [11, "Very high", "--lvl-vhigh"], [99, "Extreme", "--lvl-ext"]];
+const band = (v) => BANDS.find(([max]) => Math.round(v) < max);
+const nowH = 15 + 50 / 60, uvNow = uvAt(nowH);
+let endH = nowH; while (uvAt(endH) >= 3 && endH < 19) endH += 1 / 60;
+const endT = new Date(2026, 9, 2, 0, Math.round(endH * 60 / 15) * 15);
+const [, catName, catVar] = band(uvNow);
+const uvMsg = `Sunscreen until <b>${time(endT)}</b>`;
+$("#uv").innerHTML = `<div class="uv" style="--uvc:var(${catVar})"><div class="uv-num num">${Math.round(uvNow)}</div>
+  <div class="uv-head"><div class="cat">${catName}</div><div class="msg num">${uvMsg}</div></div><div class="uv-plot" id="uvp"></div></div>`;
+$("#uv-s").innerHTML = `<div class="uv-s" style="--uvc:var(${catVar})"><div class="uv-num num">${Math.round(uvNow)}</div>
+  <div><div class="cat">${catName}</div><div class="msg num">${uvMsg.replace(/<\/?b>/g, "")}</div></div></div>`;
+function drawUV() {
+  const host = $("#uvp"); const W = host.clientWidth, H = host.clientHeight;
+  const top = 4, base = H - 22, n = UV.length;
+  const slot = W / n, x = (i) => slot * (i + .5), y = (v) => base - Math.min(v, 11) / 11 * (base - top);
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `UV today: peak 8 at 1 PM, ${Math.round(uvNow)} now` });
+  UV.forEach(([h, v], i) => {
+    const cur = h === Math.floor(nowH), past = h < Math.floor(nowH);
+    const r = svgEl("rect", { x: x(i) - slot / 2 + 3, y: y(v), width: slot - 6, height: Math.max(2, base - y(v)), rx: 3,
+      fill: past ? "var(--past)" : `var(${band(v)[2]})` });
+    if (cur) { r.setAttribute("stroke", "var(--text)"); r.setAttribute("stroke-width", 2.5); }
+    svg.append(r);
+  });
+  svg.append(svgEl("line", { x1: 0, x2: W, y1: base, y2: base, stroke: "var(--card-border)" }));
+  [[0, "7 AM"], [3, "10 AM"], [6, "1 PM"], [9, "4 PM"], [12, "7 PM"]].forEach(([i, t]) =>
+    svg.append(svgEl("text", { x: i === 0 ? 0 : i === 12 ? W : x(i), y: H - 3, "text-anchor": i === 0 ? "start" : i === 12 ? "end" : "middle" }, t)));
+  host.replaceChildren(svg);
+}
+
+// ---- 5. wind -------------------------------------------------------------------------
+const WIND = { from: 225, speed: 14, gust: 26, word: "Breezy" };
+const COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+const cardinal = (deg) => COMPASS[Math.round(deg / 45) % 8];
+const NAMES = { N: "north", NE: "northeast", E: "east", SE: "southeast", S: "south", SW: "southwest", W: "west", NW: "northwest" };
+function dial(host, w, small) {
+  const svg = svgEl("svg", { viewBox: "0 0 100 100", role: "img", "aria-label": `Wind from the ${NAMES[cardinal(w.from)]} at ${w.speed} miles per hour` });
+  svg.append(svgEl("circle", { cx: 50, cy: 50, r: 44, class: "ring" }));
+  for (let a = 0; a < 360; a += 30) { if (a === 0 && !small) continue; const r = a * Math.PI / 180;
+    svg.append(svgEl("line", { x1: 50 + 40 * Math.sin(r), y1: 50 - 40 * Math.cos(r), x2: 50 + 44 * Math.sin(r), y2: 50 - 44 * Math.cos(r), class: "tick" })); }
+  if (!small) svg.append(svgEl("text", { x: 50, y: 13, class: "cp n" }, "N"));
+  // The vane: a wedge inside the ring on the side the wind comes FROM, pointing in,
+  // with that side's letters just outside the ring.
+  const g = svgEl("g", { transform: `rotate(${w.from} 50 50)` });
+  g.append(svgEl("path", { d: "M50 22 L42 6.5 Q50 9.5 58 6.5 Z", class: "vane" }));
+  svg.append(g);
+  if (!small) { const r = w.from * Math.PI / 180;
+    svg.append(svgEl("text", { x: 50 + 61 * Math.sin(r), y: 50 - 61 * Math.cos(r), class: "vl" }, cardinal(w.from))); }
+  svg.append(svgEl("text", { x: 50, y: small ? 57 : 55, class: "spd", style: small ? "font-size:24px" : "font-size:26px" }, String(w.speed)));
+  if (!small) svg.append(svgEl("text", { x: 50, y: 69, class: "unit", style: "font-size:9px" }, "mph"));
+  host.replaceChildren(svg);
+}
+const gustText = WIND.gust - WIND.speed >= 10 ? `Gusts to <b>${WIND.gust} mph</b>` : `Gusts ${WIND.gust} mph`;
+$("#wd").innerHTML = `<div class="wd"><div class="wd-dial" id="wd1"></div>
+  <div class="wd-text"><div class="bf">${WIND.word}</div><div class="from">From the ${NAMES[cardinal(WIND.from)]}</div></div>
+  <div class="wd-gust${WIND.gust - WIND.speed >= 10 ? " strong" : ""}"><b class="num">${WIND.gust}</b><span>gusts, mph</span></div>
+  <div class="wd-hours">${[["5 PM", 230, 15], ["7 PM", 240, 12], ["9 PM", 260, 8], ["11 PM", 300, 5], ["1 AM", 340, 4], ["3 AM", 20, 4]].map(([t, d, s]) =>
+    `<div><b>${s}</b><em>${cardinal(d)}</em><span>${t}</span></div>`).join("")}</div></div>`;
+$("#wd-s").innerHTML = `<div class="wd-s"><div class="wd-dial" id="wd2"></div><div><div class="bf" style="font-weight:750">${WIND.word}</div>
+  <div class="from num">${WIND.speed} mph from the ${cardinal(WIND.from)}</div><div class="from num">Gusts ${WIND.gust} mph</div></div></div>`;
+dial($("#wd1"), WIND); dial($("#wd2"), WIND, true);
+
+// ---- 6. earthquakes ----------------------------------------------------------------
+const Q = [
+  { mag: 4.3, place: "Ridgecrest, CA", brg: 274, mi: 318, ago: "2 h ago", fresh: true },
+  { mag: 3.1, place: "Gulf of California", brg: 183, mi: 281, ago: "Wednesday", old: true },
+  { mag: 2.7, place: "Black Canyon City", brg: 352, mi: 42, ago: "Sunday", old: true },
+];
+const mcls = (m) => "m" + Math.max(2, Math.min(6, Math.floor(m)));
+$("#eq").innerHTML = `<div class="eq"><div class="eq-map" id="eqm"></div><div class="eq-side">
+  <div class="eq-head"><div class="big">3 earthquakes this week</div><div class="sub num">Largest M${Q[0].mag}, ${Q[0].ago}</div></div>
+  <div class="eq-list">${Q.map((q) => `<div class="eq-row ${mcls(q.mag)}"><span class="mag num">${q.mag.toFixed(1)}</span><div style="min-width:0"><div class="p">${q.place}</div>
+    <div class="m num">${q.mi} mi ${cardinal(q.brg)} · ${q.ago}</div></div></div>`).join("")}</div></div></div>`;
+function drawEQ() {
+  const host = $("#eqm"); const S = host.clientHeight;
+  const c = S / 2, R = c - 2;
+  const svg = svgEl("svg", { viewBox: `0 0 ${S} ${S}`, role: "img", "aria-label": "Map of the three quakes around home" });
+  [250, 500].forEach((mi) => {
+    const r = R * mi / 500;
+    svg.append(svgEl("circle", { cx: c, cy: c, r, class: "rng" }));
+    svg.append(svgEl("text", { x: c + r * Math.cos(Math.PI / 4) + 3, y: c + r * Math.sin(Math.PI / 4) + 14, class: "rngl" }, mi === 500 ? "500 mi" : String(mi)));
+  });
+  for (const q of [...Q].reverse()) {
+    const r = R * q.mi / 500, a = q.brg * Math.PI / 180;
+    const rad = Math.min(26, 4 * Math.pow(10, .3 * (q.mag - 2.5)));
+    // Keep clear of the home marker: nudge outward along the true bearing.
+    const rr = Math.max(r, 20 + rad);
+    const x = c + rr * Math.sin(a), y = c - rr * Math.cos(a);
+    const g = svgEl("g", { class: mcls(q.mag) });
+    if (q.fresh) g.append(svgEl("circle", { cx: x, cy: y, r: rad, class: "ping" }));
+    // Older than a day: a ring, not a dot.
+    g.append(svgEl("circle", { cx: x, cy: y, r: rad, class: "q" + (q.old ? " old" : "") }));
+    svg.append(g);
+  }
+  // Home: a small house drawn last, so it's never hidden by a nearby quake.
+  const home = svgEl("g", { transform: `translate(${c - 9} ${c - 9})` });
+  home.append(svgEl("path", { d: "M9 1 L17 8 V17 H1 V8 Z", class: "home", stroke: "var(--card-bg)", "stroke-width": 2, "stroke-linejoin": "round" }));
+  svg.append(home);
+  svg.append(svgEl("text", { x: c + 14, y: c + 5, class: "rngl", fill: "var(--text)" }, "Home"));
+  host.replaceChildren(svg);
+}
+
+// ---- 7. tides ------------------------------------------------------------------------
+// One series: NOAA's highs and lows. The curve, the "now" height and the headline all come from tideAt().
+const EV = [[-1.0, 5.2], [5.3, -0.2], [11.6, 3.8], [14.5, 2.4], [17.7, 5.9], [24.6, 0.6]];
+const tideAt = (h) => { for (let i = 0; i < EV.length - 1; i++) { const [t0, v0] = EV[i], [t1, v1] = EV[i + 1];
+  if (h >= t0 && h <= t1) return v0 + (v1 - v0) * (1 - Math.cos(Math.PI * (h - t0) / (t1 - t0))) / 2; } return 0; };
+const hh = (h) => time(new Date(2026, 9, 2, 0, Math.round(h * 60)));
+const nextEv = EV.find(([h]) => h > nowH), rising = nextEv[1] > tideAt(nowH);
+$("#td").innerHTML = `<div class="td"><div class="td-head"><div>
+    <div class="big"><svg style="${rising ? "" : "transform:rotate(180deg)"}"><use href="#up"/></svg>${rising ? "Rising" : "Falling"} until ${hh(nextEv[0])}</div>
+    <div class="sub num">${rising ? "High" : "Low"} ${nextEv[1].toFixed(1)} ft in ${span((nextEv[0] - nowH) * 3600000)} · San Diego</div></div>
+  <div class="td-now"><b class="num">${tideAt(nowH).toFixed(1)} ft</b><span>now</span></div></div><div class="td-plot" id="tdp"></div></div>`;
+function drawTide() {
+  const host = $("#tdp"); const W = host.clientWidth, H = host.clientHeight;
+  // Highs are labelled above their peak (room at the top); lows above their
+  // trough, where the curve leaves the space empty. So the curve gets the rest.
+  const top = 38, base = H - 22, low = base - 6;
+  const x = (h) => h / 24 * W, y = (v) => top + (1 - (v + .3) / 6.4) * (low - top);
+  const path = (a, b) => { let d = ""; for (let h = a; h <= b + 1e-9; h += .125) d += (d ? " L" : "M") + x(h).toFixed(1) + " " + y(tideAt(h)).toFixed(1); return d; };
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Tide today" });
+  svg.append(svgEl("path", { d: `${path(0, nowH)} L${x(nowH)} ${base} L0 ${base} Z`, class: "water past" }));
+  svg.append(svgEl("path", { d: `${path(nowH, 24)} L${W} ${base} L${x(nowH)} ${base} Z`, class: "water" }));
+  svg.append(svgEl("path", { d: path(0, nowH), class: "line past" }));
+  svg.append(svgEl("path", { d: path(nowH, 24), class: "line" }));
+  EV.filter(([h]) => h > 0 && h < 24).forEach(([h, v]) => {
+    const hi = v > tideAt(h - .5), past = h < nowH;
+    let lx = x(h); const half = 34;
+    if (Math.abs(lx - x(nowH)) < half + 6) lx = x(nowH) + (lx < x(nowH) ? -(half + 6) : half + 6);
+    lx = Math.max(half, Math.min(W - half, lx));
+    const cls = past ? " past" : "";
+    const up = hi ? 0 : 10; // a trough's sides rise; lift its label clear of them
+    svg.append(svgEl("text", { x: lx, y: y(v) - 26 - up, class: "hl" + cls }, `${v.toFixed(1).replace("-", "−")} ft`));
+    svg.append(svgEl("text", { x: lx, y: y(v) - 9 - up, class: "hlt" + cls }, hh(h)));
+  });
+  svg.append(svgEl("line", { x1: x(nowH), x2: x(nowH), y1: y(tideAt(nowH)), y2: base, class: "nowl" }));
+  svg.append(svgEl("circle", { cx: x(nowH), cy: y(tideAt(nowH)), r: 7, class: "nowd" }));
+  svg.append(svgEl("line", { x1: 0, x2: W, y1: base, y2: base, class: "axl" }));
+  [[0, "Midnight"], [6, "6 AM"], [12, "Noon"], [18, "6 PM"]].forEach(([h, t]) =>
+    svg.append(svgEl("text", { x: x(h), y: H - 3, class: "ax", "text-anchor": h === 0 ? "start" : "middle" }, t)));
+  host.replaceChildren(svg);
+}
+
+// ---- 9. service status ---------------------------------------------------------------
+const hist = (p) => p.split("").map((c) => `<i class="${c === "x" ? "x" : c === "w" ? "w" : ""}"></i>`).join("");
+function sv(id, down) {
+  const all = [
+    ["NAS", down ? "Down" : "38 ms", down ? "down" : "", down ? "oooooooooxxx" : "oooooooooooo"],
+    ["Printer", "1.2 s", "slow", "oooooowooww w".replace(" ", "")],
+    ["Home Assistant", "21 ms", "", "oooooooooooo"],
+    ["Plex", "64 ms", "", "oooooooooooo"],
+    ["Pi-hole", "4 ms", "", "oooooooooooo"],
+    ["Router", "2 ms", "", "oooooooooooo"],
+    ["Unifi controller", "41 ms", "", "oooooooooooo"],
+    ["Grafana", "55 ms", "", "oooooooooooo"],
+    ["Nextcloud", "88 ms", "", "oooooooooooo"],
+    ["Backups (rsync)", "3 ms", "", "oooooooooooo"],
+  ];
+  const fit = 6, shown = all.slice(0, fit), rest = all.length - fit;
+  const head = down
+    ? `<div class="sv-head" style="--tone:var(--bad)"><span class="badge"><svg><use href="#i-xc"/></svg></span><div><div class="big">NAS is down</div><div class="sub num">For 12 min · ${all.length - 1} others up</div></div></div>`
+    : `<div class="sv-head" style="--tone:var(--ok)"><span class="badge"><svg><use href="#i-check"/></svg></span><div><div class="big">All ${all.length} up</div><div class="sub num">Printer is slow · checked 20 s ago</div></div></div>`;
+  $(id).innerHTML = `<div class="sv">${head}<div class="sv-list">${shown.map(([n, ms, cls, h]) =>
+    `<div class="sv-row ${cls}"><span class="s"></span><span class="n">${n}</span><span class="ms num">${ms}</span><span class="sv-hist" aria-hidden="true">${hist(h)}</span></div>`).join("")}
+    ${rest > 0 ? `<div class="sv-more">+${rest} more, all up</div>` : ""}</div></div>`;
+}
+sv("#sv1", true); sv("#sv2", false);
+
+function drawAll() { drawUV(); drawEQ(); drawTide(); }
+drawAll();
+document.querySelectorAll(".mock [data-t]").forEach((b) => b.onclick = () => {
+  document.documentElement.dataset.theme = b.dataset.t;
+  document.querySelectorAll(".mock [data-t]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  drawAll();
+});
+addEventListener("resize", drawAll);
+</script>
+</body>
+</html>

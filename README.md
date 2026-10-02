@@ -116,6 +116,30 @@ slides edited in the widget form), `heads-up` (pinned glance strip: clock, weath
 calendar countdown, print status — enable **Pin to all pages**), `photos` (local
 NAS folder slideshow via `PHOTOS_DIR`, optional `./photos` Docker mount).
 
+Also, all keyless (mocks and the review trail in `mocks/widgets-2.html`):
+
+- `up-next`: now and next from one or more iCal calendars (a colour per person),
+  the countdown to the next event, the rest of today, "Free for the rest of the day".
+- `week-ahead`: seven columns with each day's weather; all-day events span their
+  days, holidays give way first, overflow becomes "+N more".
+- `reminders`: recurring chores (weekly, every few weeks, monthly, yearly, once);
+  today's (or tonight's, for bin night) takes an amber banner. No network.
+- `uv-index`: UV now and its WHO band, "Sunscreen until 5:15 PM", today's hours.
+- `wind`: compass vane on the side the wind comes from, Beaufort word, gusts, next hours.
+- `earthquakes`: USGS quakes within a radius of home on a distance/bearing map.
+- `tides`: NOAA predictions for the nearest US station (or a chosen one); rising or
+  falling until when, today's curve.
+- `launches`: Launch Library 2 countdown to the next rocket launch, Go / TBD / Holding.
+- `service-status`: up/down and response time for LAN services (`http://…` or
+  `host:port`), checked from the Pi; targets are read from the saved config by
+  widget id, never from the request.
+- `on-this-day`: Wikipedia's anniversaries for today, one every few minutes.
+
+They share one formatter (`web/js/widgets/fmt.js`: "4:55 PM", "Sunday", "1 h 5 min"),
+the `--tag-*` and `--lvl-*` colour tokens, and the setup / error / out-of-date states.
+The `ical` provider now returns `end` times and real instants ("…Z") for zoned
+events, expanding recurrences on the wall clock so they hold across DST.
+
 `embed` runs a pasted `<div>+<script>` snippet (TradingView and similar) inside a
 sandboxed iframe via `srcdoc` — for third-party widgets that ship code rather than
 a URL (use `iframe` for plain embeddable pages). In the admin, pick a TradingView
