@@ -93,7 +93,9 @@ export function defaultSettings(type) {
   const out = {};
   for (const f of plugin?.schema?.fields || []) {
     if (f.type === "note" || f.default === undefined) continue;
-    out[f.key] = f.default;
+    // Cloned: a list default (world clocks, countdown events) must not be one
+    // array shared by every widget created from it.
+    out[f.key] = structuredClone(f.default);
   }
   return out;
 }

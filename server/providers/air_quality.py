@@ -35,17 +35,27 @@ class AirQualityProvider(Provider):
                 params={
                     "latitude": lat,
                     "longitude": lon,
-                    "current": "us_aqi,pm2_5,pm10,ozone,nitrogen_dioxide",
+                    "current": "us_aqi,pm2_5,pm10,ozone,nitrogen_dioxide,"
+                               "us_aqi_pm2_5,us_aqi_pm10,us_aqi_ozone,us_aqi_nitrogen_dioxide",
                     "timezone": "auto",
                 },
             )
             r.raise_for_status()
             cur = r.json().get("current", {})
         aqi = cur.get("us_aqi")
+        # The overall AQI is the worst pollutant's sub-index; name that one.
+        subs = {
+            "PM2.5": cur.get("us_aqi_pm2_5"),
+            "PM10": cur.get("us_aqi_pm10"),
+            "Ozone": cur.get("us_aqi_ozone"),
+            "Nitrogen dioxide": cur.get("us_aqi_nitrogen_dioxide"),
+        }
+        ranked = sorted(((v, k) for k, v in subs.items() if v is not None), reverse=True)
         return {
             "location": {"city": loc.get("city"), "region": loc.get("region")},
             "aqi": aqi,
             "category": _category(aqi),
+            "mainPollutant": ranked[0][1] if ranked else None,
             "pollutants": {
                 "pm2_5": cur.get("pm2_5"),
                 "pm10": cur.get("pm10"),

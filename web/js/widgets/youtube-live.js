@@ -10,7 +10,7 @@
 // API so the player keeps its position. The iframe stays mounted — blanking it
 // would restart from t=0.
 import { define } from "./registry.js";
-import { el, effectiveSettings, fetchData } from "./dom.js";
+import { el, effectiveSettings, fetchData, stateView } from "./dom.js";
 
 const LIVE_RECHECK_MS = 120000; // 2 min — backend re-verify is cheap (1 quota unit)
 
@@ -51,7 +51,10 @@ async function load(handle) {
   if (s.url && s.url.trim()) {
     const src = embedFromUrl(s.url.trim());
     if (!src) {
-      handle.wrap.replaceChildren(el("div", { class: "widget-error" }, "Couldn't read that YouTube link"));
+      handle.wrap.replaceChildren(stateView({
+        tone: "error", icon: "link", title: "That isn't a YouTube link this can play",
+        body: "Use a video, live stream or playlist link.", where: "Admin › Layout › this widget",
+      }));
       return;
     }
     embed(handle, src + params);
@@ -61,22 +64,27 @@ async function load(handle) {
   // 2) channel live mode → resolve via backend
   const channelId = (s.channelId || "").trim();
   if (!channelId) {
-    handle.wrap.replaceChildren(el("div", { class: "widget-empty" }, "Paste a YouTube URL, or set a Channel ID for live"));
+    handle.wrap.replaceChildren(stateView({
+      icon: "link", title: "Add a YouTube video",
+      body: "Paste a video link, or a channel ID to show its live stream.", where: "Admin › Layout › this widget",
+    }));
     return;
   }
   let data;
   try {
     data = await fetchData("youtube-live", { channelId });
   } catch {
-    handle.wrap.replaceChildren(el("div", { class: "widget-error" }, "YouTube lookup failed"));
+    handle.wrap.replaceChildren(stateView({ tone: "error", icon: "offline", title: "Can't reach YouTube", body: "It will check again shortly." }));
     return;
   }
   if (data.needsKey) {
-    handle.wrap.replaceChildren(el("div", { class: "widget-error" }, `Set ${data.env} (API keys panel) for live channel mode`));
+    handle.wrap.replaceChildren(stateView({
+      icon: "key", title: "Add a YouTube API key", body: "Needed to find a channel's live stream.", where: "Admin › Settings › API keys",
+    }));
     return;
   }
   if (!data.videoId) {
-    handle.wrap.replaceChildren(el("div", { class: "widget-empty" }, "Channel isn't live right now"));
+    handle.wrap.replaceChildren(el("div", { class: "widget-empty" }, "Not live right now. It will appear when the stream starts."));
     scheduleRecheck(handle, channelId);
     return;
   }

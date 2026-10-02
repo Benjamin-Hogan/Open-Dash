@@ -1,14 +1,14 @@
 // Calendar agenda from a public iCal (.ics) feed — parsed server-side (provider
 // "ical", with recurrence expansion). Shows upcoming events, grouped by day.
 import { define } from "./registry.js";
-import { el, fetchData, effectiveSettings } from "./dom.js";
+import { el, fetchData, effectiveSettings, stateView, markOk, markFailed } from "./dom.js";
 
 function clean(o) {
   return Object.fromEntries(Object.entries(o).filter(([, v]) => v != null && v !== ""));
 }
 
 define("ical", {
-  meta: { label: "Calendar", description: "Agenda from an iCal feed", category: "data" },
+  meta: { defaultRefreshSeconds: 900, label: "Calendar", description: "Agenda from an iCal feed", category: "data" },
   schema: {
     fields: [
       { key: "url", label: "iCal URL (.ics — Google/Outlook 'public address')", type: "text", required: true, placeholder: "https://…/basic.ics" },
@@ -27,7 +27,13 @@ define("ical", {
   },
   async refresh(handle) {
     const s = effectiveSettings(handle.widget);
-    if (!s.url) { handle.body.replaceChildren(el("div", { class: "widget-empty" }, "Set an iCal URL")); return; }
+    if (!s.url) {
+      handle.body.replaceChildren(stateView({
+        icon: "calendar", title: "Add a calendar",
+        body: "Paste the calendar's iCal link into this widget.", where: "Admin › Layout › this widget",
+      }));
+      return;
+    }
     try {
       const d = await fetchData("ical", clean({
         url: s.url,
@@ -36,7 +42,7 @@ define("ical", {
         cacheTtl: s.cacheTtlSeconds,
       }));
       const events = d.events || [];
-      if (!events.length) { handle.body.replaceChildren(el("div", { class: "widget-empty" }, "No upcoming events")); return; }
+      if (!events.length) { handle.body.replaceChildren(el("div", { class: "widget-empty" }, "Nothing coming up")); markOk(handle); return; }
       const rows = [];
       let lastDay = "";
       for (const ev of events) {
@@ -56,8 +62,9 @@ define("ical", {
         rows.push(el("div", { class: "ical-ev" }, bits));
       }
       handle.body.replaceChildren(el("div", { class: "ical-list" }, rows));
+      markOk(handle);
     } catch {
-      handle.body.replaceChildren(el("div", { class: "widget-error" }, "calendar unavailable"));
+      markFailed(handle, "Can't load the calendar", undefined, () => this.refresh(handle));
     }
   },
 });

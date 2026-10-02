@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Widget Refresh Mock</title>
+<style>
+/* Tokens as they will land in web/css/dashboard.css. */
+:root{
+  --bg:#0c0e12;--card-bg:#161a22;--card-border:#232936;--text:#e8edf4;--muted:#a3aec0;
+  --accent:#4aa3ff;--ok:#3fc77a;--warn:#e7b25a;--bad:#f26d78;--rain:#58a6ff;--sun:#ffd158;--cloud:#9fb0c8;
+  --moon-lit:#ece6d2;--moon-dark:#3a4252;--night:#c9c3ff;
+  /* Wall-reading floor: nothing a viewer needs to read is under 15px. */
+  --fs-meta:.9375rem;   /* 15px: decorative metadata only */
+  --fs-label:1rem;      /* 16px: labels, supporting text */
+  --fs-2nd:1.125rem;    /* 18px: second-tier values (hi/lo, rain %, times) */
+  font-size:16px;
+}
+[data-theme="light"]{
+  --bg:#f1f3f7;--card-bg:#fff;--card-border:#d8dee9;--text:#1a2230;--muted:#4f596a;
+  --accent:#0b62c4;--ok:#157f45;--warn:#8a5a04;--bad:#c22f3c;--rain:#1f62c0;--sun:#a86f00;--cloud:#6b7c96;
+  --moon-lit:#fff8e1;--moon-dark:#aab2c0;--night:#4b45a0;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:24px 24px 96px}
+.page-head{max-width:1320px;margin:0 auto 20px}
+.page-head h1{margin:0;font-size:1.375rem}
+.page-head p{margin:6px 0 0;color:var(--muted);max-width:78ch;line-height:1.5}
+section{max-width:1320px;margin:30px auto 0}
+section>h2{margin:0 0 4px;font-size:1.125rem}
+section>p{margin:0 0 14px;color:var(--muted);font-size:15px;max-width:90ch;line-height:1.5}
+.row{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start}
+.spec{display:grid;gap:6px}
+.spec>span{font-size:13px;color:var(--muted)}
+.spec>span b{color:var(--text);font-weight:600}
+.num{font-variant-numeric:tabular-nums}
+
+/* card shell, as on the display */
+.card{position:relative;background:var(--card-bg);border:1px solid var(--card-border);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;width:var(--w);height:var(--h)}
+.card-title{font-size:var(--fs-label);font-weight:600;color:var(--muted);padding:10px 14px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.body{flex:1;min-height:0;position:relative;padding:12px 16px;container-type:size}
+svg.ic{display:block}
+
+/* ---- shared states ---------------------------------------------------- */
+.state{height:100%;display:grid;place-content:center;justify-items:center;gap:6px;text-align:center;padding:0 8px}
+.state .ico{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;margin-bottom:4px;
+  background:color-mix(in srgb,var(--tone) 16%,transparent);color:var(--tone)}
+.state{--tone:var(--accent)}
+.state.error{--tone:var(--bad)}
+.state .t{font-size:1.125rem;font-weight:650}
+.state .d{font-size:var(--fs-label);color:var(--muted);max-width:30ch;line-height:1.45}
+.state .where{margin-top:4px;font-size:var(--fs-meta);color:var(--text);padding:3px 12px;border-radius:999px;border:1px solid var(--card-border)}
+.stale-badge{position:absolute;top:9px;right:12px;z-index:2;display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-meta);font-weight:600;color:var(--warn);padding:2px 10px;border-radius:999px;border:1px solid color-mix(in srgb,var(--warn) 45%,transparent);background:var(--card-bg)}
+.stale-badge::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--warn)}
+.card.stale .body>:not(.stale-badge){opacity:.7}
+svg.i{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+/* ---- weather ------------------------------------------------------------ */
+.wx{height:100%;display:grid;align-content:space-between;gap:10px}
+.wx-now{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:14px}
+.wx-ico{width:min(28cqh,88px);height:min(28cqh,88px)}
+.wx-temp{font-size:min(18cqh,3.75rem);font-weight:700;line-height:1;letter-spacing:-.02em}
+.wx-sum{font-size:var(--fs-2nd);font-weight:600;margin-top:4px}
+.wx-loc{font-size:var(--fs-label);color:var(--muted);margin-top:2px}
+.wx-facts{display:grid;gap:3px;font-size:var(--fs-label);color:var(--muted);text-align:right;white-space:nowrap}
+.wx-facts b{color:var(--text);font-weight:650;font-size:var(--fs-2nd)}
+.wx-days{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;border-top:1px solid var(--card-border);padding-top:10px}
+.wx-day{display:grid;justify-items:center;gap:2px}
+.wx-day .dw{font-weight:650;font-size:var(--fs-label)}
+.wx-day.today .dw{color:var(--accent)}
+.wx-day svg{width:32px;height:32px}
+.wx-day .hl{font-size:var(--fs-2nd)}.wx-day .hl b{font-weight:700}.wx-day .hl span{color:var(--muted);margin-left:5px}
+.wx-day .pp{font-size:var(--fs-label);font-weight:600;color:var(--rain)}
+.wx-day .pp.dry{color:var(--muted);font-weight:400}
+.wx-hours{display:grid;grid-template-columns:repeat(7,1fr);border-top:1px solid var(--card-border);padding-top:8px}
+.wx-hours div{display:grid;justify-items:center;gap:1px;font-size:var(--fs-meta);color:var(--muted)}
+.wx-hours svg{width:28px;height:28px}
+.wx-hours b{color:var(--text);font-size:var(--fs-2nd);font-weight:650}
+.wx-hours .pp{color:var(--muted)}
+/* small: a two-column glance */
+.wx-small{height:100%;display:grid;grid-template-columns:1fr auto;align-items:center;gap:12px}
+.wx-small .lead{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:10px}
+.wx-small .wx-ico{width:min(30cqw,52cqh);height:min(30cqw,52cqh)}
+.wx-small .wx-temp{font-size:min(24cqw,44cqh)}
+.wx-small .wx-sum{font-size:var(--fs-label);margin-top:2px}
+
+/* ---- next 24 hours ------------------------------------------------------ */
+.h24{height:100%;display:grid;grid-template-rows:auto 1fr;gap:6px}
+.h24 .sumline{font-size:1.25rem;font-weight:650}
+.h24 .sumline span{display:block;color:var(--muted);font-weight:400;font-size:var(--fs-label);margin-top:2px}
+.h24 .plot{position:relative;min-height:0}
+.h24 .plot svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.h24 text{font-size:15px;fill:var(--muted);font-variant-numeric:tabular-nums}
+.h24 .tl{font-size:17px;fill:var(--text);font-weight:650}
+.h24 .rl{font-size:15px;fill:var(--rain);font-weight:650}
+
+/* ---- sun & moon --------------------------------------------------------- */
+.sm{height:100%;display:grid;grid-template-columns:1.4fr 1fr;gap:16px}
+.sm-sun{display:grid;grid-template-rows:auto 1fr auto;min-width:0;gap:2px}
+.sm-head{font-size:1.375rem;font-weight:700}
+.sm-arc{min-height:0;position:relative}
+.sm-arc svg{position:absolute;inset:0;width:100%;height:100%}
+.sm-times{display:flex;justify-content:space-between;font-size:var(--fs-label);color:var(--muted)}
+.sm-times b{display:block;color:var(--text);font-size:var(--fs-2nd);font-weight:650}
+.sm-day{font-size:var(--fs-label);color:var(--muted);margin-top:4px}
+.sm-day b{color:var(--text);font-weight:650}
+.sm-moon{display:grid;justify-items:center;align-content:center;gap:2px;border-left:1px solid var(--card-border);padding-left:14px;text-align:center}
+.sm-moon svg{width:min(44cqh,100px);height:min(44cqh,100px);margin-bottom:4px}
+.sm-moon .ph{font-weight:650;font-size:var(--fs-2nd)}
+.sm-moon .mt{font-size:var(--fs-label);color:var(--muted)}
+
+/* ---- world clocks ------------------------------------------------------- */
+.wc{height:100%;display:grid;align-content:space-evenly}
+.wc-row{display:grid;grid-template-columns:26px 1fr auto;align-items:center;gap:12px;padding:6px 0}
+.wc-row+.wc-row{border-top:1px solid var(--card-border)}
+.wc-city{font-size:var(--fs-2nd);font-weight:650}
+.wc-off{font-size:var(--fs-label);color:var(--muted)}
+.wc-time{font-size:min(15cqh,2.25rem);font-weight:700;font-variant-numeric:tabular-nums;text-align:right;line-height:1}
+.wc-time small{font-size:.5em;font-weight:600;color:var(--muted);margin-left:4px}
+.wc .dn{width:24px;height:24px}
+
+/* ---- countdown ---------------------------------------------------------- */
+.cd{height:100%;display:grid;grid-template-rows:1fr auto;gap:10px}
+.cd-hero{display:grid;align-content:center;justify-items:start}
+.cd-n{font-size:min(34cqh,4.75rem);font-weight:750;line-height:.95;letter-spacing:-.03em;color:var(--accent)}
+.cd-n small{font-size:.36em;font-weight:650;color:var(--text);margin-left:8px;letter-spacing:0}
+.cd-what{font-size:1.25rem;font-weight:650;margin-top:8px}
+.cd-when{font-size:var(--fs-label);color:var(--muted);margin-top:2px}
+.cd-list{border-top:1px solid var(--card-border);padding-top:8px;display:grid;gap:4px}
+.cd-item{display:flex;justify-content:space-between;gap:12px;font-size:var(--fs-2nd)}
+.cd-item b{font-weight:600}.cd-item span{color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.cd.today .cd-n{font-size:min(16cqh,2.25rem);color:var(--ok)}
+.cd.today .cd-what{font-size:min(17cqh,2.25rem);font-weight:750;margin-top:4px;line-height:1.1}
+
+/* ---- air quality -------------------------------------------------------- */
+.aq{height:100%;display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:center}
+.aq-gauge{width:min(80cqh,190px)}
+.aq-gauge svg{width:100%;height:auto;display:block;overflow:visible}
+.aq-gauge text{font-size:11px;fill:var(--muted);font-variant-numeric:tabular-nums}
+.aq-gauge .v{font-size:30px;font-weight:750;fill:var(--text)}
+.aq-cat{font-size:1.375rem;font-weight:750}
+.aq-msg{font-size:var(--fs-label);color:var(--muted);line-height:1.45;margin-top:4px;max-width:28ch}
+.aq-main{font-size:var(--fs-label);margin-top:8px}.aq-main b{font-weight:650}
+.aq-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.aq-chip{font-size:var(--fs-meta);padding:2px 10px;border-radius:999px;border:1px solid var(--card-border);color:var(--muted)}
+.aq-chip b{color:var(--text);font-weight:650;margin:0 3px}
+
+/* ---- pi stats ----------------------------------------------------------- */
+.ps{height:100%;display:grid;grid-template-rows:1fr auto;gap:8px}
+.ps-rings{display:flex;justify-content:space-around;align-items:center}
+.ring{display:grid;justify-items:center;gap:4px;font-size:var(--fs-label);color:var(--muted)}
+.ring svg{width:min(56cqh,96px);height:auto}
+.ring text{font-size:19px;font-weight:700;fill:var(--text);font-variant-numeric:tabular-nums}
+.ps-foot{display:flex;justify-content:center;gap:8px;font-size:var(--fs-label);color:var(--muted)}
+.ps-foot span{border:1px solid var(--card-border);border-radius:999px;padding:2px 12px}
+.ps-foot b{color:var(--text);font-weight:650;margin-left:5px}
+
+/* motion: only the lead icon on a card moves, and only gently */
+@media (prefers-reduced-motion:no-preference){.anim .rays{animation:spin 40s linear infinite;transform-origin:32px 32px}@keyframes spin{to{transform:rotate(1turn)}}}
+
+/* mock-only switcher */
+.mock{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:50;display:flex;gap:6px;padding:6px 6px 6px 12px;border-radius:999px;background:#2b1f4a;color:#e9e1ff;font:12px system-ui;box-shadow:0 8px 24px rgb(0 0 0/.4)}
+.mock button{height:26px;padding:0 10px;border-radius:999px;border:0;background:transparent;color:inherit;font:inherit;cursor:pointer}
+.mock button[aria-pressed="true"]{background:#e9e1ff;color:#2b1f4a}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="sun" viewBox="0 0 64 64"><g class="rays" stroke="var(--sun)" stroke-width="3.2" stroke-linecap="round"><line x1="32" y1="5" x2="32" y2="13"/><line x1="32" y1="51" x2="32" y2="59"/><line x1="5" y1="32" x2="13" y2="32"/><line x1="51" y1="32" x2="59" y2="32"/><line x1="13" y1="13" x2="18.6" y2="18.6"/><line x1="45.4" y1="45.4" x2="51" y2="51"/><line x1="13" y1="51" x2="18.6" y2="45.4"/><line x1="45.4" y1="18.6" x2="51" y2="13"/></g><circle cx="32" cy="32" r="11.5" fill="var(--sun)"/></symbol>
+  <symbol id="night" viewBox="0 0 64 64"><path d="M44 42a17 17 0 0 1-21.5-25.5A19 19 0 1 0 47.5 40 17 17 0 0 1 44 42z" fill="var(--night)" transform="translate(-2 2)"/></symbol>
+  <symbol id="part" viewBox="0 0 64 64"><g transform="translate(4 -4) scale(.74)"><circle cx="32" cy="32" r="11.5" fill="var(--sun)"/><g stroke="var(--sun)" stroke-width="3.2" stroke-linecap="round"><line x1="32" y1="5" x2="32" y2="13"/><line x1="5" y1="32" x2="13" y2="32"/><line x1="13" y1="13" x2="18.6" y2="18.6"/><line x1="45.4" y1="18.6" x2="51" y2="13"/></g></g><path fill="var(--cloud)" d="M24 54a9.5 9.5 0 0 1-1-18.9A13.5 13.5 0 0 1 49 31.5 10 10 0 0 1 49 54z"/></symbol>
+  <symbol id="rain" viewBox="0 0 64 64"><path fill="var(--cloud)" d="M22 42a9.5 9.5 0 0 1-1-18.9A13.5 13.5 0 0 1 47 19.5 10 10 0 0 1 47 42z"/><g stroke="var(--rain)" stroke-width="3" stroke-linecap="round"><line x1="24" y1="48" x2="22" y2="56"/><line x1="34" y1="48" x2="32" y2="56"/><line x1="44" y1="48" x2="42" y2="56"/></g></symbol>
+  <symbol id="moonico" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" fill="var(--night)"/></symbol>
+  <symbol id="sunico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5" fill="var(--sun)"/><g stroke="var(--sun)" stroke-width="2" stroke-linecap="round"><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></g></symbol>
+</svg>
+
+<header class="page-head">
+  <h1>Widget refresh</h1>
+  <p>Built-in widgets at the sizes they usually get on a 1280×720 screen with Fill the screen on. Every widget below uses one shared data set: Phoenix, Thursday, October 1 at 5:58 PM. Sun and moon values come from the same astronomy code the widgets will use (checked against published sunrise, sunset and moon-phase times).</p>
+</header>
+
+<!-- ================= IMPROVED ================= -->
+<section>
+  <h2>Weather</h2>
+  <p>Fixes the forecast labels (they showed the day before). Adds today's high and low, wind, and rain chance for every day ("Dry" when it's zero). Small shows the glance, medium adds five days, large adds the next hours with their own icons and rain chance. Only the lead icon animates.</p>
+  <div class="row">
+    <div class="spec"><span><b>Small</b> 3×1</span>
+      <div class="card" style="--w:300px;--h:150px"><div class="body"><div class="wx-small">
+        <div class="lead"><svg class="ic wx-ico anim"><use href="#sun"/></svg><div><div class="wx-temp num">91°</div><div class="wx-sum">Clear</div></div></div>
+        <div class="wx-facts num"><div>High <b>97°</b></div><div>Low <b>72°</b></div><div>Wind <b>8 mph</b></div></div>
+      </div></div></div>
+    </div>
+    <div class="spec"><span><b>Medium</b> 5×2</span>
+      <div class="card" style="--w:520px;--h:300px"><div class="body" id="wx-med"></div></div>
+    </div>
+    <div class="spec"><span><b>Large</b> 6×3, with the next hours</span>
+      <div class="card" style="--w:600px;--h:400px"><div class="body" id="wx-large"></div></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Air quality</h2>
+  <p>A gauge with the official AQI bands and numbered ticks replaces the flat yellow strip. The category is spelled out, with what it means and the main pollutant, so colour is never the only signal.</p>
+  <div class="row">
+    <div class="spec"><span><b>Medium</b> 4×2</span>
+      <div class="card" style="--w:460px;--h:270px"><div class="card-title">Air quality</div><div class="body"><div class="aq">
+        <div class="aq-gauge" id="aq-gauge"></div>
+        <div><div class="aq-cat" id="aq-cat">Moderate</div>
+          <div class="aq-msg">Fine for most people. If you're unusually sensitive, take it easy outdoors.</div>
+          <div class="aq-main">Main pollutant: <b>Ozone</b></div>
+          <div class="aq-chips num"><span class="aq-chip">PM2.5<b>12</b>µg/m³</span><span class="aq-chip">PM10<b>18</b>µg/m³</span></div></div>
+      </div></div></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Pi stats</h2>
+  <p>Rings colour by threshold, not by metric: green while normal, amber above the warning level (CPU 80%, memory 85%, 70°C), red above the hot level. Units on every value. When the dashboard isn't running on the Pi, a message replaces the empty rings.</p>
+  <div class="row">
+    <div class="spec"><span><b>Normal</b> 4×2</span>
+      <div class="card" style="--w:460px;--h:270px"><div class="card-title">Pi stats</div><div class="body"><div class="ps">
+        <div class="ps-rings" id="rings"></div>
+        <div class="ps-foot num"><span>Load<b>0.42</b></span><span>Up<b>6 d 4 h</b></span></div>
+      </div></div></div>
+    </div>
+    <div class="spec"><span><b>Not on a Pi</b></span>
+      <div class="card" style="--w:460px;--h:270px"><div class="card-title">Pi stats</div><div class="body"><div class="state">
+        <div class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg></div>
+        <div class="t">No system stats here</div>
+        <div class="d">They appear when the dashboard runs on the Raspberry Pi.</div>
+      </div></div></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Setup, error and out-of-date states</h2>
+  <p>One design for every widget, always under the widget's title. <b style="color:var(--accent)">Blue</b> means something to set up, with where to do it. <b style="color:var(--bad)">Red</b> means it couldn't get data and nothing is on screen yet, and says when it will try again. <b style="color:var(--warn)">Amber</b> means a refresh failed but the last good data is still shown, marked with how old it is (here, readings from 3:58 PM).</p>
+  <div class="row">
+    <div class="spec"><span><b>Needs setup</b></span>
+      <div class="card" style="--w:380px;--h:250px"><div class="card-title">Calendar</div><div class="body"><div class="state">
+        <div class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></div>
+        <div class="t">Add a calendar</div>
+        <div class="d">Paste the calendar's iCal link into this widget.</div>
+        <div class="where">Admin › Layout › Calendar</div>
+      </div></div></div>
+    </div>
+    <div class="spec"><span><b>Needs a key</b></span>
+      <div class="card" style="--w:380px;--h:250px"><div class="card-title">Stocks</div><div class="body"><div class="state">
+        <div class="ico"><svg class="i" viewBox="0 0 24 24"><circle cx="8" cy="14" r="4"/><path d="M11 11l9-9M17 5l2 2M15 7l2 2"/></svg></div>
+        <div class="t">Add a stock data key</div>
+        <div class="d">Quotes come from Finnhub; a free key is enough.</div>
+        <div class="where">Admin › Settings › API keys</div>
+      </div></div></div>
+    </div>
+    <div class="spec"><span><b>Can't connect</b>, nothing to show</span>
+      <div class="card" style="--w:380px;--h:250px"><div class="card-title">Weather</div><div class="body"><div class="state error">
+        <div class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M3 9a14 14 0 0 1 18 0M6.5 12.5a9 9 0 0 1 11 0M10 16a4 4 0 0 1 4 0"/><path d="M4 4l16 16"/><circle cx="12" cy="19.5" r=".8" fill="currentColor"/></svg></div>
+        <div class="t">Can't reach the weather service</div>
+        <div class="d">Trying again in 5 minutes. Check the Pi's internet if it keeps happening.</div>
+      </div></div></div>
+    </div>
+    <div class="spec"><span><b>Out of date</b>, keeps the last data</span>
+      <div class="card stale" style="--w:380px;--h:250px"><div class="card-title">Weather</div><div class="body"><span class="stale-badge">Updated 2 h ago</span><div class="wx-small">
+        <div class="lead"><svg class="ic wx-ico"><use href="#sun"/></svg><div><div class="wx-temp num">94°</div><div class="wx-sum">Clear</div></div></div>
+        <div class="wx-facts num"><div>High <b>97°</b></div><div>Low <b>72°</b></div><div>Wind <b>10 mph</b></div></div>
+      </div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= NEW ================= -->
+<section>
+  <h2>New: Next 24 hours</h2>
+  <p>Temperature as a line, chance of rain as bars against a 50% guide, and one sentence that answers "do I need an umbrella?" for exactly the window shown. No setup: it uses the home location.</p>
+  <div class="row">
+    <div class="spec"><span><b>Wide</b> 6×2</span>
+      <div class="card" style="--w:640px;--h:290px"><div class="body"><div class="h24">
+        <div class="sumline">Showers possible 1–4 PM tomorrow<span>Up to 40% chance. Dry tonight; low 71°, high 96°.</span></div>
+        <div class="plot" id="h24"></div>
+      </div></div></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>New: Sun &amp; Moon</h2>
+  <p>The headline answers "how long until dark?" (at night, "until sunrise"). The arc shows where the sun is in today's daylight; the moon shows tonight's phase as it looks. No setup: it uses the home location.</p>
+  <div class="row">
+    <div class="spec"><span><b>Medium</b> 5×2</span>
+      <div class="card" style="--w:540px;--h:290px"><div class="body"><div class="sm">
+        <div class="sm-sun">
+          <div class="sm-head num" id="sm-head">Sunset in 17 min</div>
+          <div class="sm-arc" id="sm-arc"></div>
+          <div>
+            <div class="sm-times num"><div>Sunrise<b>6:23 AM</b></div><div style="text-align:right">Sunset<b>6:14 PM</b></div></div>
+            <div class="sm-day num"><b>11 h 51 m</b> of daylight, 2 min shorter than yesterday</div>
+          </div>
+        </div>
+        <div class="sm-moon">
+          <svg id="moon" viewBox="0 0 100 100" role="img"></svg>
+          <div class="ph" id="moon-name">Waning gibbous</div>
+          <div class="mt num" id="moon-lit">70% lit</div>
+          <div class="mt num">Full moon Oct 25</div>
+        </div>
+      </div></div></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>New: World clocks</h2>
+  <p>Up to five places. Day or night comes from the sun's actual position there, not a fixed hour range. The offset says how far ahead or behind, and when it's already tomorrow.</p>
+  <div class="row">
+    <div class="spec"><span><b>Medium</b> 4×2</span>
+      <div class="card" style="--w:460px;--h:290px"><div class="body"><div class="wc" id="wc"></div></div></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>New: Countdown</h2>
+  <p>Days until the things you're looking forward to. The nearest is the headline; the next few are listed. Past events drop off on their own. On the day, the event's name becomes the headline.</p>
+  <div class="row">
+    <div class="spec"><span><b>Medium</b> 4×2</span>
+      <div class="card" style="--w:460px;--h:290px"><div class="body"><div class="cd">
+        <div class="cd-hero"><div class="cd-n num">12<small>days</small></div><div class="cd-what">Grand Canyon trip</div><div class="cd-when num">Tuesday, October 13</div></div>
+        <div class="cd-list num"><div class="cd-item"><b>Halloween</b><span>30 days</span></div><div class="cd-item"><b>Mom's birthday</b><span>34 days</span></div></div>
+      </div></div></div>
+    </div>
+    <div class="spec"><span><b>On the day</b> 3×2</span>
+      <div class="card" style="--w:330px;--h:290px"><div class="body"><div class="cd today">
+        <div class="cd-hero"><div class="cd-n">Today</div><div class="cd-what">Grand Canyon trip</div><div class="cd-when">Have a great time</div></div>
+        <div class="cd-list num"><div class="cd-item"><b>Halloween</b><span>18 days</span></div></div>
+      </div></div></div>
+    </div>
+  </div>
+</section>
+
+<div class="mock" role="toolbar" aria-label="Mock controls"><b style="font-weight:600;align-self:center;margin-right:4px">Mock</b>
+  <button aria-pressed="true" data-t="dark">Dark display</button><button aria-pressed="false" data-t="light">Light display</button></div>
+
+<script>
+// ---- one data set for the whole page ---------------------------------------
+const DATA = {
+  now: { temp: 91, sum: "Clear", feels: 91, wind: "8 mph", humidity: 29, rain: 0, loc: "Phoenix" },
+  today: { hi: 97, lo: 72 },
+  days: [
+    { d: "Today", icon: "sun", hi: 97, lo: 72, rain: 0 },
+    { d: "Fri", icon: "part", hi: 96, lo: 71, rain: 40 },
+    { d: "Sat", icon: "part", hi: 96, lo: 73, rain: 20 },
+    { d: "Sun", icon: "rain", hi: 88, lo: 70, rain: 60 },
+    { d: "Mon", icon: "part", hi: 90, lo: 69, rain: 10 },
+  ],
+  // Thu 6 PM → Fri 6 PM, hourly: [temp, rain%]
+  hours: [[91,0],[87,0],[84,0],[82,0],[80,0],[78,0],[77,0],[76,0],[74,0],[73,0],[72,0],[71,0],[72,0],[75,0],[80,0],[85,5],[89,10],[92,15],[94,20],[95,30],[96,40],[96,40],[94,25],[93,10],[91,5]],
+};
+const $ = (s) => document.querySelector(s);
+const ns = "http://www.w3.org/2000/svg";
+const svgEl = (tag, attrs, text) => { const e = document.createElementNS(ns, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; };
+
+// ---- weather (medium + large share the markup) ----------------------------
+function nowBlock(extra = "") {
+  const n = DATA.now, t = DATA.today;
+  return `<div class="wx-now">
+    <svg class="ic wx-ico anim"><use href="#sun"/></svg>
+    <div><div class="wx-temp num">${n.temp}°</div><div class="wx-sum">${n.sum}</div><div class="wx-loc">${n.loc}</div></div>
+    <div class="wx-facts num"><div>High <b>${t.hi}°</b> · Low <b>${t.lo}°</b></div><div>Feels like <b>${n.feels}°</b></div><div>Wind <b>${n.wind}</b></div>${extra}</div>
+  </div>`;
+}
+const daysBlock = () => `<div class="wx-days num">${DATA.days.map((d, i) => `
+  <div class="wx-day ${i === 0 ? "today" : ""}"><span class="dw">${d.d}</span><svg class="ic"><use href="#${d.icon}"/></svg>
+  <span class="hl"><b>${d.hi}°</b><span>${d.lo}°</span></span>
+  <span class="pp ${d.rain ? "" : "dry"}">${d.rain ? d.rain + "%" : "Dry"}</span></div>`).join("")}</div>`;
+const hourLabel = (i) => i === 0 ? "Now" : ((18 + i) % 12 || 12) + ((18 + i) % 24 < 12 ? " AM" : " PM");
+const hoursBlock = () => `<div class="wx-hours num">${DATA.hours.slice(0, 7).map(([t, r], i) => `
+  <div>${hourLabel(i)}<svg class="ic"><use href="#${i === 0 ? "sun" : "night"}"/></svg><b>${t}°</b><span class="pp">${r}%</span></div>`).join("")}</div>`;
+$("#wx-med").innerHTML = `<div class="wx">${nowBlock()}${daysBlock()}</div>`;
+$("#wx-large").innerHTML = `<div class="wx">${nowBlock(`<div>Rain <b>${DATA.now.rain}%</b></div>`)}${hoursBlock()}${daysBlock()}</div>`;
+
+// ---- next 24 hours: drawn in the plot's real pixel size --------------------
+function drawH24() {
+  const host = $("#h24");
+  const W = host.clientWidth, H = host.clientHeight;
+  const padL = 8, padR = 30, top = 24, axis = H - 24;      // axis line; labels below it
+  const n = DATA.hours.length - 1;
+  const x = (i) => padL + (i / n) * (W - padL - padR);
+  const temps = DATA.hours.map((h) => h[0]);
+  const tMin = Math.min(...temps) - 4, tMax = Math.max(...temps) + 2;
+  const yT = (t) => top + (1 - (t - tMin) / (tMax - tMin)) * (axis - top - 46);
+  const yR = (p) => axis - (p / 100) * (axis - top - 10);
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Temperature and chance of rain for the next 24 hours" });
+  svg.append(svgEl("line", { x1: padL, x2: W - padR + 4, y1: yR(50), y2: yR(50), stroke: "var(--card-border)", "stroke-dasharray": "4 5" }));
+  svg.append(svgEl("text", { x: W - padR + 8, y: yR(50) + 5 }, "50%"));
+  const bw = Math.max(6, (W - padL - padR) / n - 4);
+  DATA.hours.forEach(([, r], i) => { if (r) svg.append(svgEl("rect", { x: x(i) - bw / 2, y: yR(r), width: bw, height: axis - yR(r), rx: 2, fill: "var(--rain)" })); });
+  const pts = DATA.hours.map(([t], i) => [x(i), yT(t)]);
+  let d = `M${pts[0][0]} ${pts[0][1]}`;
+  for (let i = 1; i < pts.length; i++) { const [x0, y0] = pts[i - 1], [x1, y1] = pts[i]; const cx = (x0 + x1) / 2; d += ` C${cx} ${y0} ${cx} ${y1} ${x1} ${y1}`; }
+  svg.append(svgEl("path", { d, fill: "none", stroke: "var(--sun)", "stroke-width": 3, "stroke-linecap": "round" }));
+  const label = (i, txt, dy, cls) => svg.append(svgEl("text", { x: x(i), y: yT(DATA.hours[i][0]) + dy, "text-anchor": "middle", class: cls }, txt));
+  const lo = temps.indexOf(Math.min(...temps)), hi = temps.lastIndexOf(Math.max(...temps));
+  svg.append(svgEl("circle", { cx: x(0), cy: yT(temps[0]), r: 5, fill: "var(--sun)" }));
+  label(0, `${temps[0]}°`, -12, "tl"); label(lo, `${temps[lo]}°`, 24, "tl"); label(hi - 1, `${temps[hi]}°`, -12, "tl");
+  const peak = DATA.hours.reduce((m, h, i) => (h[1] > DATA.hours[m][1] ? i : m), 0);
+  svg.append(svgEl("text", { x: x(peak), y: yR(DATA.hours[peak][1]) - 6, "text-anchor": "middle", class: "rl" }, `${DATA.hours[peak][1]}%`));
+  svg.append(svgEl("line", { x1: padL, x2: W - padR, y1: axis, y2: axis, stroke: "var(--card-border)" }));
+  [0, 3, 6, 9, 12, 15, 18, 21, 24].forEach((i) => {
+    svg.append(svgEl("line", { x1: x(i), x2: x(i), y1: axis, y2: axis + 4, stroke: "var(--card-border)" }));
+    svg.append(svgEl("text", { x: x(i), y: H - 2, "text-anchor": i === 0 ? "start" : i === 24 ? "end" : "middle" }, hourLabel(i).replace(" AM", "a").replace(" PM", "p")));
+  });
+  host.replaceChildren(svg);
+}
+drawH24();
+
+// ---- air quality gauge ----------------------------------------------------
+function drawAQ(aqi) {
+  const S = 180, cx = 90, cy = 92, r = 70, max = 300;
+  const bands = [[0, 50, "#3fc77a"], [50, 100, "#e6d23f"], [100, 150, "#f0913a"], [150, 200, "#ef5f6b"], [200, 300, "#9b5de5"]];
+  const pt = (v, rr = r) => { const a = Math.PI * (1 - v / max); return [cx + rr * Math.cos(a), cy - rr * Math.sin(a)]; };
+  const svg = svgEl("svg", { viewBox: `0 0 ${S} 128`, role: "img", "aria-label": `Air quality index ${aqi} of ${max}` });
+  for (const [a, b, c] of bands) { const [x0, y0] = pt(a + 1.5), [x1, y1] = pt(b - 1.5); svg.append(svgEl("path", { d: `M${x0} ${y0} A${r} ${r} 0 0 1 ${x1} ${y1}`, fill: "none", stroke: c, "stroke-width": 14 })); }
+  for (const v of [0, 50, 100, 150, 200, 300]) { const [tx, ty] = pt(v, r + 17); svg.append(svgEl("text", { x: tx, y: ty + 4, "text-anchor": "middle" }, v)); }
+  const [nx, ny] = pt(aqi, r - 12);
+  svg.append(svgEl("line", { x1: cx, y1: cy, x2: nx, y2: ny, stroke: "var(--text)", "stroke-width": 4, "stroke-linecap": "round" }));
+  svg.append(svgEl("circle", { cx, cy, r: 6, fill: "var(--text)" }));
+  svg.append(svgEl("text", { x: cx, y: cy + 34, "text-anchor": "middle", class: "v" }, aqi));
+  $("#aq-gauge").replaceChildren(svg);
+  // Category text: a readable shade of the band colour in each theme.
+  const light = document.documentElement.dataset.theme === "light";
+  $("#aq-cat").style.color = light ? "#7a6200" : "#e8d44d";
+}
+drawAQ(65);
+
+// ---- pi stats rings: colour by threshold ------------------------------------
+function ring(label, value, text, warn, hot) {
+  const C = 2 * Math.PI * 32, frac = Math.min(1, value / 100);
+  const tone = value >= hot ? "var(--bad)" : value >= warn ? "var(--warn)" : "var(--ok)";
+  return `<div class="ring"><svg viewBox="0 0 80 80"><circle cx="40" cy="40" r="32" fill="none" stroke="var(--card-border)" stroke-width="8"/>
+    <circle cx="40" cy="40" r="32" fill="none" stroke="${tone}" stroke-width="8" stroke-linecap="round" stroke-dasharray="${frac * C} ${C}" transform="rotate(-90 40 40)"/>
+    <text x="40" y="47" text-anchor="middle">${text}</text></svg>${label}</div>`;
+}
+$("#rings").innerHTML = ring("CPU", 23, "23%", 80, 95) + ring("Memory", 61, "61%", 85, 95) + ring("Temperature", 58, "58°C", 70, 80);
+
+// ---- sun & moon (same maths as web/js/widgets/astro.js) ---------------------
+function moonPath(f, waxing, cx, cy, r) {
+  const rx = Math.abs(1 - 2 * f) * r, g = f > 0.5, top = `${cx} ${cy - r}`, bot = `${cx} ${cy + r}`;
+  return waxing ? `M${top} A${r} ${r} 0 0 1 ${bot} A${rx} ${r} 0 0 ${g ? 1 : 0} ${top}Z`
+                : `M${top} A${r} ${r} 0 0 0 ${bot} A${rx} ${r} 0 0 ${g ? 0 : 1} ${top}Z`;
+}
+function drawSun(progress) {
+  const host = $("#sm-arc"), W = host.clientWidth, H = host.clientHeight;
+  const cx = W / 2, base = H - 6, r = Math.min(W / 2 - 14, H - 14);
+  const at = (p) => { const a = Math.PI * (1 - p); return [cx + r * Math.cos(a), base - r * Math.sin(a)]; };
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `${Math.round(progress * 100)}% of today's daylight has passed` });
+  const [x0, y0] = at(0), [x1, y1] = at(1), [px, py] = at(progress);
+  svg.append(svgEl("line", { x1: 4, x2: W - 4, y1: base, y2: base, stroke: "var(--card-border)" }));
+  svg.append(svgEl("path", { d: `M${x0} ${y0} A${r} ${r} 0 0 1 ${x1} ${y1}`, fill: "none", stroke: "var(--card-border)", "stroke-width": 3, "stroke-dasharray": "3 6" }));
+  svg.append(svgEl("path", { d: `M${x0} ${y0} A${r} ${r} 0 0 1 ${px} ${py}`, fill: "none", stroke: "var(--sun)", "stroke-width": 4, "stroke-linecap": "round" }));
+  svg.append(svgEl("circle", { cx: px, cy: py, r: 9, fill: "var(--sun)" }));
+  host.replaceChildren(svg);
+}
+drawSun(0.977);
+(function drawMoon() {
+  const m = $("#moon"); m.setAttribute("aria-label", "Waning gibbous moon, 70 percent lit");
+  m.replaceChildren(svgEl("circle", { cx: 50, cy: 50, r: 44, fill: "var(--moon-dark)" }),
+    svgEl("path", { d: moonPath(0.70, false, 50, 50, 44), fill: "var(--moon-lit)" }),
+    svgEl("circle", { cx: 50, cy: 50, r: 44, fill: "none", stroke: "var(--card-border)", "stroke-width": 1.5 }));
+})();
+
+// ---- world clocks ------------------------------------------------------------
+const CLOCKS = [
+  { city: "New York", time: "8:58", ap: "PM", off: "3 h ahead", night: true },
+  { city: "London", time: "1:58", ap: "AM", off: "8 h ahead, tomorrow", night: true },
+  { city: "Tokyo", time: "9:58", ap: "AM", off: "16 h ahead, tomorrow", night: false },
+];
+$("#wc").innerHTML = CLOCKS.map((c) => `<div class="wc-row"><svg class="ic dn" role="img" aria-label="${c.night ? "Night" : "Day"}"><use href="#${c.night ? "moonico" : "sunico"}"/></svg>
+  <div><div class="wc-city">${c.city}</div><div class="wc-off num">${c.off}</div></div><div class="wc-time num">${c.time}<small>${c.ap}</small></div></div>`).join("");
+
+// ---- theme switch (redraws the theme-aware bits) ----------------------------
+document.querySelectorAll(".mock [data-t]").forEach((b) => b.onclick = () => {
+  document.documentElement.dataset.theme = b.dataset.t;
+  document.querySelectorAll(".mock [data-t]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  drawAQ(65);
+});
+addEventListener("resize", () => { drawH24(); drawSun(0.977); });
+</script>
+</body>
+</html>

@@ -1104,6 +1104,13 @@ function leaveWidget() {
   widgetForm = null;
 }
 
+/** 900 → "every 15 minutes", 10 → "every 10 seconds". */
+function humanSeconds(s) {
+  if (s % 3600 === 0) return `every ${s / 3600 === 1 ? "hour" : `${s / 3600} hours`}`;
+  if (s % 60 === 0) return `every ${s / 60 === 1 ? "minute" : `${s / 60} minutes`}`;
+  return `every ${s} seconds`;
+}
+
 /** The config shape of the widget being edited (editor-only fields folded back). */
 function stagedCopy(draft) {
   const w = structuredClone(draft);
@@ -1182,7 +1189,11 @@ function widgetFieldDefs(widget, editor) {
     ...settingsFields,
     {
       key: "refreshSeconds", label: "Refresh every (seconds)", type: "number", min: 1,
-      placeholder: "never", help: "Leave blank to never refresh automatically.",
+      // Blank means the widget's usual interval (app.js), so say what that is.
+      placeholder: plugin?.meta?.defaultRefreshSeconds ? String(plugin.meta.defaultRefreshSeconds) : "never",
+      help: plugin?.meta?.defaultRefreshSeconds
+        ? `Leave blank for the usual ${humanSeconds(plugin.meta.defaultRefreshSeconds)}.`
+        : "Leave blank to never refresh automatically.",
     },
     { key: "_schedHead", type: "note", label: "Show this widget only during set hours. Same rules as page schedules." },
     ...scheduleFieldDefs("_schedule"),

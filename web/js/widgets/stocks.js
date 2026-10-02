@@ -5,13 +5,13 @@
 // and Chart (+ sparkline from the backend's history fetch). The admin sets the
 // default view; clicking the toggle in the card cycles it live.
 import { define } from "./registry.js";
-import { el, fetchData, fmtNum, effectiveSettings } from "./dom.js";
+import { el, fetchData, fmtNum, effectiveSettings, stateView, markOk, markFailed } from "./dom.js";
 
 const VIEWS = ["Compact", "Detailed", "Chart"];
 const RANGE = { "1D": "1d", "5D": "5d", "1M": "1mo", "6M": "6mo", "1Y": "1y" };
 
 define("stocks", {
-  meta: { label: "Stocks", description: "Watchlist of tickers", category: "data" },
+  meta: { defaultRefreshSeconds: 300, label: "Stocks", description: "Watchlist of tickers", category: "data" },
   schema: {
     fields: [
       // Custom field type the admin renders as a searchable add/remove picker.
@@ -39,17 +39,21 @@ define("stocks", {
     try {
       const d = await fetchData("stocks", params);
       if (d.needsKey) {
-        handle.body.replaceChildren(el("div", { class: "widget-error" }, `Set ${d.env} to enable stock quotes`));
+        handle.body.replaceChildren(stateView({
+          icon: "key", title: "Add a stock data key",
+          body: "Quotes come from Finnhub; a free key is enough.", where: "Admin › Settings › API keys",
+        }));
         return;
       }
       const quotes = d.quotes || [];
       const rows = quotes.map((q) => renderRow(q, view));
       const list = rows.length
         ? el("div", { class: "stock-list" }, rows)
-        : el("div", { class: "widget-empty" }, "No tickers selected");
-      handle.body.replaceChildren(viewToggle(handle, view), list);
+        : stateView({ icon: "list", title: "Pick some stocks", body: "Search for tickers in this widget's settings.", where: "Admin › Layout › this widget" });
+      handle.body.replaceChildren(...(rows.length ? [viewToggle(handle, view), list] : [list]));
+      markOk(handle);
     } catch {
-      handle.body.replaceChildren(el("div", { class: "widget-error" }, "quotes unavailable"));
+      markFailed(handle, "Can't load stock quotes", undefined, () => this.refresh(handle));
     }
   },
 });

@@ -1,6 +1,11 @@
 """Weather via Open-Meteo — keyless, so it works out of the box (better graceful
 degradation than a key-gated API). Uses resolved geolocation unless the widget
 passes lat/lon/units in its settings.
+
+Feeds two widgets: Weather (current + days + a few hours) and Next 24 hours
+(hourly temperature and chance of rain). Times are the location's local wall
+clock ("2026-10-01T18:00"), with `today` and `now` in the same terms, so the
+display never has to guess a timezone to label "Today" or "9 PM".
 """
 
 from __future__ import annotations
@@ -15,11 +20,18 @@ from ..shared.providers import Provider, register
 _WMO = {
     0: "Clear", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
     45: "Fog", 48: "Rime fog", 51: "Light drizzle", 53: "Drizzle",
-    55: "Heavy drizzle", 61: "Light rain", 63: "Rain", 65: "Heavy rain",
-    71: "Light snow", 73: "Snow", 75: "Heavy snow", 80: "Showers",
-    81: "Showers", 82: "Violent showers", 95: "Thunderstorm",
-    96: "Thunderstorm + hail", 99: "Thunderstorm + hail",
+    55: "Heavy drizzle", 56: "Freezing drizzle", 57: "Freezing drizzle",
+    61: "Light rain", 63: "Rain", 65: "Heavy rain", 66: "Freezing rain", 67: "Freezing rain",
+    71: "Light snow", 73: "Snow", 75: "Heavy snow", 77: "Snow grains",
+    80: "Showers", 81: "Showers", 82: "Violent showers", 85: "Snow showers", 86: "Snow showers",
+    95: "Thunderstorm", 96: "Thunderstorm + hail", 99: "Thunderstorm + hail",
 }
+
+HOURS = 25  # now + the next 24 hours
+
+
+def _at(seq: list | None, i: int) -> Any:
+    return seq[i] if seq and i < len(seq) else None
 
 
 class WeatherProvider(Provider):
@@ -39,8 +51,12 @@ class WeatherProvider(Provider):
                 params={
                     "latitude": lat,
                     "longitude": lon,
-                    "current": "temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m",
-                    "daily": "weather_code,temperature_2m_max,temperature_2m_min",
+                    "current": "temperature_2m,apparent_temperature,relative_humidity_2m,"
+                               "weather_code,wind_speed_10m,is_day",
+                    "daily": "weather_code,temperature_2m_max,temperature_2m_min,"
+                             "precipitation_probability_max,sunrise,sunset",
+                    "hourly": "temperature_2m,precipitation_probability,weather_code,is_day",
+                    "forecast_hours": HOURS,
                     "temperature_unit": temp_unit,
                     "wind_speed_unit": wind_unit,
                     "timezone": "auto",
@@ -51,29 +67,52 @@ class WeatherProvider(Provider):
             d = r.json()
         cur = d.get("current", {})
         daily = d.get("daily", {})
+        hourly = d.get("hourly", {})
+
         days = []
         for i, day in enumerate(daily.get("time", [])):
-            code = daily["weather_code"][i]
+            code = _at(daily.get("weather_code"), i)
             days.append({
-                "date": day,
+                "date": day,  # local calendar date, "YYYY-MM-DD"
                 "code": code,
                 "summary": _WMO.get(code, "—"),
-                "max": daily["temperature_2m_max"][i],
-                "min": daily["temperature_2m_min"][i],
+                "max": _at(daily.get("temperature_2m_max"), i),
+                "min": _at(daily.get("temperature_2m_min"), i),
+                "rain": _at(daily.get("precipitation_probability_max"), i),
+                "sunrise": _at(daily.get("sunrise"), i),
+                "sunset": _at(daily.get("sunset"), i),
             })
+
+        hours = []
+        for i, t in enumerate(hourly.get("time", [])[:HOURS]):
+            hours.append({
+                "time": t,  # local wall clock, "YYYY-MM-DDTHH:MM"
+                "temp": _at(hourly.get("temperature_2m"), i),
+                "rain": _at(hourly.get("precipitation_probability"), i),
+                "code": _at(hourly.get("weather_code"), i),
+                "isDay": bool(_at(hourly.get("is_day"), i)),
+            })
+
         code = cur.get("weather_code")
         return {
-            "location": {"city": loc.get("city"), "region": loc.get("region")},
+            "location": {"city": loc.get("city"), "region": loc.get("region"), "lat": lat, "lon": lon},
             "units": units,
+            "today": days[0]["date"] if days else None,
+            "now": cur.get("time"),
+            "utcOffsetSeconds": d.get("utc_offset_seconds"),
             "current": {
                 "temp": cur.get("temperature_2m"),
                 "feelsLike": cur.get("apparent_temperature"),
                 "humidity": cur.get("relative_humidity_2m"),
                 "wind": cur.get("wind_speed_10m"),
+                "windUnit": wind_unit,
                 "code": code,
+                "isDay": bool(cur.get("is_day", 1)),
                 "summary": _WMO.get(code, "—"),
+                "rain": hours[0]["rain"] if hours else None,
             },
             "forecast": days,
+            "hourly": hours,
         }
 
 

@@ -2,14 +2,14 @@
 // graded quiet→storm), recent-history bars, and the aurora read. Data from NOAA
 // SWPC (keyless). Display style + sections are configurable.
 import { define } from "./registry.js";
-import { el, fetchData, fmtNum } from "./dom.js";
+import { el, fetchData, fmtNum, markOk, markFailed } from "./dom.js";
 
 const ARC_R = 40;
 const ARC_LEN = Math.PI * ARC_R; // semicircle
 const MAX_BARS = 12;
 
 define("space-weather", {
-  meta: { label: "Space weather", description: "Kp gauge, history & aurora", category: "data" },
+  meta: { defaultRefreshSeconds: 900, label: "Space weather", description: "Kp gauge, history & aurora", category: "data" },
   schema: {
     fields: [
       { key: "style", label: "Style", type: "select", options: ["gauge", "number"], default: "gauge" },
@@ -48,8 +48,9 @@ define("space-weather", {
         parts.push(el("div", { class: `kp-aurora kp-${lvl}` }, d.aurora || "—"));
       }
       handle.body.replaceChildren(...parts);
+      markOk(handle);
     } catch {
-      handle.body.replaceChildren(el("div", { class: "widget-error" }, "space weather unavailable"));
+      markFailed(handle, "Can't reach the space weather service", undefined, () => this.refresh(handle));
     }
   },
 });

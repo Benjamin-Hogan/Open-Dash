@@ -2,10 +2,10 @@
 // Cycle mode (default): one story at a time as a big image card, auto-advancing.
 // List mode: all items as compact cards.
 import { define } from "./registry.js";
-import { el, fetchData, effectiveSettings } from "./dom.js";
+import { el, fetchData, effectiveSettings, stateView, markOk, markFailed } from "./dom.js";
 
 define("rss", {
-  meta: { label: "RSS feed", description: "Cycling stories with images", category: "data" },
+  meta: { defaultRefreshSeconds: 1800, label: "RSS feed", description: "Cycling stories with images", category: "data" },
   schema: {
     fields: [
       { key: "url", label: "Feed URL (RSS or Atom)", type: "text", required: true, placeholder: "https://…/rss.xml" },
@@ -29,7 +29,13 @@ define("rss", {
     stopCycle(handle);
     const s = effectiveSettings(handle.widget);
     handle.s = s;
-    if (!s.url) { handle.body.replaceChildren(el("div", { class: "widget-empty" }, "Set a feed URL")); return; }
+    if (!s.url) {
+      handle.body.replaceChildren(stateView({
+        icon: "link", title: "Add a news feed",
+        body: "Paste an RSS or Atom feed link into this widget.", where: "Admin › Layout › this widget",
+      }));
+      return;
+    }
     try {
       const params = { url: s.url, count: s.count || 10 };
       if (s.cacheTtlSeconds) params.cacheTtl = s.cacheTtlSeconds;
@@ -38,8 +44,9 @@ define("rss", {
       handle.items = d.items || [];
       handle.idx = 0;
       render(handle);
+      markOk(handle);
     } catch {
-      handle.body.replaceChildren(el("div", { class: "widget-error" }, "feed unavailable"));
+      markFailed(handle, "Can't load the feed", undefined, () => this.refresh(handle));
     }
   },
   suspend(handle) { stopCycle(handle); },
@@ -49,7 +56,7 @@ define("rss", {
 
 function render(handle) {
   const { s, items } = handle;
-  if (!items.length) { handle.body.replaceChildren(el("div", { class: "widget-empty" }, "No items")); return; }
+  if (!items.length) { handle.body.replaceChildren(el("div", { class: "widget-empty" }, "No stories in this feed right now")); return; }
   if (s.cycle !== false) { renderSolo(handle); startCycle(handle); }
   else { stopCycle(handle); renderList(handle); }
 }

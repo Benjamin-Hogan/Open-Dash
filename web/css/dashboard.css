@@ -9,9 +9,17 @@
   --text: #e8edf4;
   /* Secondary text is read from across a room: brighter than a desk UI's grey. */
   --muted: #a3aec0;
-  /* Floor sizes for small text on a wall display (rem, so --font-scale applies). */
-  --fs-meta: 0.8125rem;   /* was 0.6875rem (11px) */
-  --fs-label: 0.875rem;   /* was 0.75rem (12px) */
+  /* Floor sizes for text read from across a room (rem, so --font-scale applies).
+     Nothing a viewer needs to read is under --fs-meta. */
+  --fs-meta: 0.9375rem;   /* 15px: decorative metadata */
+  --fs-label: 1rem;       /* 16px: labels, supporting text */
+  --fs-2nd: 1.125rem;     /* 18px: second-tier values (hi/lo, rain %, times) */
+  /* Status and weather colours; light theme redefines them to pass contrast. */
+  --ok: #3fc77a; --warn: #e7b25a; --bad: #f26d78;
+  --rain: #58a6ff; --sun: #ffd158; --cloud: #9fb0c8; --night: #c9c3ff;
+  --moon-lit: #ece6d2; --moon-dark: #3a4252;
+  /* The accent is the owner's choice; text in it gets a readable shade. */
+  --accent-ink: var(--accent);
   /* Per-device text trim: multiplies every rem-based font size. Set live by
      device.js (uiScale × fontScale); 1 = default. Layout px are unaffected. */
   --font-scale: 1;
@@ -20,6 +28,10 @@
 [data-theme="light"] {
   --bg: #f1f3f7; --card-bg: #ffffff; --card-border: #d8dee9;
   --text: #1a2230; --muted: #4f596a;
+  --ok: #157f45; --warn: #8a5a04; --bad: #c22f3c;
+  --rain: #1f62c0; --sun: #a86f00; --cloud: #6b7c96; --night: #4b45a0;
+  --moon-lit: #fff8e1; --moon-dark: #aab2c0;
+  --accent-ink: color-mix(in srgb, var(--accent) 62%, #000);
 }
 
 * { box-sizing: border-box; }
@@ -135,41 +147,104 @@ body.pinned-top .grid { padding-top: var(--pinned-inset, 52px); }
 .pi-ring svg { width: 100%; display: block; }
 .pi-ring-bg { fill: none; stroke: rgba(127,127,127,.18); stroke-width: 8; }
 .pi-ring-fg {
-  fill: none; stroke: var(--accent); stroke-width: 8; stroke-linecap: round;
+  fill: none; stroke: var(--ok); stroke-width: 8; stroke-linecap: round;
   transform: rotate(-90deg); transform-origin: 40px 40px;
   transition: stroke-dashoffset .9s cubic-bezier(.2, .8, .3, 1), stroke .6s ease;
 }
-.pi-ring.lvl-warn .pi-ring-fg { stroke: #e6b13f; }
-.pi-ring.lvl-hot  .pi-ring-fg { stroke: #ef5f6b; }
+.pi-ring.lvl-warn .pi-ring-fg { stroke: var(--warn); }
+.pi-ring.lvl-hot  .pi-ring-fg { stroke: var(--bad); }
 .pi-ring.lvl-na { opacity: .45; }
 .pi-ring-val { fill: var(--text); font-size: 17px; font-weight: 700; text-anchor: middle; font-variant-numeric: tabular-nums; }
-.pi-ring-cap { font-size: var(--fs-meta); color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-top: 2px; }
+.pi-ring-cap { font-size: var(--fs-label); color: var(--muted); margin-top: 2px; }
 .pi-spark { height: 34px; flex: 0 0 auto; }
 .pi-spark svg { width: 100%; height: 100%; display: block; }
 .pi-spark-line { fill: none; stroke: var(--accent); stroke-width: 1.6; vector-effect: non-scaling-stroke; }
 .pi-spark-fill { fill: color-mix(in srgb, var(--accent) 16%, transparent); }
 .pi-foot { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
-.pi-chip { border: 1px solid var(--card-border); border-radius: 12px; padding: 2px 9px; font-size: var(--fs-meta); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.pi-chip-label { text-transform: uppercase; font-weight: 700; letter-spacing: .04em; }
+.pi-chip { border: 1px solid var(--card-border); border-radius: 12px; padding: 2px 10px; font-size: var(--fs-label); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pi-chip-label { font-weight: 600; }
 
-/* weather — animated icons */
+/* weather — one markup, sized by the card (container queries) ---------------- */
+/* Small: the glance. Medium (default): plus five days. Large: plus next hours. */
 .weather {
-  height: 100%; display: flex; flex-direction: column; gap: 10px;
-  --wx-sun: #ffd158; --wx-cloud: #9fb0c8; --wx-rain: #58a6ff; --wx-snow: #e8f0fb;
+  container-type: size;
+  height: 100%; display: grid; align-content: space-between; gap: 10px;
+  --wx-sun: var(--sun); --wx-cloud: var(--cloud); --wx-rain: var(--rain); --wx-snow: #e8f0fb;
 }
-[data-theme="light"] .weather { --wx-cloud: #90a4c0; --wx-snow: #a9bdd8; }
-.wx-current { display: flex; align-items: center; gap: 14px; min-height: 0; }
+[data-theme="light"] .weather { --wx-snow: #a9bdd8; }
 .wx-icon svg { width: 100%; height: 100%; display: block; overflow: visible; }
-.wx-icon-big { width: 4.6rem; height: 4.6rem; flex: 0 0 auto; }
-.wx-icon-mini { width: 1.6rem; height: 1.6rem; margin: 2px auto; }
-.wx-temp { font-size: 2.75rem; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
-.wx-summary { font-size: 1rem; margin-top: 2px; }
-.wx-sub { font-size: var(--fs-label); color: var(--muted); margin-top: 2px; }
-.wx-forecast { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; margin-top: auto; }
-.wx-day { text-align: center; font-size: var(--fs-label); }
-.wx-dow { color: var(--muted); }
-.wx-lo { color: var(--muted); }
-/* icon motion */
+.wx-now { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; min-width: 0; }
+.wx-icon-big { width: min(28cqh, 88px); height: min(28cqh, 88px); }
+.wx-temp { font-size: min(18cqh, 3.75rem); font-weight: 700; line-height: 1; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.wx-summary { font-size: var(--fs-2nd); font-weight: 600; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wx-loc { font-size: var(--fs-label); color: var(--muted); margin-top: 2px; }
+.wx-facts { display: grid; gap: 3px; font-size: var(--fs-label); color: var(--muted); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.wx-facts b { color: var(--text); font-weight: 650; font-size: var(--fs-2nd); }
+.wx-rain-now { display: none; }
+.wx-icon-mini { width: 32px; height: 32px; }
+.wx-days { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; border-top: 1px solid var(--card-border); padding-top: 10px; font-variant-numeric: tabular-nums; }
+.wx-day { display: grid; justify-items: center; gap: 2px; min-width: 0; }
+.wx-dow { font-weight: 650; font-size: var(--fs-label); }
+.wx-day.today .wx-dow { color: var(--accent-ink); }
+.wx-hl { font-size: var(--fs-2nd); white-space: nowrap; }
+.wx-hl b { font-weight: 700; }
+.wx-hl span { color: var(--muted); margin-left: 5px; }
+.wx-pp { font-size: var(--fs-label); font-weight: 600; color: var(--rain); }
+.wx-pp.dry { color: var(--muted); font-weight: 400; }
+.wx-hours { display: none; grid-template-columns: repeat(7, minmax(0, 1fr)); border-top: 1px solid var(--card-border); padding-top: 8px; font-variant-numeric: tabular-nums; }
+.wx-hour { display: grid; justify-items: center; gap: 1px; font-size: var(--fs-meta); color: var(--muted); }
+.wx-hour .wx-icon-mini { width: 28px; height: 28px; }
+.wx-hour b { color: var(--text); font-size: var(--fs-2nd); font-weight: 650; }
+.wx-h-rain { color: var(--rain); font-weight: 600; min-height: 1.2em; }
+/* Only the lead icon moves. */
+.wx-days svg *, .wx-hours svg * { animation: none !important; }
+/* large: the next hours, and rain now */
+@container (min-height: 330px) and (min-width: 480px) {
+  .weather:not(.wx-no-hours) .wx-hours { display: grid; }
+  .weather .wx-rain-now { display: block; }
+}
+/* small: no days, no place name; the temperature takes the room */
+@container (max-height: 200px), (max-width: 360px) and (max-height: 299px) {
+  .weather .wx-days, .weather .wx-hours, .weather .wx-loc { display: none; }
+  .weather { align-content: center; }
+  .wx-now { grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; }
+  .wx-icon-big { width: min(30cqw, 52cqh); height: min(30cqw, 52cqh); }
+  .wx-temp { font-size: min(24cqw, 44cqh); }
+  .wx-summary { font-size: var(--fs-label); }
+  .weather .wx-range, .weather .wx-feels { display: none; }
+  .weather .wx-only-small { display: block; }
+}
+.wx-only-small { display: none; }
+.weather.wx-no-days .wx-days { display: none; }
+
+/* ---- shared widget states: setup / error / out of date --------------------- */
+.widget-state {
+  --tone: var(--accent-ink);
+  height: 100%; display: grid; place-content: center; justify-items: center;
+  gap: 6px; text-align: center; padding: 0 8px;
+}
+.widget-state.error { --tone: var(--bad); }
+.state-ico {
+  width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; margin-bottom: 4px;
+  color: var(--tone); background: color-mix(in srgb, var(--tone) 16%, transparent);
+}
+.state-ico svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.state-title { font-size: 1.125rem; font-weight: 650; }
+.state-body { font-size: var(--fs-label); color: var(--muted); max-width: 32ch; line-height: 1.45; }
+.state-where { margin-top: 4px; font-size: var(--fs-meta); padding: 3px 12px; border-radius: 999px; border: 1px solid var(--card-border); }
+/* Out of date: last good data stays, clearly dimmed, with its age. The badge
+   gets its own row at the top so it never covers the values it qualifies. */
+.is-stale { position: relative; padding-top: 34px; }
+.is-stale > :not(.stale-badge) { opacity: .5; filter: saturate(.4); }
+.stale-badge {
+  position: absolute; top: 0; left: 0; z-index: 2;
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: var(--fs-meta); font-weight: 600; color: var(--warn);
+  padding: 2px 10px; border-radius: 999px; background: var(--card-bg);
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+}
+.stale-badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
+
 .wx-rays { animation: wxspin 26s linear infinite; transform-origin: 32px 32px; }
 .wx-cloud.wx-drift { animation: wxdrift 6s ease-in-out infinite alternate; }
 .wx-cloud.wx-drift-slow { animation: wxdrift 9s ease-in-out infinite alternate-reverse; }
@@ -230,18 +305,48 @@ body.pinned-top .grid { padding-top: var(--pinned-inset, 52px); }
 .spaceimg-cap { position: absolute; left: 0; right: 0; bottom: 0; padding: 3px 8px; font-size: var(--fs-meta); color: #cfd6df; background: linear-gradient(transparent, rgba(0,0,0,.65)); text-align: right; font-variant-numeric: tabular-nums; }
 
 /* air quality */
-.aqi { display: flex; flex-direction: column; gap: 6px; height: 100%; justify-content: center; }
-.aqi-gauge { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px; border-radius: 10px; }
-.aqi-value { font-size: 2.125rem; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
-.aqi-cat { font-size: var(--fs-label); opacity: .9; }
-.aqi-sub { display: flex; gap: 12px; justify-content: center; font-size: var(--fs-meta); color: var(--muted); font-variant-numeric: tabular-nums; }
-.aqi-loc { text-align: center; font-size: var(--fs-meta); color: var(--muted); }
-.aqi-gauge.good { background: rgba(0,153,102,.18); color: #5fd6a6; }
-.aqi-gauge.moderate { background: rgba(220,200,0,.16); color: #e6d24a; }
-.aqi-gauge.usg { background: rgba(255,140,0,.18); color: #ffae4a; }
-.aqi-gauge.unhealthy { background: rgba(220,40,40,.18); color: #ff7a7a; }
-.aqi-gauge.vunhealthy { background: rgba(150,40,170,.20); color: #d68cf0; }
-.aqi-gauge.hazardous { background: rgba(130,20,20,.30); color: #ff9a9a; }
+.aqi {
+  container-type: size;
+  height: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 18px; align-items: center;
+  /* Category text: a readable shade of the band colour in each theme. */
+  --aqi-good: #3fc77a; --aqi-moderate: #e8d44d; --aqi-usg: #f5a25d; --aqi-unhealthy: #f26d78; --aqi-vunhealthy: #b48cf2; --aqi-hazardous: #e07070;
+}
+[data-theme="light"] .aqi {
+  --aqi-good: #157f45; --aqi-moderate: #7a6200; --aqi-usg: #a24f05; --aqi-unhealthy: #c22f3c; --aqi-vunhealthy: #6c35b8; --aqi-hazardous: #8a1c1c;
+}
+.aqi-gauge { width: min(80cqh, 46cqw, 200px); }
+.aqi-gauge svg { width: 100%; height: auto; display: block; overflow: visible; }
+.aqi-band { fill: none; stroke-width: 14; }
+.aqi-band-good { stroke: #3fc77a; } .aqi-band-moderate { stroke: #e6d23f; } .aqi-band-usg { stroke: #f0913a; }
+.aqi-band-unhealthy { stroke: #ef5f6b; } .aqi-band-vunhealthy { stroke: #9b5de5; }
+/* On white the yellow band nearly vanishes; an outline keeps the track readable. */
+[data-theme="light"] .aqi-band { stroke-width: 14; filter: drop-shadow(0 0 .6px rgba(0,0,0,.55)); }
+.aqi-tick { font-size: 15px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+.aqi-needle { stroke: var(--text); stroke-width: 4; stroke-linecap: round; }
+.aqi-hub { fill: var(--text); }
+.aqi-value { font-size: 30px; font-weight: 750; fill: var(--text); font-variant-numeric: tabular-nums; }
+.aqi-text { min-width: 0; }
+.aqi-cat { font-size: 1.375rem; font-weight: 750; line-height: 1.15; color: var(--text); }
+.aqi-good .aqi-cat { color: var(--aqi-good); } .aqi-moderate .aqi-cat { color: var(--aqi-moderate); }
+.aqi-usg .aqi-cat { color: var(--aqi-usg); } .aqi-unhealthy .aqi-cat { color: var(--aqi-unhealthy); }
+.aqi-vunhealthy .aqi-cat { color: var(--aqi-vunhealthy); } .aqi-hazardous .aqi-cat { color: var(--aqi-hazardous); }
+.aqi-msg { font-size: var(--fs-label); color: var(--muted); line-height: 1.45; margin-top: 4px; }
+.aqi-main { font-size: var(--fs-label); margin-top: 8px; }
+.aqi-main b { font-weight: 650; }
+.aqi-pm { font-size: var(--fs-meta); color: var(--muted); margin-top: 4px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.aqi-num { display: none; font-size: min(36cqh, 3rem); font-weight: 750; line-height: 1; font-variant-numeric: tabular-nums; }
+/* Narrow cards: gauge on top, words below. */
+@container (max-width: 360px) {
+  .aqi { grid-template-columns: 1fr; justify-items: center; text-align: center; gap: 6px; }
+  .aqi-gauge { width: min(60cqh, 70cqw, 180px); }
+  .aqi-msg, .aqi-pm { display: none; }
+}
+/* Short cards: a gauge this small can't be read; show the number instead. */
+@container (max-height: 200px) {
+  .aqi { grid-template-columns: 1fr; justify-items: center; align-content: center; text-align: center; }
+  .aqi-gauge, .aqi-msg, .aqi-pm { display: none; }
+  .aqi-num { display: block; }
+}
 
 /* rss */
 .rss { height: 100%; overflow: auto; }
@@ -614,4 +719,174 @@ body.idle, body.idle * { cursor: none !important; }
   /* Matches the specificity of the composed rules above so this still wins. */
   .alert.alert-flash, .alert.alert-danger.alert-flash, .alert.alert-out { animation: none; }
   #status.offline::before { animation: none; }
+}
+
+/* ---- next 24 hours ----------------------------------------------------------- */
+.h24 { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 6px; }
+.h24-sum { font-size: 1.25rem; font-weight: 650; line-height: 1.2; }
+.h24-detail { font-size: var(--fs-label); color: var(--muted); margin-top: 2px; }
+.h24-plot { position: relative; min-height: 0; }
+.h24-plot svg { position: absolute; inset: 0; overflow: visible; }
+.h24-line { fill: none; stroke: var(--sun); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.h24-dot { fill: var(--sun); }
+.h24-bar { fill: var(--rain); }
+.h24-guide { stroke: var(--muted); stroke-opacity: .45; stroke-dasharray: 4 5; }
+.h24-axisline { stroke: var(--card-border); }
+.h24-axis { font-size: 15px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+.h24-temp { font-size: 17px; font-weight: 650; fill: var(--text); font-variant-numeric: tabular-nums; }
+.h24-peak { font-size: 15px; font-weight: 650; fill: var(--rain); font-variant-numeric: tabular-nums; }
+
+/* ---- sun & moon -------------------------------------------------------------- */
+.sunmoon { container-type: size; height: 100%; display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; }
+.sunmoon.no-moon { grid-template-columns: 1fr; }
+.sm-sun { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; gap: 2px; }
+.sm-head { font-size: 1.375rem; font-weight: 700; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.sm-arc { position: relative; min-height: 0; }
+.sm-arc svg { position: absolute; inset: 0; }
+.sm-horizon { stroke: var(--card-border); }
+.sm-track { fill: none; stroke: var(--muted); stroke-opacity: .35; stroke-width: 3; stroke-dasharray: 3 6; }
+.sm-done { fill: none; stroke: var(--sun); stroke-width: 4; stroke-linecap: round; }
+.sm-sundot { fill: var(--sun); }
+.sm-times { display: flex; justify-content: space-between; gap: 12px; font-size: var(--fs-label); color: var(--muted); font-variant-numeric: tabular-nums; }
+.sm-times b { display: block; color: var(--text); font-size: var(--fs-2nd); font-weight: 650; }
+.sm-set { text-align: right; }
+.sm-day { font-size: var(--fs-label); color: var(--muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
+.sm-day b { color: var(--text); font-weight: 650; }
+.sm-moon { display: grid; justify-items: center; align-content: center; gap: 2px; border-left: 1px solid var(--card-border); padding-left: 14px; text-align: center; min-width: 0; }
+.sm-moon svg { width: min(40cqh, 100px); height: min(40cqh, 100px); margin-bottom: 4px; }
+.sm-moon-dark { fill: var(--moon-dark); }
+.sm-moon-lit { fill: var(--moon-lit); }
+.sm-moon-rim { fill: none; stroke: var(--card-border); stroke-width: 1.5; }
+.sm-phase { font-size: var(--fs-2nd); font-weight: 650; }
+.sm-lit, .sm-next { font-size: var(--fs-label); color: var(--muted); font-variant-numeric: tabular-nums; }
+/* Narrow cards drop the moon's dates, then the moon. */
+@container (max-width: 440px) { .sm-next { display: none; } }
+@container (max-width: 340px) { .sunmoon { grid-template-columns: 1fr; } .sm-moon { display: none; } }
+
+/* ---- world clocks ------------------------------------------------------------ */
+.worldclocks { container-type: size; height: 100%; display: grid; align-content: space-evenly; }
+.wc-row { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 6px 0; }
+.wc-row + .wc-row { border-top: 1px solid var(--card-border); }
+.wc-dn svg { width: 24px; height: 24px; display: block; }
+.wc-place { min-width: 0; }
+.wc-city { font-size: var(--fs-2nd); font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wc-off { font-size: var(--fs-label); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wc-time { font-size: clamp(1.25rem, 15cqh, 2.25rem); font-weight: 700; line-height: 1; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.wc-time small { font-size: .5em; font-weight: 600; color: var(--muted); margin-left: 4px; }
+.wc-row.night .wc-time { color: color-mix(in srgb, var(--text) 80%, var(--card-bg)); }
+
+/* ---- countdown --------------------------------------------------------------- */
+.countdown { container-type: size; height: 100%; display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 10px; }
+.cd-hero { display: grid; align-content: center; justify-items: start; min-width: 0; }
+.cd-n { font-size: min(34cqh, 4.75rem); font-weight: 750; line-height: .95; letter-spacing: -.03em; color: var(--accent-ink); font-variant-numeric: tabular-nums; }
+.cd-n small { font-size: .36em; font-weight: 650; color: var(--text); margin-left: 8px; letter-spacing: 0; }
+.cd-what { font-size: 1.25rem; font-weight: 650; margin-top: 8px; max-width: 100%; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.cd-date { font-size: var(--fs-label); color: var(--muted); margin-top: 2px; }
+.cd-when-word { font-size: min(16cqh, 2.25rem); font-weight: 750; line-height: 1; color: var(--accent-ink); }
+.countdown.is-today .cd-when-word { color: var(--ok); }
+.cd-what-big { font-size: min(17cqh, 2.25rem); font-weight: 750; line-height: 1.1; margin-top: 4px; }
+.cd-list { border-top: 1px solid var(--card-border); padding-top: 8px; display: grid; gap: 4px; }
+.cd-item { display: flex; justify-content: space-between; gap: 12px; font-size: var(--fs-2nd); min-width: 0; }
+.cd-item b { font-weight: 600; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cd-item span { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+@container (max-height: 200px) { .cd-list { display: none; } }
+
+/* ---- small cards: drop secondary content before anything clips -------------- */
+/* The card body is the size container for state messages. */
+.card-body { container: card / size; }
+@container card (max-height: 170px) {
+  .widget-state .state-ico, .widget-state .state-where { display: none; }
+}
+/* The tiniest cards keep the one short retry sentence; setup text goes. */
+@container card (max-height: 120px) {
+  .widget-state:not(.error) .state-body { display: none; }
+}
+@container (max-height: 200px) {
+  .sunmoon .sm-arc, .sunmoon .sm-day { display: none; }
+  .sunmoon .sm-sun { grid-template-rows: auto auto; align-content: center; gap: 8px; }
+  .sm-moon svg { width: min(46cqh, 64px); height: min(46cqh, 64px); }
+  .sm-lit, .sm-next { display: none; }
+}
+/* Next 24 hours in a short card: the sentence and the range, no squashed chart. */
+.h24 { container-type: size; }
+@container (max-height: 200px) { .h24 .h24-plot { display: none; } .h24 { align-content: center; } }
+
+/* ---- states fill and centre in any widget ---------------------------------- */
+/* Widgets lay their content out as grids that push children to the top; a
+   state message replaces that content and should sit in the middle. */
+.card-body :has(> .widget-state) {
+  display: grid !important; grid-template: minmax(0, 1fr) / minmax(0, 1fr) !important;
+  align-content: stretch !important; padding-top: 0 !important;
+}
+@container card (max-height: 200px) {
+  .widget-state .state-advice { display: none; }
+}
+
+/* ---- world clocks: compact rows when space is short -------------------------- */
+.wc-more { display: none; font-size: var(--fs-label); color: var(--muted); text-align: right; }
+.wc-time small { font-size: max(var(--fs-meta), .5em); }
+@container (max-height: 240px) {
+  .worldclocks .wc-row { padding: 2px 0; grid-template-columns: 22px minmax(0, 1fr) auto; }
+  .worldclocks .wc-off { display: none; }
+  .worldclocks .wc-city { font-size: var(--fs-label); font-weight: 600; }
+  /* The time is the thing being read: always the largest text. */
+  .worldclocks { align-content: space-evenly; }
+  .worldclocks .wc-time { font-size: clamp(1.5rem, 26cqh, 2rem); }
+  .worldclocks .wc-row:nth-child(n + 4) { display: none; }
+  .worldclocks .wc-more { display: block; }
+}
+/* Narrow cards: offsets wrap rather than lose "tomorrow". */
+@container (max-width: 360px) {
+  .worldclocks .wc-off { white-space: normal; }
+}
+
+/* ---- countdown: one line in a small card ------------------------------------ */
+.countdown { align-content: center; grid-template-rows: auto auto; gap: 14px; }
+.cd-what { line-height: 1.25; }
+@container (max-height: 200px) {
+  .countdown .cd-hero { grid-template-columns: auto minmax(0, 1fr); align-items: baseline; column-gap: 12px; }
+  .countdown .cd-n { font-size: min(44cqh, 3rem); }
+  .countdown .cd-n small { font-size: max(var(--fs-label), .36em); }
+  .countdown .cd-what { margin-top: 0; -webkit-line-clamp: 2; }
+  .countdown .cd-date { grid-column: 1 / -1; }
+  .countdown .cd-when-word { grid-column: 1 / -1; }
+}
+@container (max-height: 130px) { .countdown .cd-date { display: none; } }
+
+/* ---- sun & moon: tall narrow cards stack the moon under the sun --------------- */
+@container (max-width: 340px) and (min-height: 300px) {
+  .sunmoon { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; }
+  .sunmoon .sm-moon {
+    display: grid; grid-template-columns: auto 1fr; justify-items: start; text-align: left;
+    border-left: 0; border-top: 1px solid var(--card-border); padding: 10px 0 0; column-gap: 12px;
+  }
+  .sunmoon .sm-moon svg { grid-row: span 4; width: 64px; height: 64px; margin: 0; }
+  .sunmoon .sm-next { display: block; }
+}
+/* A short air-quality card that's also showing the out-of-date row: keep
+   the number and category, drop the pollutant line so nothing rides up. */
+@container (max-height: 200px) {
+  .aqi.is-stale .aqi-main { display: none; }
+  /* The number stays the hero; the category gives way. */
+  .aqi.is-stale .aqi-num { font-size: max(30px, min(36cqh, 3rem)); }
+  .aqi.is-stale .aqi-cat { font-size: var(--fs-2nd); }
+}
+
+/* Weather in a tall, narrow card: the glance, then the days as a list. */
+@container (max-width: 360px) and (min-height: 300px) {
+  .weather .wx-hours, .weather .wx-loc, .weather .wx-feels { display: none; }
+  .wx-now { gap: 10px; }
+  .wx-icon-big { width: min(26cqw, 72px); height: min(26cqw, 72px); }
+  .wx-temp { font-size: min(18cqw, 3.25rem); }
+  .weather .wx-range { display: none; }
+  .weather .wx-only-small { display: block; }
+  .wx-days { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .wx-day { grid-template-columns: 4.2em 30px minmax(0, 1fr) auto; justify-items: start; align-items: center; column-gap: 8px; }
+  .wx-day .wx-icon-mini { width: 28px; height: 28px; }
+  .wx-day .wx-pp { justify-self: end; }
+}
+
+/* Air quality in a tall, narrow card keeps its health message. */
+@container (max-width: 360px) and (min-height: 300px) {
+  .aqi .aqi-msg { display: block; }
 }

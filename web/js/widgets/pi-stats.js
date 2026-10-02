@@ -3,18 +3,20 @@
 // chips. Data from /api/data/pi-stats. Gauges tween via CSS transitions on
 // stroke-dashoffset, so the skeleton is built ONCE and only values move.
 import { define } from "./registry.js";
-import { el, fetchData, fmtNum } from "./dom.js";
+import { el, fetchData, fmtNum, loadInto, stateView } from "./dom.js";
 
 const R = 34;                       // gauge radius in its 80×80 viewBox
 const CIRC = 2 * Math.PI * R;       // stroke circumference
 const SPARK_POINTS = 60;            // sparkline history length
 
 define("pi-stats", {
-  meta: { label: "Pi stats", description: "CPU, memory, temp gauges + graph", category: "system" },
+  meta: { defaultRefreshSeconds: 10, label: "Pi stats", description: "CPU, memory, temp gauges + graph", category: "system" },
   schema: {
     fields: [
       { key: "showSpark", label: "Show CPU history graph", type: "boolean", default: true },
-      { key: "tempMax", label: "Temp gauge max °C", type: "number", default: 85 },
+      { key: "tempMax", label: "Temperature gauge maximum (°C)", type: "number", default: 85 },
+      { key: "tempWarn", label: "Temperature warning at (°C)", type: "number", default: 70 },
+      { key: "tempHot", label: "Temperature too hot at (°C)", type: "number", default: 80 },
       { key: "cpuWarn", label: "CPU warn at %", type: "number", default: 60 },
       { key: "cpuHot", label: "CPU hot at %", type: "number", default: 85 },
       { key: "memWarn", label: "Memory warn at %", type: "number", default: 70 },
@@ -25,7 +27,7 @@ define("pi-stats", {
     const s = widget.settings || {};
     const body = el("div", { class: "pistats" });
     const rings = el("div", { class: "pi-rings" });
-    const cpu = ring("CPU"), mem = ring("Memory"), temp = ring("Temp");
+    const cpu = ring("CPU"), mem = ring("Memory"), temp = ring("Temperature");
     rings.append(cpu.root, mem.root, temp.root);
     body.appendChild(rings);
 
@@ -44,43 +46,63 @@ define("pi-stats", {
     body.appendChild(foot);
     root.appendChild(body);
 
-    const handle = { body, widget, cpu, mem, temp, spark, foot, history: [] };
+    // The skeleton is built once and only values move; kept so it can come
+    // back after the "no stats here" state.
+    const handle = { body, widget, cpu, mem, temp, spark, foot, history: [], skeleton: [...body.children] };
     await this.refresh(handle, widget);
     return handle;
   },
   async refresh(handle, widget) {
-    const s = (widget || handle.widget).settings || {};
-    try {
-      const d = await fetchData("pi-stats");
-      const memory = d.memory || {};
-      const tempMax = Number(s.tempMax) || 85;
-      const cpuWarn = Number(s.cpuWarn) || 60;
-      const cpuHot = Number(s.cpuHot) || 85;
-      const memWarn = Number(s.memWarn) || 70;
-      const memHot = Number(s.memHot) || 88;
-
-      setRing(handle.cpu, d.cpuPercent, 100, d.cpuPercent != null ? `${fmtNum(d.cpuPercent, 0)}%` : "—", cpuWarn, cpuHot);
-      setRing(handle.mem, memory.percent, 100, memory.percent != null ? `${fmtNum(memory.percent, 0)}%` : "—", memWarn, memHot);
-      setRing(handle.temp, d.tempC, tempMax, d.tempC != null ? `${fmtNum(d.tempC, 0)}°` : "—",
-        tempMax * 0.7, tempMax * 0.88);
-
-      // CPU history sparkline (survives across refreshes via the handle)
-      if (handle.spark && d.cpuPercent != null) {
-        handle.history.push(d.cpuPercent);
-        if (handle.history.length > SPARK_POINTS) handle.history.shift();
-        drawSpark(handle.spark, handle.history);
-      }
-
-      handle.foot.replaceChildren(...[
-        chip("Load", d.load1 != null ? fmtNum(d.load1, 2) : "—"),
-        memory.usedMb != null ? chip("RAM", `${fmtNum(memory.usedMb / 1024, 1)} / ${fmtNum(memory.totalMb / 1024, 1)} GB`) : null,
-        chip("Up", d.uptimeSeconds != null ? fmtUptime(d.uptimeSeconds) : "—"),
-      ].filter(Boolean));
-    } catch {
-      handle.body.replaceChildren(el("div", { class: "widget-error" }, "stats unavailable"));
-    }
+    if (widget) handle.widget = widget;
+    await loadInto(handle, {
+      load: () => fetchData("pi-stats"),
+      render: (d) => render(handle, d),
+      error: { title: "Can't read system stats" },
+    });
   },
 });
+
+function render(handle, d) {
+  const s = handle.widget.settings || {};
+  const memory = d.memory || {};
+  // Every reading missing means this isn't a Pi (or /proc isn't readable):
+  // say so rather than drawing three empty rings.
+  if (d.cpuPercent == null && memory.percent == null && d.tempC == null) {
+    handle.body.replaceChildren(stateView({
+      icon: "chip", title: "No system stats here",
+      body: "They appear when the dashboard runs on the Raspberry Pi.",
+    }));
+    return;
+  }
+  if (!handle.body.contains(handle.skeleton[0])) handle.body.replaceChildren(...handle.skeleton);
+
+  const tempMax = Number(s.tempMax) || 85;
+  const cpuWarn = Number(s.cpuWarn) || 60;
+  const cpuHot = Number(s.cpuHot) || 85;
+  const memWarn = Number(s.memWarn) || 70;
+  const memHot = Number(s.memHot) || 88;
+  const tempWarn = Number(s.tempWarn) || 70;
+  const tempHot = Number(s.tempHot) || 80;
+
+  setRing(handle.cpu, d.cpuPercent, 100, d.cpuPercent != null ? `${fmtNum(d.cpuPercent, 0)}%` : "—", cpuWarn, cpuHot);
+  setRing(handle.mem, memory.percent, 100, memory.percent != null ? `${fmtNum(memory.percent, 0)}%` : "—", memWarn, memHot);
+  setRing(handle.temp, d.tempC, tempMax, d.tempC != null ? `${fmtNum(d.tempC, 0)}°C` : "—", tempWarn, tempHot,
+    // The temperature ring fills against its own maximum, but warns on °C.
+    d.tempC);
+
+  // CPU history sparkline (survives across refreshes via the handle)
+  if (handle.spark && d.cpuPercent != null) {
+    handle.history.push(d.cpuPercent);
+    if (handle.history.length > SPARK_POINTS) handle.history.shift();
+    drawSpark(handle.spark, handle.history);
+  }
+
+  handle.foot.replaceChildren(...[
+    chip("Load", d.load1 != null ? fmtNum(d.load1, 2) : "—"),
+    memory.usedMb != null ? chip("Memory", `${fmtNum(memory.usedMb / 1024, 1)} of ${fmtNum(memory.totalMb / 1024, 1)} GB`) : null,
+    chip("Up", d.uptimeSeconds != null ? fmtUptime(d.uptimeSeconds) : "—"),
+  ].filter(Boolean));
+}
 
 // ---- ring gauge ----------------------------------------------------------------
 
@@ -98,12 +120,12 @@ function ring(label) {
   return { root, fg: root.querySelector(".pi-ring-fg"), val: root.querySelector(".pi-ring-val") };
 }
 
-function setRing(r, value, max, text, warnAt, hotAt) {
+function setRing(r, value, max, text, warnAt, hotAt, levelValue = value) {
   const pct = value != null && max > 0 ? Math.max(0, Math.min(1, value / max)) : 0;
   r.fg.style.strokeDashoffset = String(CIRC * (1 - pct));
   r.val.textContent = text;
-  r.root.classList.toggle("lvl-warn", value != null && value >= warnAt && value < hotAt);
-  r.root.classList.toggle("lvl-hot", value != null && value >= hotAt);
+  r.root.classList.toggle("lvl-warn", levelValue != null && levelValue >= warnAt && levelValue < hotAt);
+  r.root.classList.toggle("lvl-hot", levelValue != null && levelValue >= hotAt);
   r.root.classList.toggle("lvl-na", value == null);
 }
 
@@ -136,7 +158,7 @@ function fmtUptime(s) {
   const d = Math.floor(s / 86400);
   const h = Math.floor((s % 86400) / 3600);
   const m = Math.floor((s % 3600) / 60);
-  if (d) return `${d}d ${h}h`;
-  if (h) return `${h}h ${m}m`;
-  return `${m}m`;
+  if (d) return `${d} d ${h} h`;
+  if (h) return `${h} h ${m} min`;
+  return `${m} min`;
 }

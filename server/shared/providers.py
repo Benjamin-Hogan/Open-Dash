@@ -50,6 +50,7 @@ def load_builtin() -> None:
         air_quality,
         heads_up,
         ical,
+        location,
         octoprint,
         photos,
         pi_stats,

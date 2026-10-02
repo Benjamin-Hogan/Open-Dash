@@ -126,7 +126,7 @@ async function mountPinned(widget) {
   } catch (err) {
     body.appendChild(el("div", { class: "widget-error" }, `Failed: ${err.message}`));
   }
-  const refreshSecs = widget.refreshSeconds ?? widget.settings?.refreshSeconds ?? 60;
+  const refreshSecs = widget.refreshSeconds ?? widget.settings?.refreshSeconds ?? plugin.meta?.defaultRefreshSeconds ?? 60;
   if (entry.handle && plugin.refresh && refreshSecs >= 1) {
     entry.refreshTimer = setInterval(
       () => plugin.refresh(entry.handle, widget),
@@ -337,11 +337,12 @@ async function mountPage(page) {
       body.appendChild(el("div", { class: "widget-error" }, `Failed: ${err.message}`));
       continue;
     }
-    if (widget.refreshSeconds && plugin.refresh) {
-      entry.refreshTimer = setInterval(
-        () => plugin.refresh(entry.handle, widget),
-        widget.refreshSeconds * 1000
-      );
+    // Blank means "this widget's usual interval", not "never": a data widget
+    // that never refreshes shows a morning forecast all day, and one that
+    // failed its first load would stay broken on a screen nobody reloads.
+    const every = widget.refreshSeconds ?? plugin.meta?.defaultRefreshSeconds;
+    if (every && plugin.refresh) {
+      entry.refreshTimer = setInterval(() => plugin.refresh(entry.handle, widget), every * 1000);
     }
     if (widget.schedule?.enabled) {
       applySchedule(entry);

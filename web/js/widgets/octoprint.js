@@ -2,10 +2,10 @@
 // one hero number, quiet secondary line, metric columns. Webcam is a separate
 // Image widget pointed at /webcam/?action=stream.
 import { define } from "./registry.js";
-import { el, fetchData, fmtNum, effectiveSettings } from "./dom.js";
+import { el, fetchData, fmtNum, effectiveSettings, stateView, markOk, markFailed } from "./dom.js";
 
 define("octoprint", {
-  meta: {
+  meta: { defaultRefreshSeconds: 15,
     label: "OctoPrint",
     description: "3D printer status, progress, filament (webcam is separate)",
     category: "data",
@@ -50,12 +50,18 @@ define("octoprint", {
     try {
       const d = await fetchData("octoprint", params);
       if (d.needsKey) {
-        handle.body.replaceChildren(el("div", { class: "widget-empty" },
-          `Set ${d.env} in API keys, or add an API key in this widget's settings`));
+        handle.body.replaceChildren(stateView({
+          icon: "key", title: "Add your OctoPrint API key",
+          body: "Find it in OctoPrint under Settings › Application Keys.", where: "Admin › Settings › API keys",
+        }));
         return;
       }
       if (!d.configured) {
-        handle.body.replaceChildren(el("div", { class: "widget-empty" }, d.error || "not configured"));
+        handle.body.replaceChildren(stateView({
+          icon: "printer", title: "Connect your printer",
+          body: d.error && !/not configured/i.test(d.error) ? d.error : "Add your OctoPrint address to this widget.",
+          where: "Admin › Layout › this widget",
+        }));
         return;
       }
 
@@ -113,10 +119,9 @@ define("octoprint", {
 
       handle.body.className = "octo tone-" + tone;
       handle.body.replaceChildren(...parts);
-    } catch (err) {
-      const detail = err && err.message ? String(err.message) : "";
-      handle.body.replaceChildren(el("div", { class: "widget-error" },
-        detail.includes("502") ? "printer unreachable" : (detail || "printer unreachable")));
+      markOk(handle);
+    } catch {
+      markFailed(handle, "Can't reach the printer", "Check that OctoPrint is on and the address in this widget is right.", () => this.refresh(handle));
     }
   },
 });
