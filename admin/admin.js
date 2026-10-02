@@ -12,7 +12,6 @@ import * as api from "/js/core/api.js";
 import * as savebar from "/js/savebar.js";
 import { clone, deepEqual } from "/js/core/clone.js";
 import { rotationPages, hasCustomOrder, syncRotationOrder } from "/js/model/order.js";
-import { resolve as resolveLayout } from "/js/model/layout.js";
 import * as liveHost from "/js/view/live-host.js";
 import { catalog, grouped, search, defaultSettings } from "/js/model/catalog.js";
 import { renderForm as renderFormEngine, humanize } from "/js/form/render.js";
@@ -370,12 +369,10 @@ function renderCanvas() {
   guideLayer.id = "guide-layer";
   canvas.appendChild(guideLayer);
 
-  const bad = problems(cols);
   const boxes = [];
   widgets.forEach((w) => {
     if (!w.grid) w.grid = { x: 0, y: 0, w: 4, h: 3 };
     const box = makeBox(w, cols);
-    if (bad.has(w.id)) box.classList.add("overlap");
     canvas.appendChild(box);
     boxes.push(box);
   });
@@ -396,7 +393,7 @@ function renderCanvas() {
   for (const box of boxes) liveHost.track(box);
   liveHost.mountAll(boxes);
 
-  updateHint(bad.size);
+  markProblems(cols);
   updateBulkBar();
 }
 
@@ -431,40 +428,66 @@ new ResizeObserver(([entry]) => {
   renderCanvas._t = setTimeout(renderCanvas, 120);
 }).observe($("#canvas"));
 
-// flag widgets that overlap each other or run off the grid (x+w > cols)
+// Overlap is allowed (a widget can sit on top of another on purpose), so it's
+// flagged yellow rather than refused. Running off the grid is still an error.
 function problems(cols) {
   const ws = currentWidgets();
-  const bad = new Set();
+  const overlap = new Set(), offGrid = new Set();
   const g = (w) => w.grid || { x: 0, y: 0, w: 4, h: 3 };
   for (const w of ws) {
     const a = g(w);
-    if (a.x < 0 || a.y < 0 || a.x + a.w > cols) bad.add(w.id);
+    if (a.x < 0 || a.y < 0 || a.x + a.w > cols) offGrid.add(w.id);
   }
   for (let i = 0; i < ws.length; i++) {
     for (let j = i + 1; j < ws.length; j++) {
-      const a = g(ws[i]), b = g(ws[j]);
-      if (a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y) {
-        bad.add(ws[i].id); bad.add(ws[j].id);
-      }
+      if (rectsOverlap(g(ws[i]), g(ws[j]))) { overlap.add(ws[i].id); overlap.add(ws[j].id); }
     }
   }
-  return bad;
+  return { overlap, offGrid };
 }
 
-function updateHint(badCount) {
+/**
+ * Draw order is the page's widget order: later widgets sit on top, here and on
+ * the wall. A widget just dropped onto another should end up on top, so it
+ * can be seen and grabbed again; move it to the end of the list.
+ */
+function raiseIfOverlapping(moved) {
+  const list = currentWidgets();
+  const ids = new Set(moved.map((w) => w.id));
+  const covers = moved.some((m) => list.some((o) => !ids.has(o.id) && o.grid && rectsOverlap(m.grid, o.grid)));
+  if (!covers) return;
+  const rest = list.filter((w) => !ids.has(w.id));
+  const top = list.filter((w) => ids.has(w.id));
+  list.splice(0, list.length, ...rest, ...top);
+}
+
+/** Re-flag overlaps on the boxes already on the canvas, without a re-render. */
+function markProblems(cols) {
+  const { overlap, offGrid } = problems(cols);
+  for (const box of document.querySelectorAll("#canvas .canvas-box")) {
+    const id = box.dataset.widgetId;
+    box.classList.toggle("overlap", overlap.has(id));
+    box.classList.toggle("off-grid", offGrid.has(id));
+  }
+  updateHint(overlap.size, offGrid.size);
+}
+
+function updateHint(overlapCount = 0, offGridCount = 0) {
   const hint = $("#canvas-hint");
   if (!hint) return;
-  if (badCount) {
-    hint.textContent = `${badCount} widget${badCount === 1 ? "" : "s"} overlap or run off the grid. Use Tidy up layout in the page menu.`;
+  hint.classList.remove("warn", "error");
+  if (offGridCount) {
+    hint.textContent = `${offGridCount} widget${offGridCount === 1 ? " runs" : "s run"} off the grid. Use Tidy up layout in the page menu.`;
+    hint.classList.add("error");
+  } else if (overlapCount) {
+    hint.textContent = `${overlapCount} widgets overlap (highlighted in yellow). That's allowed; the one you moved last draws on top.`;
     hint.classList.add("warn");
   } else if (canvasTooSmall) {
     hint.textContent = phone()
       ? "Showing outlines on this screen. Use Preview to see the page live."
       : "Showing outlines: hide the inspector or widen the window for a live preview.";
-    hint.classList.remove("warn");
   } else {
-    hint.textContent = "Drag to move or resize; drop on a widget to swap, Esc cancels. Arrow keys nudge the selected widget.";
-    hint.classList.remove("warn");
+    hint.textContent = "Drag to move or resize; Esc cancels. Arrow keys nudge the selected widget.";
   }
 }
 
@@ -617,23 +640,6 @@ function rectsOverlap(a, b) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
-/** Every widget's rect as it stands, for the layout resolver. */
-function layoutItems() {
-  return currentWidgets().filter((o) => o.grid).map((o) => ({ id: o.id, ...o.grid }));
-}
-
-/** Write a resolved layout back onto the widgets. Returns the ids that changed. */
-function applyLayout(out) {
-  const changed = [];
-  for (const o of currentWidgets()) {
-    const r = out.get(o.id);
-    if (!r || !o.grid) continue;
-    if (r.x !== o.grid.x || r.y !== o.grid.y || r.w !== o.grid.w || r.h !== o.grid.h) changed.push(o.id);
-    Object.assign(o.grid, r);
-  }
-  return changed;
-}
-
 /**
  * Alignment guides: a line wherever the dragged rect's edges meet a
  * neighbour's. The grid already snaps to whole cells, so this only shows,
@@ -695,11 +701,9 @@ function startDrag(e, w, box, cols, mode, dir = "se") {
   const group = mode === "move" && isSelected(w.id) && selectedWidgets().length > 1
     ? selectedWidgets() : [w];
   const ignore = new Set(group.map((g) => g.id));
-  // Every gesture resolves from the layout as it was when it started, so
-  // dragging across a neighbour and back puts it back where it was.
-  const before = layoutItems();
-  const beforeById = new Map(before.map((it) => [it.id, it]));
-  const orig = { ...beforeById.get(w.id) };
+  // Every frame works from the rects at the start of the gesture.
+  const beforeById = new Map(group.map((g) => [g.id, { ...g.grid }]));
+  const orig = { ...w.grid };
   const boxOf = (id) => canvas.querySelector(`[data-widget-id="${CSS.escape(id)}"]`);
 
   try { box.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
@@ -754,12 +758,14 @@ function startDrag(e, w, box, cols, mode, dir = "se") {
     const key = JSON.stringify([...next.entries()]);
     if (key !== lastKey) {
       lastKey = key;
-      const out = resolveLayout(before, next, cols, { mode, dir });
-      applyLayout(out);
-      for (const o of currentWidgets()) {
-        const b = boxOf(o.id);
-        if (b && o.grid) placeBox(b, o);
+      // Overlap is allowed: the widget goes exactly where it's dropped and
+      // anything it covers is flagged, not moved.
+      for (const g of group) {
+        Object.assign(g.grid, next.get(g.id));
+        const b = boxOf(g.id);
+        if (b) placeBox(b, g);
       }
+      markProblems(cols);
       placeBox(ghost, { grid: lead });
       drawGuides(alignGuides(lead, ignore, cols), cols);
       showDragBadge(box, lead);
@@ -792,14 +798,15 @@ function startDrag(e, w, box, cols, mode, dir = "se") {
     if (!moved) return;
     if (!commit) {
       // Cancelled (Escape, a lost pointer): put everything back.
-      applyLayout(new Map(before.map((it) => [it.id, it])));
+      for (const g of group) Object.assign(g.grid, beforeById.get(g.id));
       renderCanvas();
       return;
     }
-    const changed = before.some((it) => {
-      const g = currentWidgets().find((o) => o.id === it.id)?.grid;
-      return g && (g.x !== it.x || g.y !== it.y || g.w !== it.w || g.h !== it.h);
+    const changed = group.some((g) => {
+      const o = beforeById.get(g.id);
+      return g.grid.x !== o.x || g.grid.y !== o.y || g.grid.w !== o.w || g.grid.h !== o.h;
     });
+    if (changed) raiseIfOverlapping(group);
     renderCanvas(); // re-render to grow (or shrink) the canvas to fit
     if (changed) {
       const resized = orig.w !== w.grid.w || orig.h !== w.grid.h;
@@ -2006,7 +2013,7 @@ function spacer() { return Object.assign(document.createElement("span"), { class
 function announce(text) {
   const hint = $("#canvas-hint");
   if (!hint) return;
-  hint.classList.remove("warn");
+  hint.classList.remove("warn", "error");
   hint.textContent = text;
 }
 
@@ -3923,9 +3930,11 @@ document.addEventListener("keydown", (e) => {
     }
     return [w.id, g];
   }));
-  // Same rules as dragging: neighbours swap or make room rather than block.
-  const dir = e.shiftKey ? (dx ? "e" : "s") : undefined;
-  if (!applyLayout(resolveLayout(layoutItems(), next, cols, { mode: e.shiftKey ? "resize" : "move", dir })).length) return;
+  // Same as dragging: overlapping is allowed and gets flagged.
+  const same = ws.every((w) => { const g = next.get(w.id); return g.x === w.grid.x && g.y === w.grid.y && g.w === w.grid.w && g.h === w.grid.h; });
+  if (same) return;
+  for (const w of ws) Object.assign(w.grid, next.get(w.id));
+  raiseIfOverlapping(ws);
   renderCanvas();
   const what = ws.length > 1 ? `${ws.length} widgets` : (ws[0].title || ws[0].type);
   save(`${e.shiftKey ? "resized" : "moved"} ${what}`, { coalesce: `nudge:${[...ids].join(",")}:${e.shiftKey}` });

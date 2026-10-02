@@ -292,8 +292,25 @@
 .canvas-box.selected {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
+  z-index: 4;   /* above anything it overlaps, so it can always be grabbed */
 }
+/* Overlap is allowed, just flagged: a yellow outline and wash so it's
+ * obvious which widgets sit on top of each other. */
 .canvas-box.overlap {
+  border-color: var(--warn);
+  box-shadow: inset 0 0 0 2px var(--warn);
+}
+.canvas-box.overlap::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  pointer-events: none;
+  z-index: 1;
+}
+.canvas-box.overlap.selected { box-shadow: inset 0 0 0 2px var(--warn), 0 0 0 1px var(--accent); }
+/* Off the grid is still an error: the display can't draw it. */
+.canvas-box.off-grid {
   border-color: var(--danger);
   box-shadow: inset 0 0 0 1px var(--danger);
 }
@@ -416,6 +433,7 @@
   font-size: var(--fs-md);
 }
 #canvas-hint.warn { color: var(--warn); font-weight: var(--fw-medium); }
+#canvas-hint.error { color: var(--danger); font-weight: var(--fw-medium); }
 
 /* ---- widget list --------------------------------------------------------- */
 /* One row per widget, one menu per row. Five inline buttons per row was most
