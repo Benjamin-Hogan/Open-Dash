@@ -7,7 +7,11 @@
   --card-bg: #161a22;
   --card-border: #232936;
   --text: #e8edf4;
-  --muted: #8b97a8;
+  /* Secondary text is read from across a room: brighter than a desk UI's grey. */
+  --muted: #a3aec0;
+  /* Floor sizes for small text on a wall display (rem, so --font-scale applies). */
+  --fs-meta: 0.8125rem;   /* was 0.6875rem (11px) */
+  --fs-label: 0.875rem;   /* was 0.75rem (12px) */
   /* Per-device text trim: multiplies every rem-based font size. Set live by
      device.js (uiScale × fontScale); 1 = default. Layout px are unaffected. */
   --font-scale: 1;
@@ -15,7 +19,7 @@
 }
 [data-theme="light"] {
   --bg: #f1f3f7; --card-bg: #ffffff; --card-border: #d8dee9;
-  --text: #1a2230; --muted: #5c6678;
+  --text: #1a2230; --muted: #4f596a;
 }
 
 * { box-sizing: border-box; }
@@ -51,6 +55,16 @@ body.pinned-top .grid { padding-top: var(--pinned-inset, 52px); }
   pointer-events: none;
   z-index: 0;
 }
+/* Fit to screen: the page's rows share the pane's height (the pane is inset 0
+   on a 100vh grid), so every page fills its display. */
+.page-pane.fit { grid-template-rows: repeat(var(--page-rows), minmax(0, 1fr)); }
+.card { grid-column: var(--col); grid-row: var(--row); }
+/* Portrait: one column in reading order, each card keeping its height in rows. */
+@media (orientation: portrait) {
+  .page-pane.stackable { grid-template-columns: minmax(0, 1fr); }
+  .page-pane.stackable.fit { grid-template-rows: repeat(var(--stack-rows), minmax(0, 1fr)); }
+  .page-pane.stackable .card { grid-column: 1 / -1; grid-row: var(--stack-row); }
+}
 .page-pane.active {
   opacity: 1;
   pointer-events: auto;
@@ -72,12 +86,14 @@ body.pinned-top .grid { padding-top: var(--pinned-inset, 52px); }
 }
 .card.offline, .card.scheduled-hidden { display: none; }
 .card-title {
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  font-size: var(--fs-label);
+  font-weight: 600;
   color: var(--muted);
   padding: 10px 14px 0;
   flex: 0 0 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .card-body { flex: 1 1 auto; min-height: 0; position: relative; padding: 12px 14px; }
 .card-body:has(> .octo) { padding: 8px 10px; }
@@ -93,9 +109,21 @@ body.pinned-top .grid { padding-top: var(--pinned-inset, 52px); }
 .embed-image, .embed-video { object-fit: cover; }
 
 /* clock */
-.clock { display: grid; place-content: center; height: 100%; text-align: center; }
-.clock-time { font-size: clamp(1.75rem, 6vw, 4.5rem); font-weight: 700; font-variant-numeric: tabular-nums; }
-.clock-date { color: var(--muted); margin-top: 6px; font-size: 0.875rem; }
+.clock {
+  container-type: size;
+  display: grid; place-content: center; height: 100%; text-align: center;
+}
+/* Sized against the card, not the viewport: "12:45 PM" fits on one line in a
+   small tile and grows to fill a big one. */
+.clock-time {
+  font-size: min(24cqw, 52cqh);
+  font-weight: 700; line-height: 1; white-space: nowrap;
+  font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+}
+.clock-sec { font-size: 0.5em; font-weight: 600; color: var(--muted); }
+.clock-period { font-size: 0.32em; font-weight: 600; margin-left: 0.2em; color: var(--muted); letter-spacing: 0.02em; }
+.clock-date { color: var(--muted); margin-top: 0.5em; font-size: max(var(--fs-label), min(7cqw, 13cqh)); }
+.clock-date[hidden] { display: none; }
 
 /* text */
 .text-widget { white-space: pre-wrap; height: 100%; display: grid; align-content: center; }
@@ -115,13 +143,13 @@ body.pinned-top .grid { padding-top: var(--pinned-inset, 52px); }
 .pi-ring.lvl-hot  .pi-ring-fg { stroke: #ef5f6b; }
 .pi-ring.lvl-na { opacity: .45; }
 .pi-ring-val { fill: var(--text); font-size: 17px; font-weight: 700; text-anchor: middle; font-variant-numeric: tabular-nums; }
-.pi-ring-cap { font-size: 0.6875rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-top: 2px; }
+.pi-ring-cap { font-size: var(--fs-meta); color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-top: 2px; }
 .pi-spark { height: 34px; flex: 0 0 auto; }
 .pi-spark svg { width: 100%; height: 100%; display: block; }
 .pi-spark-line { fill: none; stroke: var(--accent); stroke-width: 1.6; vector-effect: non-scaling-stroke; }
 .pi-spark-fill { fill: color-mix(in srgb, var(--accent) 16%, transparent); }
 .pi-foot { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
-.pi-chip { border: 1px solid var(--card-border); border-radius: 12px; padding: 2px 9px; font-size: 0.6875rem; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pi-chip { border: 1px solid var(--card-border); border-radius: 12px; padding: 2px 9px; font-size: var(--fs-meta); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .pi-chip-label { text-transform: uppercase; font-weight: 700; letter-spacing: .04em; }
 
 /* weather — animated icons */
@@ -136,9 +164,9 @@ body.pinned-top .grid { padding-top: var(--pinned-inset, 52px); }
 .wx-icon-mini { width: 1.6rem; height: 1.6rem; margin: 2px auto; }
 .wx-temp { font-size: 2.75rem; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
 .wx-summary { font-size: 1rem; margin-top: 2px; }
-.wx-sub { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+.wx-sub { font-size: var(--fs-label); color: var(--muted); margin-top: 2px; }
 .wx-forecast { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; margin-top: auto; }
-.wx-day { text-align: center; font-size: 0.75rem; }
+.wx-day { text-align: center; font-size: var(--fs-label); }
 .wx-dow { color: var(--muted); }
 .wx-lo { color: var(--muted); }
 /* icon motion */
@@ -170,10 +198,10 @@ body.pinned-top .grid { padding-top: var(--pinned-inset, 52px); }
 .kp-arc-bg { fill: none; stroke: rgba(127,127,127,.18); stroke-width: 9; stroke-linecap: round; }
 .kp-arc-fg { fill: none; stroke: var(--kpc, var(--accent)); stroke-width: 9; stroke-linecap: round; transition: stroke-dashoffset 1s cubic-bezier(.2, .8, .3, 1), stroke .6s ease; }
 .kp-gauge-val { fill: var(--text); font-size: 21px; font-weight: 700; text-anchor: middle; font-variant-numeric: tabular-nums; }
-.kp-gauge-cap { fill: var(--muted); font-size: 7px; text-anchor: middle; letter-spacing: .12em; }
-.kp-tick { fill: var(--muted); font-size: 6px; }
+.kp-gauge-cap { fill: var(--muted); font-size: 8px; text-anchor: middle; letter-spacing: .12em; }
+.kp-tick { fill: var(--muted); font-size: 7px; }
 .kp-big .kp-value { font-size: 2.5rem; font-weight: 700; color: var(--kpc, var(--text)); line-height: 1; }
-.kp-label { font-size: 0.6875rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.kp-label { font-size: var(--fs-meta); color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .kp-history { display: flex; flex-direction: column; gap: 3px; align-items: center; }
 .kp-bars { display: flex; gap: 3px; align-items: flex-end; height: 34px; }
 .kp-bar { width: 8px; border-radius: 3px 3px 1px 1px; background: var(--kpc, var(--accent)); transform-origin: bottom; animation: kpgrow .5s cubic-bezier(.2, .8, .3, 1) backwards; }
@@ -189,25 +217,25 @@ body.pinned-top .grid { padding-top: var(--pinned-inset, 52px); }
 .stock-chg.up { color: #3fc77a; }
 .stock-chg.down { color: #ef5f6b; }
 .stock-head { display: flex; justify-content: flex-end; margin-bottom: 4px; }
-.stock-toggle { cursor: pointer; font-size: 0.6875rem; color: #8a93a3; background: none; border: 1px solid var(--card-border); border-radius: 6px; padding: 1px 8px; }
+.stock-toggle { cursor: pointer; font-size: var(--fs-meta); color: var(--muted); background: none; border: 1px solid var(--card-border); border-radius: 6px; padding: 1px 8px; }
 .stock-toggle:hover { color: #cfd6df; }
 .stock-row.chart { row-gap: 2px; }
-.stock-sub { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 12px; font-size: 0.6875rem; color: #8a93a3; font-variant-numeric: tabular-nums; padding-top: 1px; }
+.stock-sub { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 12px; font-size: var(--fs-meta); color: var(--muted); font-variant-numeric: tabular-nums; padding-top: 1px; }
 .stock-spark { grid-column: 1 / -1; height: 34px; }
 .stock-spark svg { width: 100%; height: 100%; display: block; }
 
 /* space imagery (aurora / LASCO / SDO loops) */
 .spaceimg { position: relative; width: 100%; height: 100%; background: #000; border-radius: 6px; overflow: hidden; }
 .spaceimg-img { width: 100%; height: 100%; object-fit: contain; display: block; }
-.spaceimg-cap { position: absolute; left: 0; right: 0; bottom: 0; padding: 3px 8px; font-size: 0.6875rem; color: #cfd6df; background: linear-gradient(transparent, rgba(0,0,0,.65)); text-align: right; font-variant-numeric: tabular-nums; }
+.spaceimg-cap { position: absolute; left: 0; right: 0; bottom: 0; padding: 3px 8px; font-size: var(--fs-meta); color: #cfd6df; background: linear-gradient(transparent, rgba(0,0,0,.65)); text-align: right; font-variant-numeric: tabular-nums; }
 
 /* air quality */
 .aqi { display: flex; flex-direction: column; gap: 6px; height: 100%; justify-content: center; }
 .aqi-gauge { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px; border-radius: 10px; }
 .aqi-value { font-size: 2.125rem; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
-.aqi-cat { font-size: 0.75rem; opacity: .9; }
-.aqi-sub { display: flex; gap: 12px; justify-content: center; font-size: 0.6875rem; color: #8a93a3; font-variant-numeric: tabular-nums; }
-.aqi-loc { text-align: center; font-size: 0.6875rem; color: #8a93a3; }
+.aqi-cat { font-size: var(--fs-label); opacity: .9; }
+.aqi-sub { display: flex; gap: 12px; justify-content: center; font-size: var(--fs-meta); color: var(--muted); font-variant-numeric: tabular-nums; }
+.aqi-loc { text-align: center; font-size: var(--fs-meta); color: var(--muted); }
 .aqi-gauge.good { background: rgba(0,153,102,.18); color: #5fd6a6; }
 .aqi-gauge.moderate { background: rgba(220,200,0,.16); color: #e6d24a; }
 .aqi-gauge.usg { background: rgba(255,140,0,.18); color: #ffae4a; }
@@ -217,7 +245,7 @@ body.pinned-top .grid { padding-top: var(--pinned-inset, 52px); }
 
 /* rss */
 .rss { height: 100%; overflow: auto; }
-.rss-head { display: flex; align-items: center; gap: 6px; font-size: 0.75rem; font-weight: 600; color: var(--accent); margin-bottom: 8px; position: sticky; top: 0; background: var(--card, #141a24); padding-bottom: 4px; }
+.rss-head { display: flex; align-items: center; gap: 6px; font-size: var(--fs-label); font-weight: 600; color: var(--accent); margin-bottom: 8px; position: sticky; top: 0; background: var(--card, #141a24); padding-bottom: 4px; }
 .rss-favicon { width: 16px; height: 16px; border-radius: 3px; object-fit: cover; }
 .rss-list { display: flex; flex-direction: column; gap: 10px; }
 .rss-item { display: grid; grid-template-columns: 64px 1fr; gap: 10px; align-items: start; }
@@ -225,8 +253,8 @@ body.pinned-top .grid { padding-top: var(--pinned-inset, 52px); }
 .rss-thumb { width: 64px; height: 64px; border-radius: 8px; object-fit: cover; background: #0c1118; }
 .rss-body { min-width: 0; }
 .rss-title { font-size: 0.8125rem; font-weight: 600; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.rss-desc { font-size: 0.75rem; color: #aeb6c2; line-height: 1.35; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.rss-meta { font-size: 0.6875rem; color: #8a93a3; margin-top: 3px; }
+.rss-desc { font-size: var(--fs-label); color: #aeb6c2; line-height: 1.35; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.rss-meta { font-size: var(--fs-meta); color: var(--muted); margin-top: 3px; }
 
 /* rss cycle (one story at a time) */
 .rss-solo { display: flex; flex-direction: column; height: 100%; gap: 10px; animation: rssfade .45s ease; }
@@ -243,11 +271,11 @@ body.pinned-top .grid { padding-top: var(--pinned-inset, 52px); }
 /* calendar / ical */
 .ical { height: 100%; overflow: hidden; }
 .ical-list { display: flex; flex-direction: column; gap: 3px; }
-.ical-day { font-size: 0.6875rem; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: .04em; margin-top: 6px; }
+.ical-day { font-size: var(--fs-meta); font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: .04em; margin-top: 6px; }
 .ical-ev { display: flex; gap: 8px; font-size: 0.8125rem; line-height: 1.3; flex-wrap: wrap; }
-.ical-time { color: #8a93a3; min-width: 62px; font-variant-numeric: tabular-nums; }
+.ical-time { color: var(--muted); min-width: 62px; font-variant-numeric: tabular-nums; }
 .ical-sum { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ical-loc { flex: 1 1 100%; font-size: 0.6875rem; color: var(--muted); padding-left: 70px; }
+.ical-loc { flex: 1 1 100%; font-size: var(--fs-meta); color: var(--muted); padding-left: 70px; }
 
 /* slideshow */
 .slideshow { position: absolute; inset: 0; }
@@ -255,14 +283,30 @@ body.pinned-top .grid { padding-top: var(--pinned-inset, 52px); }
 .slide.active { opacity: 1; pointer-events: auto; }
 
 /* page indicator dots (slideshow mode) */
-.pagedots { position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; }
+.pagedots {
+  position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px;
+  opacity: 0; transition: opacity .6s ease; z-index: 5;
+}
+/* Shown briefly when the page changes (and while the pointer is near them). */
+.pagedots.show, .pagedots:hover, .pagedots:focus-within { opacity: 1; transition-duration: .2s; }
 .pagedot { width: 9px; height: 9px; border-radius: 50%; border: 0; padding: 0; cursor: pointer; background: var(--card-border); opacity: 0.7; }
 .pagedot.active { background: var(--accent); opacity: 1; }
 
 /* live-connection dot */
 #status { position: fixed; bottom: 8px; right: 8px; width: 8px; height: 8px; border-radius: 50%; }
-#status.online { background: #3fc77a; }
-#status.offline { background: #ef5f6b; }
+/* Nothing to see while connected; a labelled pill when the live link drops. */
+#status.online { display: none; }
+#status.offline {
+  width: auto; height: auto; padding: 4px 10px 4px 22px; border-radius: 999px;
+  background: rgb(20 24 33 / .85); border: 1px solid #ef5f6b55; color: #f3a5ac;
+  font-size: var(--fs-meta); z-index: 6;
+}
+#status.offline::before {
+  content: ""; position: absolute; left: 9px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px;
+  border-radius: 50%; background: #ef5f6b; animation: status-pulse 1.6s ease-in-out infinite;
+}
+#status.offline::after { content: "Reconnecting…"; }
+@keyframes status-pulse { 50% { opacity: .35; } }
 
 /* ---- octoprint — sized for small multi-widget kiosks (~5") ---------------- */
 .octo {
@@ -356,7 +400,7 @@ body.pinned-top .grid { padding-top: var(--pinned-inset, 52px); }
 
 /* ---- alert banners ----------------------------------------------------------
    Fixed px chrome (not rem) so alerts stay readable at tiny font scales. */
-#alerts { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 60; display: flex; flex-direction: column; gap: 8px; width: min(560px, calc(100vw - 24px)); pointer-events: none; }
+#alerts { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 60; display: flex; flex-direction: column; gap: 8px; width: min(680px, calc(100vw - 24px)); pointer-events: none; }
 .alert {
   display: flex; align-items: flex-start; gap: 10px; pointer-events: auto;
   padding: 12px 14px; border-radius: 12px; border: 1px solid var(--card-border);
@@ -369,9 +413,9 @@ body.pinned-top .grid { padding-top: var(--pinned-inset, 52px); }
 .alert-warning { border-left-color: #e6b13f; }
 .alert-danger { border-left-color: #ef5f6b; animation: alertin .35s cubic-bezier(.2,.9,.3,1.2), alertpulse 1.6s ease-in-out 2; }
 .alert-text { flex: 1 1 auto; min-width: 0; }
-.alert-title { font-weight: 700; font-size: 14px; }
-.alert-msg { font-size: 13px; color: var(--muted); margin-top: 2px; }
-.alert-close { flex: 0 0 auto; background: none; border: 0; color: var(--muted); font-size: 14px; cursor: pointer; padding: 2px 4px; }
+.alert-title { font-weight: 700; font-size: 1.125rem; }
+.alert-msg { font-size: 1rem; color: var(--muted); margin-top: 2px; }
+.alert-close { flex: 0 0 auto; background: none; border: 0; color: var(--muted); font-size: 1rem; cursor: pointer; padding: 4px 8px; min-width: 32px; min-height: 32px; }
 .alert-close:hover { color: var(--text); }
 .alert-out { animation: alertout .3s ease forwards; }
 @keyframes alertin { from { opacity: 0; transform: translateY(-16px) scale(.97); } to { opacity: 1; transform: none; } }
@@ -551,3 +595,23 @@ body.pinned-top .pinned-card { border-top: 0; border-bottom: 1px solid var(--car
 }
 .scale-hud .hud-foot button.primary { background: var(--accent); border-color: var(--accent); color: #06121f; font-weight: 600; }
 .scale-hud .hud-keys { font-size: 10px; color: var(--muted); line-height: 1.5; margin-top: 10px; }
+
+/* ---- kiosk niceties ---------------------------------------------------------- */
+/* The pointer disappears after a few seconds of stillness (app.js toggles it). */
+body.idle, body.idle * { cursor: none !important; }
+
+/* An arriving alert flashes once so it's noticed from across the room. */
+@keyframes alert-flash {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  20% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 70%, transparent); }
+}
+/* Composed with the entrance animation, not replacing it; danger banners keep
+   their own pulse, and .alert-out must still win when a banner is dismissed. */
+.alert.alert-flash { animation: alertin .35s cubic-bezier(.2, .9, .3, 1.2), alert-flash 1.2s ease-out .35s 2; }
+.alert.alert-danger.alert-flash { animation: alertin .35s cubic-bezier(.2,.9,.3,1.2), alertpulse 1.6s ease-in-out 2; }
+.alert.alert-out { animation: alertout .3s ease forwards; }
+@media (prefers-reduced-motion: reduce) {
+  /* Matches the specificity of the composed rules above so this still wins. */
+  .alert.alert-flash, .alert.alert-danger.alert-flash, .alert.alert-out { animation: none; }
+  #status.offline::before { animation: none; }
+}

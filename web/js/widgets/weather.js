@@ -6,7 +6,7 @@ import { define } from "./registry.js";
 import { el, fetchData, fmtNum } from "./dom.js";
 
 define("weather", {
-  meta: { label: "Weather", description: "Current + forecast, animated", category: "data" },
+  meta: { label: "Weather", description: "Current + forecast, animated", category: "data", showTitle: false },
   schema: {
     fields: [
       { key: "units", label: "Units", type: "select", options: ["imperial", "metric"], default: "imperial" },

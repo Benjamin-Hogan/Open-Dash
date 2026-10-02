@@ -1,21 +1,31 @@
 // Clock — zero-config, no API. Big glanceable time + date, optional timezone.
+//
+// Built for reading across a room: no leading zero ("5:17", not "05:17"), the
+// AM/PM and seconds set smaller beside the time so it never wraps, and the
+// type sized from the card itself (container units) rather than the viewport.
 import { define } from "./registry.js";
 import { el } from "./dom.js";
 
 define("clock", {
-  meta: { label: "Clock", description: "Time and date", category: "basic" },
+  // A clock face already says what it is; no title strip by default.
+  meta: { label: "Clock", description: "Time and date", category: "basic", showTitle: false },
   schema: {
     fields: [
       { key: "timeZone", label: "Time zone (leave blank for the display's own)", type: "text", placeholder: "America/Phoenix" },
       { key: "hour12", label: "12-hour clock", type: "boolean", default: true },
-      { key: "showSeconds", label: "Show seconds", type: "boolean", default: true },
+      // Off by default: a ticking second hand pulls the eye across the room.
+      { key: "showSeconds", label: "Show seconds", type: "boolean", default: false },
+      { key: "showDate", label: "Show the date", type: "boolean", default: true },
     ],
   },
   async mount(root, widget) {
-    const time = el("div", { class: "clock-time" });
+    const main = el("span", { class: "clock-main" });
+    const sec = el("span", { class: "clock-sec" });
+    const period = el("span", { class: "clock-period" });
+    const time = el("div", { class: "clock-time" }, [main, sec, period]);
     const date = el("div", { class: "clock-date" });
     root.appendChild(el("div", { class: "clock" }, [time, date]));
-    const handle = { time, date, widget };
+    const handle = { main, sec, period, date, widget };
     tick(handle);
     handle.interval = setInterval(() => tick(handle), 1000);
     return handle;
@@ -38,17 +48,30 @@ define("clock", {
 
 function tick(handle) {
   const s = handle.widget.settings || {};
-  const opts = { hour: "2-digit", minute: "2-digit", hour12: s.hour12 !== false };
-  if (s.showSeconds !== false) opts.second = "2-digit";
-  if (s.timeZone) opts.timeZone = s.timeZone;
+  const hour12 = s.hour12 !== false;
+  // Seconds were on by default before this setting existed; only an explicit
+  // true shows them now.
+  const showSeconds = s.showSeconds === true;
+  const opts = { hour: "numeric", minute: "2-digit", second: "2-digit", hour12 };
   const dateOpts = { weekday: "long", month: "long", day: "numeric" };
-  if (s.timeZone) dateOpts.timeZone = s.timeZone;
+  if (s.timeZone) { opts.timeZone = s.timeZone; dateOpts.timeZone = s.timeZone; }
   const now = new Date();
+  let parts;
   try {
-    handle.time.textContent = now.toLocaleTimeString(undefined, opts);
+    parts = new Intl.DateTimeFormat(undefined, opts).formatToParts(now);
+  } catch {
+    // A bad time zone name: fall back to the display's own clock.
+    delete opts.timeZone; delete dateOpts.timeZone;
+    parts = new Intl.DateTimeFormat(undefined, opts).formatToParts(now);
+  }
+  const get = (t) => parts.find((p) => p.type === t)?.value ?? "";
+  handle.main.textContent = `${get("hour")}:${get("minute")}`;
+  handle.sec.textContent = showSeconds ? `:${get("second")}` : "";
+  handle.period.textContent = hour12 ? get("dayPeriod") : "";
+  handle.date.hidden = s.showDate === false;
+  try {
     handle.date.textContent = now.toLocaleDateString(undefined, dateOpts);
   } catch {
-    handle.time.textContent = now.toLocaleTimeString();
     handle.date.textContent = now.toLocaleDateString();
   }
 }

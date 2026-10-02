@@ -19,7 +19,7 @@
           "type": "clock",
           "title": "Clock",
           "grid": { "x": 0, "y": 0, "w": 4, "h": 2 },
-          "settings": { "hour12": true, "showSeconds": true }
+          "settings": { "hour12": true, "showSeconds": false }
         },
         {
           "id": "weather-1",
@@ -50,7 +50,7 @@
           "type": "text",
           "title": "Welcome",
           "grid": { "x": 9, "y": 2, "w": 3, "h": 2 },
-          "settings": { "content": "Edit me in the admin →\nhttp://<pi>:8081", "align": "center", "size": 16 }
+          "settings": { "content": "Edit me in the admin →\n{admin}", "align": "center", "size": 16 }
         }
       ]
     },

@@ -321,7 +321,20 @@ function renderCanvas() {
   canvas.replaceChildren();
   const cols = state.config.settings?.columns || 12;
   const widgets = canvasWidgets();
-  EDITOR_ROW = editorRowPx(canvas, cols);
+  const s = state.config.settings || {};
+  const maxRow = widgets.reduce((m, w) => Math.max(m, (w.grid?.y || 0) + (w.grid?.h || 3)), 0);
+  // With fit-to-screen the display divides its height among the rows the page
+  // uses (enabled, unpinned widgets — the same count app.js takes), so the
+  // canvas does too: the page fills the 16:9 frame exactly as it will on the wall.
+  const fit = s.fitToScreen !== false;
+  const shownRows = Math.max(1, ...widgets
+    .filter((w) => w.enabled !== false && !w.pinned)
+    .map((w) => (w.grid?.y || 0) + (w.grid?.h || 3)));
+  const gap = s.gapPx ?? 12;
+  const displayRowPx = fit
+    ? ((DISPLAY_WIDTH * 9 / 16) - gap * (shownRows + 1)) / shownRows
+    : (s.rowHeightPx || 90);
+  EDITOR_ROW = editorRowPx(canvas, cols, displayRowPx);
   // Live widgets render at the display's own pixel size and are scaled down
   // as a whole, so they look exactly as they will on the wall instead of
   // reflowing (and overflowing) inside a tiny box.
@@ -338,12 +351,11 @@ function renderCanvas() {
   // The canvas wears the display's theme, whatever the admin's own theme is.
   canvas.dataset.theme = state.config.settings?.theme?.mode === "light" ? "light" : "dark";
   canvas.classList.toggle("live-off", !live);
-  const maxRow = widgets.reduce((m, w) => Math.max(m, (w.grid?.y || 0) + (w.grid?.h || 3)), 0);
-  // Fill the display's height so the canvas reads as the screen, then grow
+  // Fit: the page's own rows plus one spare row to drag into (it sits just
+  // below the screen's edge). Fixed rows: fill the display's height, then grow
   // past it when widgets run lower (the dashboard scrolls there too).
-  const s = state.config.settings || {};
-  const screenRows = Math.floor((DISPLAY_WIDTH * 9 / 16) / ((s.rowHeightPx || 90) + (s.gapPx ?? 12)));
-  const rows = Math.max(maxRow + 1, screenRows, 6);
+  const screenRows = Math.floor((DISPLAY_WIDTH * 9 / 16) / ((s.rowHeightPx || 90) + gap));
+  const rows = fit ? Math.max(shownRows, maxRow) + 1 : Math.max(maxRow + 1, screenRows, 6);
   canvas.style.setProperty("--cols", cols);
   canvas.style.setProperty("--rows", rows);
   canvas.style.minHeight = `${rows * (EDITOR_ROW + CANVAS_GAP) - CANVAS_GAP}px`;
@@ -392,9 +404,9 @@ function renderCanvas() {
  * the wall. A fixed 26px row drew a 3-row weather tile as a letterbox strip,
  * and the real widget mounted inside it spilled over itself.
  */
-function editorRowPx(canvas, cols) {
-  const rowPx = state.config.settings?.rowHeightPx || 90;
-  return clamp(Math.round(rowPx * canvasScale(canvas, cols)), 16, 120);
+function editorRowPx(canvas, cols, rowPx = state.config.settings?.rowHeightPx || 90) {
+  // A fitted page with two rows has very tall rows; only guard the extremes.
+  return clamp(Math.round(rowPx * canvasScale(canvas, cols)), 12, 600);
 }
 
 /** Canvas pixels per display pixel. */
@@ -1014,6 +1026,9 @@ async function openEditor(id, { keepOriginal = false } = {}) {
     announce(`Added ${existing.title || type}`);
   }
   const widget = structuredClone(existing);
+  // Unset means "the type's default"; show that default in the switch. If the
+  // user doesn't touch it, the round-trip check stages nothing.
+  if (widget.showTitle == null) widget.showTitle = registry.get(widget.type)?.meta?.showTitle ?? true;
   if (widget.type === "slideshow") {
     widget.slideshow = widget.slideshow || { enabled: true, durationSeconds: 30, slides: [] };
   }
@@ -1151,6 +1166,10 @@ function widgetFieldDefs(widget, editor) {
   const defs = [
     { key: "type", type: "custom", label: "Type", render: () => typeRow(widget, editor) },
     { key: "title", label: "Title", type: "text", required: true },
+    {
+      key: "showTitle", label: "Show the title on the display", type: "boolean",
+      help: "Off suits widgets whose face says what they are, like a clock.",
+    },
     { key: "enabled", label: "Show on the display", type: "boolean" },
     {
       key: "pinned", label: "Pin to every page", type: "boolean",
@@ -1504,6 +1523,14 @@ function openAlerts() {
   editor.appendChild(field("Warning (seconds)", input("number", a.warningTtlSeconds ?? 0, "al-warning")));
   editor.appendChild(field("Danger (seconds)", input("number", a.dangerTtlSeconds ?? 0, "al-danger")));
 
+  editor.appendChild(sectionTitle("Getting noticed"));
+  editor.appendChild(noteEl("A new banner always flashes once. It can also play a short chime."));
+  editor.appendChild(boolField("Play a chime", a.sound === true, "al-sound",
+    "The display's browser must allow sound without a tap (Chromium kiosk: --autoplay-policy=no-user-gesture-required)."));
+  editor.appendChild(field("Quiet from", input("time", a.quietStart || "", "al-quiet-start")));
+  editor.appendChild(field("Quiet until", input("time", a.quietEnd || "", "al-quiet-end")));
+  editor.appendChild(noteEl("No chime between these times; banners still show. Leave both blank to never go quiet. Can run past midnight, e.g. 22:00 to 07:00."));
+
   editor.appendChild(sectionTitle("Showing on displays now"));
   const activeHost = document.createElement("div");
   activeHost.className = "alert-active-list";
@@ -1572,6 +1599,12 @@ function openAlerts() {
     a.infoTtlSeconds = readInt("al-info");
     a.warningTtlSeconds = readInt("al-warning");
     a.dangerTtlSeconds = readInt("al-danger");
+    a.sound = editor.querySelector('[data-name="al-sound"]')?.checked === true;
+    // Both or neither: a half-set window would silently mean "never quiet".
+    const qs = editor.querySelector('[data-name="al-quiet-start"]')?.value || "";
+    const qe = editor.querySelector('[data-name="al-quiet-end"]')?.value || "";
+    a.quietStart = qs && qe ? qs : "";
+    a.quietEnd = qs && qe ? qe : "";
     save("changed alert rules", { coalesce: "alerts" });
   });
 }
@@ -3350,6 +3383,19 @@ function openLayout() {
   )));
   general.appendChild(field("Accent color", input("color", theme.accent || "#4aa3ff", "lay-accent")));
 
+  general.appendChild(sectionTitle("On the display"));
+  general.appendChild(boolField("Fill the screen", s.fitToScreen !== false, "lay-fit",
+    "Each page's rows stretch to fill the display, whatever its size. Off uses the fixed row height below, which can leave space under a short page."));
+  general.appendChild(field("On a portrait screen", select(
+    [
+      { value: "stack", label: "Stack widgets in one column" },
+      { value: "scale", label: "Keep the landscape layout" },
+    ],
+    s.portraitLayout || "stack",
+    null,
+    "lay-portrait",
+  )));
+
   general.appendChild(sectionTitle("Home location"));
   general.appendChild(noteEl("Used for severe-weather alerts and as the default for weather and air-quality widgets that don't set their own. Leave latitude and longitude blank to locate by IP address."));
   general.appendChild(field("Latitude", input("number", loc.lat ?? "", "lay-lat", "e.g. 33.45")));
@@ -3364,7 +3410,9 @@ function openLayout() {
   editor.appendChild(sectionTitle("Grid"));
   editor.appendChild(noteEl("Widgets snap to this grid when you drag or resize them, so it sets how finely you can size them. More columns give smaller width steps; a shorter row gives smaller height steps. Every display shares this grid."));
   editor.appendChild(field("Columns (1–48)", input("number", oldCols, "lay-cols")));
-  editor.appendChild(field("Row height in pixels (20 or more)", input("number", oldRow, "lay-row")));
+  editor.appendChild(field(
+    s.fitToScreen !== false ? "Row height in pixels (used only when Fill the screen is off)" : "Row height in pixels (20 or more)",
+    input("number", oldRow, "lay-row")));
   editor.appendChild(field("Gap between widgets in pixels", input("number", oldGap, "lay-gap")));
 
   const stepNote = noteEl("");
@@ -3406,6 +3454,8 @@ function stageAppearance(host, errorEl) {
   s.theme = s.theme || {};
   s.theme.mode = q("lay-theme")?.value || "dark";
   s.theme.accent = q("lay-accent")?.value || "#4aa3ff";
+  s.fitToScreen = q("lay-fit")?.checked !== false;
+  s.portraitLayout = q("lay-portrait")?.value === "scale" ? "scale" : "stack";
   if (!problem) {
     s.location = {
       lat, lon,

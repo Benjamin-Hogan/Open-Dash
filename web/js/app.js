@@ -261,6 +261,46 @@ function resumeCachedPage(cached) {
   }
 }
 
+// ---- layout: fit to screen + portrait stacking -------------------------------
+//
+// Rows used to be a fixed rowHeightPx, so a page only filled as many rows as it
+// had — five widgets on a 720p screen used the top 28% and left the rest black.
+// With fitToScreen (the default) each page's rows share the screen height, so
+// every page fills its display whatever the resolution.
+//
+// Portrait screens get a one-column stack in reading order (top-to-bottom,
+// then left-to-right). Both positions are written as custom properties and the
+// stylesheet picks one by orientation, so rotating a tablet needs no re-mount.
+
+function gridOf(w) {
+  const g = w.grid || {};
+  return { x: g.x ?? 0, y: g.y ?? 0, w: g.w ?? 3, h: g.h ?? 3 };
+}
+
+function layoutPane(pane, widgets) {
+  const s = config?.settings || {};
+  const rows = Math.max(1, ...widgets.map((w) => gridOf(w).y + gridOf(w).h));
+  const stackRows = Math.max(1, widgets.reduce((n, w) => n + gridOf(w).h, 0));
+  pane.style.setProperty("--page-rows", rows);
+  pane.style.setProperty("--stack-rows", stackRows);
+  pane.classList.toggle("fit", s.fitToScreen !== false);
+  pane.classList.toggle("stackable", (s.portraitLayout || "stack") === "stack");
+}
+
+function placeCard(card, widget, widgets) {
+  const g = gridOf(widget);
+  card.style.setProperty("--col", `${g.x + 1} / span ${g.w}`);
+  card.style.setProperty("--row", `${g.y + 1} / span ${g.h}`);
+  // Stack position: reading order, each card keeping its own height in rows.
+  const ordered = [...widgets].sort((a, b) => gridOf(a).y - gridOf(b).y || gridOf(a).x - gridOf(b).x);
+  let start = 1;
+  for (const w of ordered) {
+    if (w === widget) break;
+    start += gridOf(w).h;
+  }
+  card.style.setProperty("--stack-row", `${start} / span ${g.h}`);
+}
+
 async function mountPage(page) {
   const pane = el("div", { class: "page-pane", "data-page": page.id });
   pane.inert = true;
@@ -268,15 +308,18 @@ async function mountPage(page) {
   grid.appendChild(pane);
   const entries = [];
   let cardIndex = 0;
-  for (const widget of page.widgets || []) {
-    if (widget.enabled === false || widget.pinned) continue;
+  const shown = (page.widgets || []).filter((w) => w.enabled !== false && !w.pinned);
+  layoutPane(pane, shown);
+  for (const widget of shown) {
     const plugin = registry.get(widget.type);
     const card = el("div", { class: "card card-enter", "data-id": widget.id });
     card.style.animationDelay = `${Math.min(cardIndex++ * 45, 450)}ms`;
     card.addEventListener("animationend", () => card.classList.remove("card-enter"), { once: true });
-    card.style.gridColumn = `${(widget.grid?.x ?? 0) + 1} / span ${widget.grid?.w ?? 3}`;
-    card.style.gridRow = `${(widget.grid?.y ?? 0) + 1} / span ${widget.grid?.h ?? 3}`;
-    if (widget.title) card.appendChild(el("div", { class: "card-title" }, widget.title));
+    placeCard(card, widget, shown);
+    // Titles are opt-out per widget, and off by default for types whose face
+    // says what they are (a clock, the weather).
+    const showTitle = widget.showTitle ?? plugin?.meta?.showTitle ?? true;
+    if (widget.title && showTitle) card.appendChild(el("div", { class: "card-title" }, widget.title));
     const body = el("div", { class: "card-body" });
     card.appendChild(body);
     pane.appendChild(card);
@@ -758,10 +801,29 @@ function buildDots() {
   updateDots();
 }
 
+let dotsTimer = null;
+/** Mark the current page; the dots show for a few seconds on each change and
+ *  then fade, rather than sitting on the screen permanently. */
 function updateDots() {
   if (!dots) return;
   [...dots.children].forEach((d, i) => d.classList.toggle("active", i === pageIndex));
+  if (!dots.children.length) return;
+  dots.classList.add("show");
+  clearTimeout(dotsTimer);
+  dotsTimer = setTimeout(() => dots.classList.remove("show"), 3000);
 }
+
+// Hide the pointer after a few seconds of stillness; any movement brings it back.
+let idleTimer = null;
+function wakePointer() {
+  document.body.classList.remove("idle");
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => document.body.classList.add("idle"), 3000);
+}
+for (const type of ["pointermove", "pointerdown", "keydown"]) {
+  window.addEventListener(type, wakePointer, { passive: true });
+}
+wakePointer();
 
 function applySchedule(entry) {
   const show = inWindow(entry.widget.schedule);
@@ -783,7 +845,11 @@ function initAlerts() {
     .catch(() => {});
 }
 
-function showAlert(a) {
+/**
+ * @param arriving  true for a live SSE alert; false for the catch-up list on
+ *                  load, which shouldn't chime every time a display reloads.
+ */
+function showAlert(a, { arriving = false } = {}) {
   if (!alertHost || !a?.id) return;
   const existing = alertHost.querySelector(`[data-alert="${CSS.escape(a.id)}"]`);
   // Settings change re-broadcasts the same id with a new expiresAt — reset timer.
@@ -791,7 +857,7 @@ function showAlert(a) {
     clearTimeout(alertTimers.get(a.id));
     alertTimers.delete(a.id);
   } else {
-    const banner = el("div", { class: `alert alert-${a.severity || "info"}`, "data-alert": a.id }, [
+    const banner = el("div", { class: `alert alert-${a.severity || "info"} alert-flash`, "data-alert": a.id }, [
       el("div", { class: "alert-text" }, [
         el("div", { class: "alert-title" }, a.title || "Alert"),
         a.message ? el("div", { class: "alert-msg" }, a.message) : null,
@@ -799,6 +865,7 @@ function showAlert(a) {
       el("button", { class: "alert-close", title: "Dismiss", onclick: () => dismissAlert(a.id, { notifyServer: true }) }, "✕"),
     ]);
     alertHost.prepend(banner);
+    if (arriving) chime(a.severity);
   }
   if (a.expiresAt == null) return;
   const ttl = a.expiresAt * 1000 - Date.now();
@@ -808,6 +875,53 @@ function showAlert(a) {
   }
   // Local timer only; server prune broadcasts alert-cleared so clocks can't clear early.
   alertTimers.set(a.id, setTimeout(() => dismissAlert(a.id), ttl));
+}
+
+/** "HH:MM" → minutes after midnight, or null. */
+function toMinutes(hhmm) {
+  const m = /^(\d{2}):(\d{2})$/.exec(hhmm || "");
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+}
+
+/** Inside the alert quiet hours? The window may wrap past midnight. */
+function inQuietHours(alerts, now = new Date()) {
+  const start = toMinutes(alerts?.quietStart);
+  const end = toMinutes(alerts?.quietEnd);
+  if (start == null || end == null || start === end) return false;
+  const t = now.getHours() * 60 + now.getMinutes();
+  return start < end ? t >= start && t < end : t >= start || t < end;
+}
+
+let audioCtx = null;
+/**
+ * A short two-note chime for an arriving alert, when Settings → Alerts has
+ * sound on and it isn't quiet hours. Synthesised, so there's no asset to ship.
+ * Browsers only allow audio after the page has had a user gesture or when the
+ * kiosk is launched with autoplay allowed (Chromium:
+ * --autoplay-policy=no-user-gesture-required); otherwise this stays silent.
+ */
+function chime(severity) {
+  const a = config?.settings?.alerts;
+  if (!a?.sound || inQuietHours(a)) return;
+  try {
+    audioCtx ||= new AudioContext();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    const notes = severity === "danger" ? [880, 660, 880] : [660, 880];
+    const t0 = audioCtx.currentTime;
+    notes.forEach((hz, i) => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = hz;
+      const t = t0 + i * 0.18;
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.18, t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(t);
+      osc.stop(t + 0.4);
+    });
+  } catch { /* no audio on this device — the flash still shows */ }
 }
 
 function dismissAlert(id, { notifyServer = false } = {}) {
@@ -883,7 +997,7 @@ function connectEvents() {
     try { onDevicePrefs(JSON.parse(e.data)); } catch { /* ignore malformed */ }
   });
   es.addEventListener("alert", (e) => {
-    try { showAlert(JSON.parse(e.data)); } catch { /* ignore malformed */ }
+    try { showAlert(JSON.parse(e.data), { arriving: true }); } catch { /* ignore malformed */ }
   });
   es.addEventListener("alert-cleared", (e) => {
     try { dismissAlert(JSON.parse(e.data).id); } catch { /* ignore malformed */ }

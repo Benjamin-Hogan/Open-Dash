@@ -189,6 +189,9 @@ class Widget(BaseModel):
     # the rotating page pane). Intended for heads-up strips.
     pinned: bool = False
     grid: GridPos = Field(default_factory=GridPos)
+    # Show the small name above the widget on the display. None = the widget
+    # type's own default (a clock or weather tile already says what it is).
+    showTitle: bool | None = None
     # One refresh key for every widget type (the dual refreshSeconds/refreshMinutes
     # split in the original is gone). None = no auto-refresh.
     refreshSeconds: int | None = Field(default=None, ge=1)
@@ -241,6 +244,12 @@ class AlertSettings(BaseModel):
     kpThreshold: float = Field(default=6.0, ge=0, le=9)
     # Explicit space-alert lifetime; 0 = use warningTtlSeconds / keep-until-dismissed.
     spaceTtlSeconds: int = Field(default=3600, ge=0)
+    # A short chime when a banner arrives (the banner always flashes once).
+    # Quiet hours are "HH:MM" local to the display; empty = never quiet. The
+    # window may wrap past midnight (22:00 → 07:00).
+    sound: bool = False
+    quietStart: str = Field(default="", pattern=r"^$|^([01]\d|2[0-3]):[0-5]\d$")
+    quietEnd: str = Field(default="", pattern=r"^$|^([01]\d|2[0-3]):[0-5]\d$")
 
 
 class Settings(BaseModel):
@@ -249,6 +258,12 @@ class Settings(BaseModel):
     columns: int = Field(default=12, ge=1, le=48)
     rowHeightPx: int = Field(default=90, ge=20)
     gapPx: int = Field(default=12, ge=0)
+    # Stretch each page's rows to fill the screen, whatever its size. Off =
+    # fixed rowHeightPx rows (pages shorter than the screen leave space below).
+    fitToScreen: bool = True
+    # On a portrait screen: "stack" puts widgets in one column in reading
+    # order; "scale" keeps the landscape layout as designed.
+    portraitLayout: Literal["stack", "scale"] = "stack"
     # Page rotation transition: off | random | fade | slide-left | … (see dashboard.css)
     pageTransition: str = "random"
     theme: Theme = Field(default_factory=Theme)
